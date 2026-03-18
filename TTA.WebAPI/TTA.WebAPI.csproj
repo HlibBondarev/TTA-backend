@@ -10,4 +10,8 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.14" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\TTA.BusinessLogic\TTA.BusinessLogic.csproj" />
+  </ItemGroup>
+
 </Project>
