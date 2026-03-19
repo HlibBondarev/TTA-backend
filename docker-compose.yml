@@ -1,0 +1,15 @@
+services:
+  tta-db:
+    image: postgres:16
+    container_name: tta-postgres-db
+    environment:
+      - POSTGRES_USER=tta_admin
+      - POSTGRES_PASSWORD=,jylfhtd1974
+      - POSTGRES_DB=tta_database
+    ports:
+      - "5432:5432"
+    volumes:
+      - tta_postgres_new_data:/var/lib/postgresql/data
+
+volumes:
+  tta_postgres_new_data:
