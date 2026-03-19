@@ -7,12 +7,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="SQLScripts\*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TTA.Common\TTA.Common.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Folder Include="Models\" />
-    <Folder Include="SQLScripts\" />
     <Folder Include="Repository\" />
   </ItemGroup>
 
