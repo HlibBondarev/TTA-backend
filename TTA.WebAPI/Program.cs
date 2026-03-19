@@ -1,23 +1,40 @@
-var builder = WebApplication.CreateBuilder(args);
+// 1. Setup early logging (Bootstrap Logger) using configuration files
+using Serilog;
+using TTA.WebAPI;
 
-// Add services to the container.
+var configuration = new ConfigurationBuilder()
+    .SetBasePath(Directory.GetCurrentDirectory())
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"}.json", optional: true)
+    .Build();
 
-builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(configuration)
+    .CreateBootstrapLogger();
 
-var app = builder.Build();
-
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+try
 {
-    app.MapOpenApi();
+    Log.Information("TTA Application starting up...");
+
+    var builder = WebApplication.CreateBuilder(args);
+
+    // 2. Register application services via extension method
+    builder.AddApplicationServices();
+
+    var app = builder.Build();
+
+    // 3. Setup middleware pipeline via extension method
+    app.Configure();
+
+    Log.Information("TTA Application has started successfully");
+    app.Run();
 }
-
-app.UseHttpsRedirection();
-
-app.UseAuthorization();
-
-app.MapControllers();
-
-app.Run();
+catch (Exception ex)
+{
+    Log.Fatal(ex, "TTA Application terminated unexpectedly during startup");
+}
+finally
+{
+    Log.Information("TTA Application shut down complete");
+    Log.CloseAndFlush();
+}
