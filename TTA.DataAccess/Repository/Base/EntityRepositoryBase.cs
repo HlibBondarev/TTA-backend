@@ -6,6 +6,9 @@ using TTA.DataAccess.Models.Base;
 
 namespace TTA.DataAccess.Repository.Base;
 
+/// <summary>
+/// Abstract base class providing common data access logic for PostgreSQL repositories.
+/// </summary>
 public abstract class EntityRepositoryBase<TKey, TEntity>(IConfiguration configuration) : IEntityRepositoryBase<TKey, TEntity>
     where TEntity : class, IKeyedEntity<TKey>, new()
     where TKey : IEquatable<TKey>
@@ -13,158 +16,158 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IConfiguration configu
     protected readonly string _connectionString = configuration.GetConnectionString("DefaultConnection")
         ?? throw new InvalidOperationException("DefaultConnection connection string is missing.");
 
-    // Helper to create connection
+    /// <summary>
+    /// Gets the name of the primary key parameter expected by PostgreSQL functions.
+    /// Default is "p_id". Override this in derived classes if necessary.
+    /// </summary>
+    protected virtual string KeyParamName => "p_id";
+
     private NpgsqlConnection GetConnection() => new(_connectionString);
 
-    public async Task<TEntity> CreateOrUpdate(TEntity entity, string procName, Dictionary<string, object>? additionalParams = null)
+    /// <inheritdoc />
+    public async Task<TEntity> CreateOrUpdate(TEntity entity, string procName, DynamicParameters? additionalParams = null, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        await connection.OpenAsync();
-        using var transaction = await connection.BeginTransactionAsync();
+        await connection.OpenAsync(ct);
+        using var transaction = await connection.BeginTransactionAsync(ct);
 
         try
         {
             var parameters = new DynamicParameters(entity);
             if (additionalParams != null)
             {
-                foreach (var pair in additionalParams)
-                {
-                    parameters.Add(pair.Key, pair.Value);
-                }
+                parameters.AddDynamicParams(additionalParams);
             }
 
-            // In PostgreSQL, functions returning records are called via SELECT * FROM function_name(@params)
-            // But with CommandType.StoredProcedure, Dapper handles the call syntax.
-            var result = await connection.QuerySingleAsync<TEntity>(
-                sql: procName,
-                param: parameters,
-                transaction: transaction,
-                commandType: CommandType.StoredProcedure
-            );
+            var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+            var result = await connection.QuerySingleAsync<TEntity>(command);
 
-            await transaction.CommitAsync();
+            await transaction.CommitAsync(ct);
             return result;
         }
         catch
         {
-            await transaction.RollbackAsync();
+            await transaction.RollbackAsync(ct);
             throw;
         }
     }
 
-    public async Task<TEntity?> GetById(TKey id, string procName)
+    /// <inheritdoc />
+    public async Task<TEntity?> GetById(TKey id, string procName, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        return await connection.QueryFirstOrDefaultAsync<TEntity>(
-            sql: procName,
-            param: new { p_id = id },
-            commandType: CommandType.StoredProcedure
-        );
+        var parameters = new DynamicParameters();
+        parameters.Add(KeyParamName, id);
+
+        var command = new CommandDefinition(procName, parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        return await connection.QueryFirstOrDefaultAsync<TEntity>(command);
     }
 
-    public async Task<IEnumerable<TEntity>> GetAll(string procName)
+    /// <inheritdoc />
+    public async Task<IEnumerable<TEntity>> GetAll(string procName, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        return await connection.QueryAsync<TEntity>(
-            sql: procName,
-            commandType: CommandType.StoredProcedure
-        );
+        var command = new CommandDefinition(procName, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        return await connection.QueryAsync<TEntity>(command);
     }
 
-    public async Task<IEnumerable<TEntity>> GetByPropValues(string procName, Dictionary<string, object> parameters)
+    /// <inheritdoc />
+    public async Task<IEnumerable<TEntity>> GetByPropValues(string procName, DynamicParameters parameters, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        return await connection.QueryAsync<TEntity>(
-            sql: procName,
-            param: new DynamicParameters(parameters),
-            commandType: CommandType.StoredProcedure
-        );
+        var command = new CommandDefinition(procName, parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        return await connection.QueryAsync<TEntity>(command);
     }
 
-    public async Task<string?> GetDataInJson(string procName, Dictionary<string, object> parameters)
+    /// <inheritdoc />
+    public async Task<string?> GetDataInJson(string procName, DynamicParameters parameters, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        return await connection.ExecuteScalarAsync<string>(
-            sql: procName,
-            param: new DynamicParameters(parameters),
-            commandType: CommandType.StoredProcedure
-        );
+        var command = new CommandDefinition(procName, parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        return await connection.ExecuteScalarAsync<string>(command);
     }
 
-    public async Task<bool> Exists(TKey id, string procName)
+    /// <inheritdoc />
+    public async Task<bool> Exists(TKey id, string procName, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        return await connection.ExecuteScalarAsync<bool>(
-            sql: procName,
-            param: new { p_id = id },
-            commandType: CommandType.StoredProcedure
-        );
+        var parameters = new DynamicParameters();
+        parameters.Add(KeyParamName, id);
+
+        var command = new CommandDefinition(procName, parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        return await connection.ExecuteScalarAsync<bool>(command);
     }
 
-    public async Task<bool> Exists(string procName, Dictionary<string, object> parameters)
+    /// <inheritdoc />
+    public async Task<bool> Exists(string procName, DynamicParameters parameters, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        return await connection.ExecuteScalarAsync<bool>(
-            sql: procName,
-            param: new DynamicParameters(parameters),
-            commandType: CommandType.StoredProcedure
-        );
+        var command = new CommandDefinition(procName, parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        return await connection.ExecuteScalarAsync<bool>(command);
     }
 
-    public async Task<bool> Delete(TKey id, string procName)
+    /// <inheritdoc />
+    public async Task<bool> Delete(TKey id, string procName, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        var affectedRows = await connection.ExecuteAsync(
-            sql: procName,
-            param: new { p_id = id },
-            commandType: CommandType.StoredProcedure
-        );
-        return affectedRows > 0;
-    }
-
-    public async Task ExecuteCommandInTransaction(string procName, Dictionary<string, object> parameters)
-    {
-        using var connection = GetConnection();
-        await connection.OpenAsync();
-        using var transaction = await connection.BeginTransactionAsync();
+        await connection.OpenAsync(ct);
+        using var transaction = await connection.BeginTransactionAsync(ct);
 
         try
         {
-            await connection.ExecuteAsync(
-                sql: procName,
-                param: new DynamicParameters(parameters),
-                transaction: transaction,
-                commandType: CommandType.StoredProcedure
-            );
-            await transaction.CommitAsync();
+            var parameters = new DynamicParameters();
+            parameters.Add(KeyParamName, id);
+
+            var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+            var affectedRows = await connection.ExecuteAsync(command);
+
+            await transaction.CommitAsync(ct);
+            return affectedRows > 0;
         }
         catch
         {
-            await transaction.RollbackAsync();
+            await transaction.RollbackAsync(ct);
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task ExecuteCommandInTransaction(string procName, DynamicParameters parameters, CancellationToken ct = default)
+    {
+        using var connection = GetConnection();
+        await connection.OpenAsync(ct);
+        using var transaction = await connection.BeginTransactionAsync(ct);
+
+        try
+        {
+            var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+            await connection.ExecuteAsync(command);
+            await transaction.CommitAsync(ct);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(ct);
             throw;
         }
     }
 
-    public async Task<long> ExecuteQueryInTransaction(string procName, DynamicParameters parameters)
+    /// <inheritdoc />
+    public async Task<T> ExecuteQueryInTransaction<T>(string procName, DynamicParameters parameters, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        await connection.OpenAsync();
-        using var transaction = await connection.BeginTransactionAsync();
+        await connection.OpenAsync(ct);
+        using var transaction = await connection.BeginTransactionAsync(ct);
 
         try
         {
-            var result = await connection.QuerySingleAsync<long>(
-                sql: procName,
-                param: parameters,
-                transaction: transaction,
-                commandType: CommandType.StoredProcedure
-            );
-            await transaction.CommitAsync();
+            var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+            var result = await connection.QuerySingleAsync<T>(command);
+            await transaction.CommitAsync(ct);
             return result;
         }
         catch
         {
-            await transaction.RollbackAsync();
+            await transaction.RollbackAsync(ct);
             throw;
         }
     }
