@@ -1,5 +1,4 @@
 ﻿using Dapper;
-using Microsoft.Extensions.Configuration;
 using Npgsql;
 using System.Data;
 using TTA.DataAccess.Models.Base;
@@ -9,27 +8,33 @@ namespace TTA.DataAccess.Repository.Base;
 /// <summary>
 /// Abstract base class providing common data access logic for PostgreSQL repositories.
 /// </summary>
-public abstract class EntityRepositoryBase<TKey, TEntity>(IConfiguration configuration) : IEntityRepositoryBase<TKey, TEntity>
+/// <typeparam name="TKey">The type of the primary key.</typeparam>
+/// <typeparam name="TEntity">The type of the entity.</typeparam>
+/// <param name="connectionFactory">The factory used to create database connections.</param>
+public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory connectionFactory) : IEntityRepositoryBase<TKey, TEntity>
     where TEntity : class, IKeyedEntity<TKey>, new()
     where TKey : IEquatable<TKey>
 {
-    protected readonly string _connectionString = configuration.GetConnectionString("DefaultConnection")
-        ?? throw new InvalidOperationException("DefaultConnection connection string is missing.");
-
     /// <summary>
     /// Gets the name of the primary key parameter expected by PostgreSQL functions.
     /// Default is "p_id". Override this in derived classes if necessary.
     /// </summary>
     protected virtual string KeyParamName => "p_id";
 
-    private NpgsqlConnection GetConnection() => new(_connectionString);
+    /// <summary>
+    /// Creates and returns a new database connection.
+    /// </summary>
+    /// <returns>A new <see cref="IDbConnection"/> instance.</returns>
+    protected IDbConnection GetConnection() => connectionFactory.CreateConnection();
 
     /// <inheritdoc />
     public async Task<TEntity> CreateOrUpdate(TEntity entity, string procName, DynamicParameters? additionalParams = null, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        await connection.OpenAsync(ct);
-        using var transaction = await connection.BeginTransactionAsync(ct);
+        if (connection is NpgsqlConnection npgsqlConn) await npgsqlConn.OpenAsync(ct);
+        else connection.Open();
+
+        using var transaction = connection.BeginTransaction();
 
         try
         {
@@ -42,12 +47,12 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IConfiguration configu
             var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
             var result = await connection.QuerySingleAsync<TEntity>(command);
 
-            await transaction.CommitAsync(ct);
+            transaction.Commit();
             return result;
         }
         catch
         {
-            await transaction.RollbackAsync(ct);
+            transaction.Rollback();
             throw;
         }
     }
@@ -110,8 +115,10 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IConfiguration configu
     public async Task<bool> Delete(TKey id, string procName, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        await connection.OpenAsync(ct);
-        using var transaction = await connection.BeginTransactionAsync(ct);
+        if (connection is NpgsqlConnection npgsqlConn) await npgsqlConn.OpenAsync(ct);
+        else connection.Open();
+
+        using var transaction = connection.BeginTransaction();
 
         try
         {
@@ -121,12 +128,12 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IConfiguration configu
             var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
             var affectedRows = await connection.ExecuteAsync(command);
 
-            await transaction.CommitAsync(ct);
+            transaction.Commit();
             return affectedRows > 0;
         }
         catch
         {
-            await transaction.RollbackAsync(ct);
+            transaction.Rollback();
             return false;
         }
     }
@@ -135,18 +142,20 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IConfiguration configu
     public async Task ExecuteCommandInTransaction(string procName, DynamicParameters parameters, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        await connection.OpenAsync(ct);
-        using var transaction = await connection.BeginTransactionAsync(ct);
+        if (connection is NpgsqlConnection npgsqlConn) await npgsqlConn.OpenAsync(ct);
+        else connection.Open();
+
+        using var transaction = connection.BeginTransaction();
 
         try
         {
             var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
             await connection.ExecuteAsync(command);
-            await transaction.CommitAsync(ct);
+            transaction.Commit();
         }
         catch
         {
-            await transaction.RollbackAsync(ct);
+            transaction.Rollback();
             throw;
         }
     }
@@ -155,19 +164,21 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IConfiguration configu
     public async Task<T> ExecuteQueryInTransaction<T>(string procName, DynamicParameters parameters, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        await connection.OpenAsync(ct);
-        using var transaction = await connection.BeginTransactionAsync(ct);
+        if (connection is NpgsqlConnection npgsqlConn) await npgsqlConn.OpenAsync(ct);
+        else connection.Open();
+
+        using var transaction = connection.BeginTransaction();
 
         try
         {
             var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
             var result = await connection.QuerySingleAsync<T>(command);
-            await transaction.CommitAsync(ct);
+            transaction.Commit();
             return result;
         }
         catch
         {
-            await transaction.RollbackAsync(ct);
+            transaction.Rollback();
             throw;
         }
     }

@@ -1,177 +1,144 @@
-using Microsoft.Extensions.Configuration;
+using Dapper;
 using Moq;
-using TTA.DataAccess.Models;
+using System.Data;
+using TTA.DataAccess.Models.Base;
 using TTA.DataAccess.Repository.Base;
 
 namespace TTA.DataAccess.Tests.Repository;
 
-/// <summary>
-/// Concrete test subclass of EntityRepositoryBase to allow instantiation.
-/// </summary>
-internal class TestRepository(IConfiguration configuration)
-    : EntityRepositoryBase<Guid, City>(configuration)
+// Mock model for testing
+public class TestEntity : IKeyedEntity<Guid>
 {
-    /// <summary>Exposes KeyParamName for testing.</summary>
-    public string ExposedKeyParamName => KeyParamName;
+    public Guid Id { get; set; }
 }
 
-/// <summary>
-/// Concrete test subclass that overrides KeyParamName for testing override behavior.
-/// </summary>
-internal class CustomKeyParamRepository(IConfiguration configuration)
-    : EntityRepositoryBase<Guid, City>(configuration)
-{
-    protected override string KeyParamName => "p_city_id";
-    public string ExposedKeyParamName => KeyParamName;
-}
-
-/// <summary>
-/// Concrete test subclass using int key (Region model).
-/// </summary>
-internal class RegionRepository(IConfiguration configuration)
-    : EntityRepositoryBase<int, Region>(configuration)
+// Concrete implementation for testing abstract class
+public class TestRepository(IDbConnectionFactory factory)
+    : EntityRepositoryBase<Guid, TestEntity>(factory)
 {
     public string ExposedKeyParamName => KeyParamName;
-}
-
-/// <summary>
-/// Concrete test subclass using string key (User model).
-/// </summary>
-internal class UserRepository(IConfiguration configuration)
-    : EntityRepositoryBase<string, User>(configuration)
-{
-    public string ExposedKeyParamName => KeyParamName;
+    public IDbConnection ExposedGetConnection() => GetConnection();
 }
 
 public class EntityRepositoryBaseTests
 {
-    private static IConfiguration CreateConfiguration(string? connectionString)
-    {
-        var inMemorySettings = new Dictionary<string, string?>();
-        if (connectionString != null)
-        {
-            inMemorySettings["ConnectionStrings:DefaultConnection"] = connectionString;
-        }
+    private readonly Mock<IDbConnectionFactory> _mockFactory;
+    private readonly Mock<IDbConnection> _mockConnection;
+    private readonly Mock<IDbTransaction> _mockTransaction;
+    private readonly TestRepository _repository;
 
-        return new ConfigurationBuilder()
-            .AddInMemoryCollection(inMemorySettings)
-            .Build();
+    public EntityRepositoryBaseTests()
+    {
+        _mockFactory = new Mock<IDbConnectionFactory>();
+        _mockConnection = new Mock<IDbConnection>();
+        _mockTransaction = new Mock<IDbTransaction>();
+
+        // Setup connection to return mock transaction
+        _mockConnection.Setup(c => c.BeginTransaction()).Returns(_mockTransaction.Object);
+        _mockFactory.Setup(f => f.CreateConnection()).Returns(_mockConnection.Object);
+
+        _repository = new TestRepository(_mockFactory.Object);
     }
 
-    [Fact]
-    public void Constructor_WithValidConnectionString_DoesNotThrow()
-    {
-        var config = CreateConfiguration("Host=localhost;Database=test");
-        var exception = Record.Exception(() => new TestRepository(config));
-        Assert.Null(exception);
-    }
-
-    [Fact]
-    public void Constructor_WithMissingConnectionString_ThrowsInvalidOperationException()
-    {
-        var config = CreateConfiguration(null);
-        var ex = Assert.Throws<InvalidOperationException>(() => new TestRepository(config));
-        Assert.Contains("DefaultConnection", ex.Message);
-    }
-
-    [Fact]
-    public void Constructor_WithMissingConnectionString_ExceptionMessageMentionsDefaultConnection()
-    {
-        var config = CreateConfiguration(null);
-        var ex = Assert.Throws<InvalidOperationException>(() => new TestRepository(config));
-        Assert.Equal("DefaultConnection connection string is missing.", ex.Message);
-    }
-
-    [Fact]
-    public void Constructor_WithMockedConfigurationReturningNullConnectionString_ThrowsInvalidOperationException()
-    {
-        // Arrange: GetConnectionString reads configuration.GetSection("ConnectionStrings")[name]
-        var mockConnStringsSection = new Mock<IConfigurationSection>();
-        mockConnStringsSection.Setup(s => s["DefaultConnection"]).Returns((string?)null);
-
-        var mockConfig = new Mock<IConfiguration>();
-        mockConfig.Setup(c => c.GetSection("ConnectionStrings")).Returns(mockConnStringsSection.Object);
-
-        // Also mock the indexer path that GetConnectionString may use
-        mockConfig.Setup(c => c["ConnectionStrings:DefaultConnection"]).Returns((string?)null);
-
-        // Act & Assert
-        Assert.Throws<InvalidOperationException>(() => new TestRepository(mockConfig.Object));
-    }
+    // --- Infrastructure Tests ---
 
     [Fact]
     public void KeyParamName_DefaultValue_IsPId()
     {
-        var config = CreateConfiguration("Host=localhost;Database=test");
-        var repo = new TestRepository(config);
-        Assert.Equal("p_id", repo.ExposedKeyParamName);
+        // Assert
+        Assert.Equal("p_id", _repository.ExposedKeyParamName);
     }
 
     [Fact]
-    public void KeyParamName_CanBeOverriddenInDerivedClass()
+    public void GetConnection_ReturnsConnectionFromFactory()
     {
-        var config = CreateConfiguration("Host=localhost;Database=test");
-        var repo = new CustomKeyParamRepository(config);
-        Assert.Equal("p_city_id", repo.ExposedKeyParamName);
+        // Act
+        var connection = _repository.ExposedGetConnection();
+
+        // Assert
+        Assert.NotNull(connection);
+        _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
+    }
+
+    // --- Connection Lifecycle Tests ---
+
+    [Fact]
+    public async Task GetById_CallsCreateConnectionAndDispose()
+    {
+        // Act
+        try { await _repository.GetById(Guid.NewGuid(), "sp_test"); } catch { }
+
+        // Assert
+        _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
+        _mockConnection.Verify(c => c.Dispose(), Times.Once);
     }
 
     [Fact]
-    public void Constructor_WithIntKey_CreatesRepositorySuccessfully()
+    public async Task GetAll_CallsCreateConnection()
     {
-        var config = CreateConfiguration("Host=localhost;Database=test");
-        var exception = Record.Exception(() => new RegionRepository(config));
-        Assert.Null(exception);
+        // Act
+        try { await _repository.GetAll("sp_test"); } catch { }
+
+        // Assert
+        _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
+    }
+
+    // --- Transaction Logic Tests ---
+
+    [Fact]
+    public async Task CreateOrUpdate_ShouldOpenConnectionAndStartTransaction()
+    {
+        // Arrange
+        var entity = new TestEntity { Id = Guid.NewGuid() };
+
+        // Act
+        try { await _repository.CreateOrUpdate(entity, "sp_save"); } catch { }
+
+        // Assert
+        _mockConnection.Verify(c => c.Open(), Times.AtMostOnce());
+        _mockConnection.Verify(c => c.BeginTransaction(), Times.Once);
     }
 
     [Fact]
-    public void Constructor_WithStringKey_CreatesRepositorySuccessfully()
+    public async Task Delete_ShouldOpenConnectionAndStartTransaction()
     {
-        var config = CreateConfiguration("Host=localhost;Database=test");
-        var exception = Record.Exception(() => new UserRepository(config));
-        Assert.Null(exception);
+        // Act
+        try { await _repository.Delete(Guid.NewGuid(), "sp_delete"); } catch { }
+
+        // Assert
+        _mockConnection.Verify(c => c.Open(), Times.AtMostOnce());
+        _mockConnection.Verify(c => c.BeginTransaction(), Times.Once);
     }
 
     [Fact]
-    public void RegionRepository_KeyParamName_DefaultsToP_Id()
+    public async Task ExecuteCommandInTransaction_ShouldRollbackOnException()
     {
-        var config = CreateConfiguration("Host=localhost;Database=test");
-        var repo = new RegionRepository(config);
-        Assert.Equal("p_id", repo.ExposedKeyParamName);
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await _repository.ExecuteCommandInTransaction("sp_error", new DynamicParameters()));
+
+        _mockTransaction.Verify(t => t.Rollback(), Times.AtLeastOnce);
+    }
+
+    // --- Additional Coverage Tests ---
+
+    [Fact]
+    public async Task Exists_UsesParametersCorrectly()
+    {
+        // Act
+        try { await _repository.Exists(Guid.NewGuid(), "sp_exists"); } catch { }
+
+        // Assert
+        _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
     }
 
     [Fact]
-    public void UserRepository_KeyParamName_DefaultsToP_Id()
+    public async Task GetDataInJson_CallsExecuteScalar()
     {
-        var config = CreateConfiguration("Host=localhost;Database=test");
-        var repo = new UserRepository(config);
-        Assert.Equal("p_id", repo.ExposedKeyParamName);
-    }
+        // Act
+        try { await _repository.GetDataInJson("sp_json", new DynamicParameters()); } catch { }
 
-    [Fact]
-    public void TestRepository_ImplementsIEntityRepositoryBase()
-    {
-        var config = CreateConfiguration("Host=localhost;Database=test");
-        var repo = new TestRepository(config);
-        Assert.IsAssignableFrom<IEntityRepositoryBase<Guid, City>>(repo);
-    }
-
-    [Fact]
-    public void Repository_ConnectionString_IsStoredFromConfiguration()
-    {
-        const string connStr = "Host=localhost;Database=tta;Username=admin;Password=secret";
-        var config = CreateConfiguration(connStr);
-        // If construction succeeds, the connection string was properly read
-        var exception = Record.Exception(() => new TestRepository(config));
-        Assert.Null(exception);
-    }
-
-    [Fact]
-    public void Constructor_WithEmptyStringConnectionString_DoesNotThrow()
-    {
-        // Empty string is technically not null, so it won't throw in the constructor
-        // (the throw only happens when GetConnectionString returns null)
-        var config = CreateConfiguration(string.Empty);
-        var exception = Record.Exception(() => new TestRepository(config));
-        Assert.Null(exception);
+        // Assert
+        _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
     }
 }

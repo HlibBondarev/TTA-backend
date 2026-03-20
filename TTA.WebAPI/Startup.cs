@@ -2,6 +2,7 @@
 using Serilog;
 using Serilog.Exceptions;
 using TTA.DataAccess;
+using TTA.DataAccess.Repository.Base;
 
 namespace TTA.WebAPI;
 
@@ -29,6 +30,9 @@ public static class Startup
 
         // Run DbUp migrations
         EnsureDatabaseUpsert(connectionString);
+
+        // Register the factory as a singleton since it only holds the connection string logic
+        builder.Services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
         services.AddControllers();
         services.AddEndpointsApiExplorer();

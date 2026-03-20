@@ -46,14 +46,13 @@ jobs:
         run: dotnet build TTA-backend.sln --no-restore
 
       - name: Run tests with coverage
-        # Removed threshold to prevent CI failure during initial setup
-        # Using MergeWith to consolidate reports from multiple test projects
+        # Using a wildcard pattern for CoverletOutput to ensure each test project 
+        # generates a unique opencover.xml file that SonarScanner can find.
         run: |
           dotnet test TTA-backend.sln --no-build --verbosity normal \
           /p:CollectCoverage=true \
           /p:CoverletOutputFormat=opencover \
-          /p:MergeWith="./TestResults/coverage.json" \
-          /p:CoverletOutput="../TestResults/"
+          /p:CoverletOutput=./TestResults/
 
       - name: End Sonar Analysis
         env:
