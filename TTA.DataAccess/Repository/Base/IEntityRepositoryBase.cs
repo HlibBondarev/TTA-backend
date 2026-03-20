@@ -51,32 +51,50 @@ public interface IEntityRepositoryBase<TKey, TEntity>
     /// Executes a function and returns the result as a JSON string.
     /// Useful for complex reports or tree structures.
     /// </summary>
+    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="parameters">Dynamic parameters for the function.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<string?> GetDataInJson(string procName, DynamicParameters parameters, CancellationToken ct = default);
 
     /// <summary>
     /// Checks if an entity exists by its unique identifier.
     /// </summary>
+    /// <param name="id">The unique identifier of the entity.</param>
+    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<bool> Exists(TKey id, string procName, CancellationToken ct = default);
 
     /// <summary>
     /// Checks if an entity exists based on custom criteria.
     /// </summary>
+    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="parameters">Dynamic parameters for the search criteria.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<bool> Exists(string procName, DynamicParameters parameters, CancellationToken ct = default);
 
     /// <summary>
     /// Deletes an entity by its identifier within a transaction.
     /// </summary>
+    /// <param name="id">The unique identifier of the entity to delete.</param>
+    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if the entity was successfully deleted; otherwise, <c>false</c>.</returns>
     Task<bool> Delete(TKey id, string procName, CancellationToken ct = default);
 
     /// <summary>
     /// Executes a non-query command (like an update or complex action) within a transaction.
     /// </summary>
+    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="parameters">Dynamic parameters for the command.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task ExecuteCommandInTransaction(string procName, DynamicParameters parameters, CancellationToken ct = default);
 
     /// <summary>
     /// Executes a query that returns a scalar result of type <typeparamref name="T"/> within a transaction.
     /// </summary>
     /// <typeparam name="T">The type of the result (e.g., long, int, string).</typeparam>
+    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="parameters">Dynamic parameters for the query.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<T> ExecuteQueryInTransaction<T>(string procName, DynamicParameters parameters, CancellationToken ct = default);
 }
