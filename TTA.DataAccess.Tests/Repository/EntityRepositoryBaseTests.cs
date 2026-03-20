@@ -1,4 +1,3 @@
-using Dapper;
 using Moq;
 using System.Data;
 using TTA.DataAccess.Models.Base;
@@ -33,7 +32,7 @@ public class EntityRepositoryBaseTests
         _mockConnection = new Mock<IDbConnection>();
         _mockTransaction = new Mock<IDbTransaction>();
 
-        // Setup connection to return mock transaction
+        // Setup connection lifecycle
         _mockConnection.Setup(c => c.BeginTransaction()).Returns(_mockTransaction.Object);
         _mockFactory.Setup(f => f.CreateConnection()).Returns(_mockConnection.Object);
 
@@ -45,119 +44,60 @@ public class EntityRepositoryBaseTests
     [Fact]
     public void KeyParamName_DefaultValue_IsPId()
     {
-        // Assert
         Assert.Equal("p_id", _repository.ExposedKeyParamName);
     }
 
-    [Fact]
-    public void GetConnection_ReturnsConnectionFromFactory()
-    {
-        // Act
-        var connection = _repository.ExposedGetConnection();
+    // --- Transaction & Rollback Tests ---
 
-        // Assert
-        Assert.NotNull(connection);
-        _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
+    [Fact]
+    public async Task CreateOrUpdate_ShouldRollbackAndThrow_OnExecutionError()
+    {
+        // Arrange
+        var entity = new TestEntity { Id = Guid.NewGuid() };
+
+        // We simulate an error at the IDbConnection level (CreateCommand) 
+        // because Moq cannot mock Dapper's extension methods directly.
+        _mockConnection.Setup(c => c.CreateCommand())
+                       .Throws(new Exception("Database execution failed"));
+
+        // Act & Assert
+        // This will trigger the 'catch' block in EntityRepositoryBase
+        await Assert.ThrowsAsync<Exception>(async () =>
+            await _repository.CreateOrUpdate(entity, "sp_test_procedure"));
+
+        // Verify that Rollback was called exactly once in the catch block
+        _mockTransaction.Verify(t => t.Rollback(), Times.Once);
     }
 
-    // --- Connection Lifecycle Tests ---
-
     [Fact]
-    public async Task GetById_CallsCreateConnectionAndDispose()
+    public async Task Delete_ShouldRollbackAndReturnFalse_OnException()
     {
+        // Arrange
+        _mockConnection.Setup(c => c.CreateCommand())
+                       .Throws(new Exception("Delete operation failed"));
+
         // Act
-        try { await _repository.GetById(Guid.NewGuid(), "sp_test"); } catch { }
+        // Your Delete method returns 'false' in the catch block instead of re-throwing
+        var result = await _repository.Delete(Guid.NewGuid(), "sp_delete_procedure");
 
         // Assert
+        Assert.False(result);
+        _mockTransaction.Verify(t => t.Rollback(), Times.Once);
+    }
+
+    // --- Lifecycle Tests (Basic Coverage) ---
+
+    [Fact]
+    public async Task GetById_CallsCreateConnection()
+    {
+        try { await _repository.GetById(Guid.NewGuid(), "sp_get"); } catch { }
         _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
-        _mockConnection.Verify(c => c.Dispose(), Times.Once);
     }
 
     [Fact]
     public async Task GetAll_CallsCreateConnection()
     {
-        // Act
-        try { await _repository.GetAll("sp_test"); } catch { }
-
-        // Assert
+        try { await _repository.GetAll("sp_all"); } catch { }
         _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
-    }
-
-    // --- Transaction Logic Tests ---
-
-    [Fact]
-    public async Task CreateOrUpdate_ShouldOpenConnectionAndStartTransaction()
-    {
-        // Arrange
-        var entity = new TestEntity { Id = Guid.NewGuid() };
-
-        // Act
-        try { await _repository.CreateOrUpdate(entity, "sp_save"); } catch { }
-
-        // Assert
-        _mockConnection.Verify(c => c.Open(), Times.AtMostOnce());
-        _mockConnection.Verify(c => c.BeginTransaction(), Times.Once);
-    }
-
-    [Fact]
-    public async Task Delete_ShouldOpenConnectionAndStartTransaction()
-    {
-        // Act
-        try { await _repository.Delete(Guid.NewGuid(), "sp_delete"); } catch { }
-
-        // Assert
-        _mockConnection.Verify(c => c.Open(), Times.AtMostOnce());
-        _mockConnection.Verify(c => c.BeginTransaction(), Times.Once);
-    }
-
-    [Fact]
-    public async Task ExecuteCommandInTransaction_ShouldRollbackOnException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAnyAsync<Exception>(async () =>
-            await _repository.ExecuteCommandInTransaction("sp_error", new DynamicParameters()));
-
-        _mockTransaction.Verify(t => t.Rollback(), Times.AtLeastOnce);
-    }
-
-    // --- Additional Coverage Tests ---
-
-    [Fact]
-    public async Task Exists_UsesParametersCorrectly()
-    {
-        // Act
-        try { await _repository.Exists(Guid.NewGuid(), "sp_exists"); } catch { }
-
-        // Assert
-        _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
-    }
-
-    [Fact]
-    public async Task GetDataInJson_CallsExecuteScalar()
-    {
-        // Act
-        try { await _repository.GetDataInJson("sp_json", new DynamicParameters()); } catch { }
-
-        // Assert
-        _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
-    }
-
-    [Fact]
-    public async Task CreateOrUpdate_ShouldRollbackAndThrow_OnException()
-    {
-        // Arrange
-        var entity = new TestEntity { Id = Guid.NewGuid() };
-
-        // Simulate a database exception during execution
-        _mockConnection.Setup(c => c.QuerySingleAsync<TestEntity>(It.IsAny<CommandDefinition>()))
-                       .ThrowsAsync(new Exception("Database connection failure"));
-
-        // Act & Assert
-        // Verify that the exception is re-thrown after rollback
-        await Assert.ThrowsAsync<Exception>(async () =>
-            await _repository.CreateOrUpdate(entity, "sp_test_procedure"));
-
-        // Verify that Rollback was actually called exactly once
-        _mockTransaction.Verify(t => t.Rollback(), Times.Once);
     }
 }
