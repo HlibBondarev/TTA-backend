@@ -1,6 +1,6 @@
 using TTA.DataAccess.Enums;
 
-namespace TTA.WebAPI.Tests.Enums;
+namespace TTA.DataAccess.Tests.Enums;
 
 public class GenderTests
 {
@@ -48,13 +48,13 @@ public class GenderTests
     [Fact]
     public void Gender_ContainsMale()
     {
-        Assert.True(Enum.IsDefined(typeof(Gender), Gender.Male));
+        Assert.True(Enum.IsDefined(Gender.Male));
     }
 
     [Fact]
     public void Gender_ContainsFemale()
     {
-        Assert.True(Enum.IsDefined(typeof(Gender), Gender.Female));
+        Assert.True(Enum.IsDefined(Gender.Female));
     }
 
     [Fact]

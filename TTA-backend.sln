@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.37027.9 d17.14
+VisualStudioVersion = 17.14.37027.9
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.Common", "TTA.Common\TTA.Common.csproj", "{D0A674C8-928E-4C1E-9AC8-DF1F43FF6357}"
 EndProject
@@ -11,7 +11,15 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.BusinessLogic", "TTA.Bu
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.WebAPI", "TTA.WebAPI\TTA.WebAPI.csproj", "{3B70FB1E-4305-4A25-879E-8BD822F9E7E0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.WebAPI.Tests", "TTA.WebAPI.Tests\TTA.WebAPI.Tests.csproj", "{D71F0DE3-D38A-45FB-AEC2-7087D83C79F8}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "MyTests", "MyTests", "{2F1AD982-0A23-4D55-B501-4B2568D924F0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.BusinessLogic.Tests", "TTA.BusinessLogic.Tests\TTA.BusinessLogic.Tests.csproj", "{9E56CD18-C236-4124-A8E4-CC3B4E074916}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.DataAccess.Tests", "TTA.DataAccess.Tests\TTA.DataAccess.Tests.csproj", "{C0016351-7D6B-5676-924F-CF7A79E60003}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.WebAPI.Tests", "TTA.WebAPI.Tests\TTA.WebAPI.Tests.csproj", "{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -35,13 +43,26 @@ Global
 		{3B70FB1E-4305-4A25-879E-8BD822F9E7E0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3B70FB1E-4305-4A25-879E-8BD822F9E7E0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3B70FB1E-4305-4A25-879E-8BD822F9E7E0}.Release|Any CPU.Build.0 = Release|Any CPU
-		{D71F0DE3-D38A-45FB-AEC2-7087D83C79F8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{D71F0DE3-D38A-45FB-AEC2-7087D83C79F8}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{D71F0DE3-D38A-45FB-AEC2-7087D83C79F8}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{D71F0DE3-D38A-45FB-AEC2-7087D83C79F8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9E56CD18-C236-4124-A8E4-CC3B4E074916}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9E56CD18-C236-4124-A8E4-CC3B4E074916}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9E56CD18-C236-4124-A8E4-CC3B4E074916}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9E56CD18-C236-4124-A8E4-CC3B4E074916}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C0016351-7D6B-5676-924F-CF7A79E60003}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C0016351-7D6B-5676-924F-CF7A79E60003}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C0016351-7D6B-5676-924F-CF7A79E60003}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C0016351-7D6B-5676-924F-CF7A79E60003}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{9E56CD18-C236-4124-A8E4-CC3B4E074916} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{C0016351-7D6B-5676-924F-CF7A79E60003} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {3A04BE64-0091-456F-AAF8-8FA61926869C}

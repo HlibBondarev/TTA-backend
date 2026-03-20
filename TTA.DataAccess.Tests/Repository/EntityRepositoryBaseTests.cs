@@ -1,10 +1,9 @@
 using Microsoft.Extensions.Configuration;
 using Moq;
 using TTA.DataAccess.Models;
-using TTA.DataAccess.Models.Base;
 using TTA.DataAccess.Repository.Base;
 
-namespace TTA.WebAPI.Tests.Repository;
+namespace TTA.DataAccess.Tests.Repository;
 
 /// <summary>
 /// Concrete test subclass of EntityRepositoryBase to allow instantiation.

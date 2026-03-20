@@ -1,6 +1,6 @@
 using TTA.DataAccess.Enums;
 
-namespace TTA.WebAPI.Tests.Enums;
+namespace TTA.DataAccess.Tests.Enums;
 
 public class TeamRoleTests
 {
@@ -56,7 +56,7 @@ public class TeamRoleTests
     {
         foreach (TeamRole role in Enum.GetValues<TeamRole>())
         {
-            Assert.True(Enum.IsDefined(typeof(TeamRole), role));
+            Assert.True(Enum.IsDefined(role));
         }
     }
 

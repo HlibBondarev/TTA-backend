@@ -1,6 +1,6 @@
 using TTA.DataAccess.Enums;
 
-namespace TTA.WebAPI.Tests.Enums;
+namespace TTA.DataAccess.Tests.Enums;
 
 public class TimeAnchorTypeTests
 {
@@ -47,7 +47,7 @@ public class TimeAnchorTypeTests
     {
         foreach (TimeAnchorType type in Enum.GetValues<TimeAnchorType>())
         {
-            Assert.True(Enum.IsDefined(typeof(TimeAnchorType), type));
+            Assert.True(Enum.IsDefined(type));
         }
     }
 

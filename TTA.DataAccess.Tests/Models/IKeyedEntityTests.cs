@@ -1,7 +1,7 @@
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Models.Base;
 
-namespace TTA.WebAPI.Tests.Models;
+namespace TTA.DataAccess.Tests.Models;
 
 public class IKeyedEntityTests
 {

@@ -26,7 +26,7 @@ jobs:
           dotnet-version: 9.0.x
 
       - name: Install SonarScanner
-        # Pinning version for reproducible CI as suggested by CodeRabbit
+        # Pinning version for reproducible CI
         run: dotnet tool install --global dotnet-sonarscanner --version 9.2.1
 
       - name: Begin Sonar Analysis
@@ -40,14 +40,15 @@ jobs:
           /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml"
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore TTA-backend.sln
 
       - name: Build projects
-        run: dotnet build --no-restore
+        run: dotnet build TTA-backend.sln --no-restore
 
       - name: Run tests with coverage
+        # Using solution file to ensure all test projects are included after restructuring
         run: |
-          dotnet test --no-build --verbosity normal \
+          dotnet test TTA-backend.sln --no-build --verbosity normal \
           /p:CollectCoverage=true \
           /p:CoverletOutputFormat=opencover \
           /p:Threshold=60
