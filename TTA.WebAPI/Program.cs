@@ -27,7 +27,9 @@ try
     app.Configure();
 
     Log.Information("TTA Application has started successfully");
-    app.Run();
+
+    // Changed to RunAsync to satisfy SonarCloud async-await requirements
+    await app.RunAsync();
 }
 catch (Exception ex)
 {
@@ -36,5 +38,6 @@ catch (Exception ex)
 finally
 {
     Log.Information("TTA Application shut down complete");
-    Log.CloseAndFlush();
+    // Changed to CloseAndFlushAsync to ensure all logs are flushed properly
+    await Log.CloseAndFlushAsync();
 }

@@ -97,7 +97,7 @@ public class IKeyedEntityTests
     public void IKeyedEntityGeneric_CanBeUsedPolymorphically_WithGuidId()
     {
         var id = Guid.NewGuid();
-        IKeyedEntity<Guid> entity = new City { Id = id };
+        City entity = new() { Id = id };
         Assert.Equal(id, entity.Id);
 
         var newId = Guid.NewGuid();
