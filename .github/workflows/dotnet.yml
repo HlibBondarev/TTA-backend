@@ -37,7 +37,7 @@ jobs:
           dotnet-sonarscanner begin /k:"HlibBondarev_TTA-backend" /o:"hlibbondarev" \
           /d:sonar.token="$SONAR_TOKEN" \
           /d:sonar.host.url="https://sonarcloud.io" \
-          /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml"
+          /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/*.xml"
 
       - name: Restore dependencies
         run: dotnet restore TTA-backend.sln
@@ -46,9 +46,10 @@ jobs:
         run: dotnet build TTA-backend.sln --no-restore
 
       - name: Run tests with coverage
-        # Using solution file to ensure all test projects are included after restructuring
+        # Collects all test results into a single directory for SonarCloud to find them
         run: |
           dotnet test TTA-backend.sln --no-build --verbosity normal \
+          --results-directory ./TestResults \
           /p:CollectCoverage=true \
           /p:CoverletOutputFormat=opencover \
           /p:Threshold=60
