@@ -141,4 +141,23 @@ public class EntityRepositoryBaseTests
         // Assert
         _mockFactory.Verify(f => f.CreateConnection(), Times.Once);
     }
+
+    [Fact]
+    public async Task CreateOrUpdate_ShouldRollbackAndThrow_OnException()
+    {
+        // Arrange
+        var entity = new TestEntity { Id = Guid.NewGuid() };
+
+        // Simulate a database exception during execution
+        _mockConnection.Setup(c => c.QuerySingleAsync<TestEntity>(It.IsAny<CommandDefinition>()))
+                       .ThrowsAsync(new Exception("Database connection failure"));
+
+        // Act & Assert
+        // Verify that the exception is re-thrown after rollback
+        await Assert.ThrowsAsync<Exception>(async () =>
+            await _repository.CreateOrUpdate(entity, "sp_test_procedure"));
+
+        // Verify that Rollback was actually called exactly once
+        _mockTransaction.Verify(t => t.Rollback(), Times.Once);
+    }
 }

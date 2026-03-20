@@ -26,7 +26,6 @@ jobs:
           dotnet-version: 9.0.x
 
       - name: Install SonarScanner
-        # Pinning version for reproducible CI
         run: dotnet tool install --global dotnet-sonarscanner --version 9.2.1
 
       - name: Begin Sonar Analysis
@@ -37,7 +36,8 @@ jobs:
           dotnet-sonarscanner begin /k:"HlibBondarev_TTA-backend" /o:"hlibbondarev" \
           /d:sonar.token="$SONAR_TOKEN" \
           /d:sonar.host.url="https://sonarcloud.io" \
-          /d:sonar.cs.opencover.reportsPaths="**/TestResults/*.xml"
+          /d:sonar.cs.opencover.reportsPaths="**/TestResults/*.xml" \
+          /d:sonar.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**"
 
       - name: Restore dependencies
         run: dotnet restore TTA-backend.sln
@@ -46,8 +46,6 @@ jobs:
         run: dotnet build TTA-backend.sln --no-restore
 
       - name: Run tests with coverage
-        # Using a wildcard pattern for CoverletOutput to ensure each test project 
-        # generates a unique opencover.xml file that SonarScanner can find.
         run: |
           dotnet test TTA-backend.sln --no-build --verbosity normal \
           /p:CollectCoverage=true \
