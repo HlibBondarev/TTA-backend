@@ -172,8 +172,14 @@ CREATE TABLE GameEvents (
     PeriodNumber INT NOT NULL,
     EventTimestamp TIMESTAMP NOT NULL, 
     NormalizedMatchTime INTERVAL NULL,
+    -- Indicates if the action led to a goal
+    IsLeadToGoal BOOLEAN NOT NULL DEFAULT FALSE, 
     CreatedAt TIMESTAMP NOT NULL
 );
+
+-- Indexing for optimized lookups by match and player
+CREATE INDEX IX_GameEvents_MatchId ON GameEvents(MatchId);
+CREATE INDEX IX_GameEvents_PlayerId ON GameEvents(PlayerId);
 
 CREATE TABLE PlayerPresences (
     Id UUID PRIMARY KEY,
