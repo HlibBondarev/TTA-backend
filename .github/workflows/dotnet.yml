@@ -51,7 +51,7 @@ jobs:
           dotnet test TTA-backend.sln --no-build --verbosity normal \
           /p:CollectCoverage=true \
           /p:CoverletOutputFormat=opencover \
-          /p:CoverletOutput=./TestResults/
+          --collect:"XPlat Code Coverage"
 
       - name: End Sonar Analysis
         env:
