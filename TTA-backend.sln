@@ -20,6 +20,9 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.WebAPI.Tests", "TTA.WebAPI.Tests\TTA.WebAPI.Tests.csproj", "{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{9293A9AE-AE06-49E8-ABB3-F9331A9A7F54}"
+	ProjectSection(SolutionItems) = preProject
+		coverlet.runsettings = coverlet.runsettings
+	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.Common.Tests", "TTA.Common.Tests\TTA.Common.Tests.csproj", "{6D9F5C24-3B35-4A9D-87AF-3B7398702D8F}"
 EndProject
