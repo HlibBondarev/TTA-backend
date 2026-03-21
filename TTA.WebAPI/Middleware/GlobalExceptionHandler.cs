@@ -27,23 +27,22 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
     /// </returns>
 
     public async ValueTask<bool> TryHandleAsync(
-    HttpContext httpContext,
-    Exception exception,
-    CancellationToken cancellationToken)
+        HttpContext httpContext,
+        Exception exception,
+        CancellationToken cancellationToken)
     {
         logger.LogError(exception, "An unhandled exception has occurred: {Message}", exception.Message);
 
-        // If the response has already started, we cannot modify it
+        // Guard: If headers are already sent, we cannot modify the response
         if (httpContext.Response.HasStarted)
         {
-            logger.LogWarning("The response has already started, the error handler will not be executed.");
+            logger.LogWarning("The response has already started, skipping GlobalExceptionHandler.");
             return false;
         }
 
         var (statusCode, message) = MapException(exception);
         var sanitizedErrors = GetSanitizedValidationErrors(exception);
 
-        // Format a single string for the 'Detail' field
         string? detailedMessage = sanitizedErrors != null
             ? string.Join(" | ", sanitizedErrors.Select(e => $"{e.Key}: {string.Join(", ", e.Value)}"))
             : null;
@@ -63,8 +62,10 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
             problemDetails.Extensions["errors"] = sanitizedErrors;
         }
 
-        // Now it's safe to set status and write the body
+        // Set standard RFC 7807 headers and status code
         httpContext.Response.StatusCode = statusCode;
+        httpContext.Response.ContentType = "application/problem+json"; // Fix for CodeRabbit/RFC 7807
+
         await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
 
         return true;

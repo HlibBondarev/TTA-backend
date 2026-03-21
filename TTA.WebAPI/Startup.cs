@@ -55,7 +55,6 @@ public static class Startup
         {
             app.UseSwagger();
             app.UseSwaggerUI();
-            //app.UseDeveloperExceptionPage();
         }
 
         app.UseRouting();
