@@ -70,4 +70,17 @@ public class ControllerBaseExtensionsTests
         // Assert
         Assert.Equal("user-unique-id", result);
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task GetUserClaims_ShouldThrowInvalidOperationException_WhenHeaderIsWhiteSpace(string headerValue)
+    {
+        // Arrange
+        _controller.Request.Headers["Authorization"] = headerValue;
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _controller.GetUserId(_userServiceMock.Object));
+    }
 }

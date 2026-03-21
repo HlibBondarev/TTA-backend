@@ -36,11 +36,15 @@ public static class ControllerBaseExtensions
     /// <exception cref="AuthenticationException">Thrown when user claims cannot be retrieved from the context.</exception>
     public static async Task<UserFromClaimsDto> GetUserClaims(this ControllerBase controllerBase, ICurrentUserService currentUserService)
     {
-        var authorizationHeader = controllerBase.Request.Headers["Authorization"];
-        var token = authorizationHeader.FirstOrDefault() ??
-            throw new InvalidOperationException("The request headers don't have the Authorization header.");
+        var authorizationHeader = controllerBase.Request.Headers["Authorization"].FirstOrDefault();
 
-        var userFromClaims = (await currentUserService.GetUserPropertiesFromClaims(token)) ??
+        // handle null, empty, or whitespace-only tokens early
+        if (string.IsNullOrWhiteSpace(authorizationHeader))
+        {
+            throw new InvalidOperationException("The request headers don't have a valid Authorization header.");
+        }
+
+        var userFromClaims = await currentUserService.GetUserPropertiesFromClaims(authorizationHeader) ??
             throw new AuthenticationException("Can not get user's claims from Context.");
 
         return userFromClaims;
