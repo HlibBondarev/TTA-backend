@@ -20,6 +20,6 @@ public record UserFromClaimsDto(
     string Email,
 
     [Required]
-    [StringLength(20, MinimumLength = 3)]
+    [StringLength(100, MinimumLength = 3)]
     string Name
 );

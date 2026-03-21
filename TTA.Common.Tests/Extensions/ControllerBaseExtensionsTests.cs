@@ -35,7 +35,8 @@ public class ControllerBaseExtensionsTests
         var expectedDto = new UserFromClaimsDto("id-123", "test@test.com", "Name");
         _controller.Request.Headers["Authorization"] = token;
 
-        _userServiceMock.Setup(s => s.GetUserPropertiesFromClaims(token))
+        // Explicitly include It.IsAny<CancellationToken>() to fix CS0854
+        _userServiceMock.Setup(s => s.GetUserPropertiesFromClaims(token, It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedDto);
 
         // Act
@@ -61,7 +62,8 @@ public class ControllerBaseExtensionsTests
         var expectedDto = new UserFromClaimsDto("user-unique-id", "test@test.com", "Name");
         _controller.Request.Headers["Authorization"] = token;
 
-        _userServiceMock.Setup(s => s.GetUserPropertiesFromClaims(token))
+        // Fix for CS0854 here as well
+        _userServiceMock.Setup(s => s.GetUserPropertiesFromClaims(token, It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedDto);
 
         // Act
