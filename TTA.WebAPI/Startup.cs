@@ -3,6 +3,7 @@ using Serilog;
 using Serilog.Exceptions;
 using TTA.DataAccess;
 using TTA.DataAccess.Repository.Base;
+using TTA.WebAPI.Middleware;
 
 namespace TTA.WebAPI;
 
@@ -35,6 +36,10 @@ public static class Startup
         builder.Services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
         services.AddControllers();
+
+        services.AddExceptionHandler<GlobalExceptionHandler>();
+        services.AddProblemDetails();
+
         services.AddEndpointsApiExplorer();
         services.AddSwaggerGen();
     }
@@ -44,11 +49,12 @@ public static class Startup
     /// </summary>
     public static void Configure(this WebApplication app)
     {
+        app.UseExceptionHandler();
+
         if (app.Environment.IsDevelopment())
         {
             app.UseSwagger();
             app.UseSwaggerUI();
-            app.UseDeveloperExceptionPage();
         }
 
         app.UseRouting();
