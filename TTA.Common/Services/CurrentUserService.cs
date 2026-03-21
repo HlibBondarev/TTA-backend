@@ -17,7 +17,9 @@ public class CurrentUserService(HttpClient httpClient) : ICurrentUserService
     /// <inheritdoc />
     public async Task<UserFromClaimsDto> GetUserPropertiesFromClaims(string authorizationHeader)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, "userinfo");
+        // Rabbit's suggestion: Wrap HttpRequestMessage in a using declaration for proper disposal
+        using var request = new HttpRequestMessage(HttpMethod.Get, "userinfo");
+
         request.Headers.Add("Authorization", authorizationHeader);
 
         var response = await _httpClient.SendAsync(request);
@@ -27,7 +29,6 @@ public class CurrentUserService(HttpClient httpClient) : ICurrentUserService
             throw new UnauthorizedAccessException("The user is not authenticated.");
         }
 
-        // Using our previously created extension for JSON options
         var options = new JsonSerializerOptions().GetDefault();
 
         return (await response.Content.ReadFromJsonAsync<UserFromClaimsDto>(options)) ??
