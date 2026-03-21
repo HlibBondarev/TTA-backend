@@ -16,14 +16,40 @@ public class GlobalExceptionHandlerTests
     private readonly GlobalExceptionHandler _handler;
     private readonly DefaultHttpContext _context;
 
+    // Fix for Sonar: Avoid creating a new JsonSerializerOptions instance for every operation
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    // Fix for Sonar: Use static readonly fields for constant array arguments
+    private static readonly string[] EmailErrors = ["Invalid format", "Too short"];
+
     public GlobalExceptionHandlerTests()
     {
         _loggerMock = new Mock<ILogger<GlobalExceptionHandler>>();
         _handler = new GlobalExceptionHandler(_loggerMock.Object);
-        _context = new DefaultHttpContext();
+        _context = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
+    }
 
-        // Setup a memory stream to capture the response body
-        _context.Response.Body = new MemoryStream();
+    [Fact]
+    public async Task TryHandleAsync_ShouldFormatValidationExceptionData_WhenPresent()
+    {
+        // Arrange
+        var exception = new ValidationException("Validation failed");
+        exception.Data.Add("Email", EmailErrors);
+
+        // Act
+        await _handler.TryHandleAsync(_context, exception, CancellationToken.None);
+
+        // Assert
+        var response = await GetProblemDetailsFromResponse();
+        Assert.Contains("Email: Invalid format, Too short", response.Detail);
+    }
+
+    private async Task<ProblemDetails> GetProblemDetailsFromResponse()
+    {
+        _context.Response.Body.Seek(0, SeekOrigin.Begin);
+        using var reader = new StreamReader(_context.Response.Body);
+        var body = await reader.ReadToEndAsync();
+        return JsonSerializer.Deserialize<ProblemDetails>(body, JsonOptions)!;
     }
 
     [Theory]
@@ -60,20 +86,6 @@ public class GlobalExceptionHandlerTests
         Assert.Equal("Custom error message", response.Detail);
     }
 
-    [Fact]
-    public async Task TryHandleAsync_ShouldFormatValidationExceptionData_WhenPresent()
-    {
-        // Arrange
-        var exception = new ValidationException("Validation failed");
-        exception.Data.Add("Email", new[] { "Invalid format", "Too short" });
-
-        // Act
-        await _handler.TryHandleAsync(_context, exception, CancellationToken.None);
-
-        // Assert
-        var response = await GetProblemDetailsFromResponse();
-        Assert.Contains("Email: Invalid format, Too short", response.Detail);
-    }
 
     [Fact]
     public async Task TryHandleAsync_ShouldIncludeTraceIdInResponse()
@@ -89,16 +101,5 @@ public class GlobalExceptionHandlerTests
         var response = await GetProblemDetailsFromResponse();
         Assert.True(response.Extensions.ContainsKey("traceId"));
         Assert.Equal("test-trace-id", response.Extensions["traceId"]?.ToString());
-    }
-
-    private async Task<ProblemDetails> GetProblemDetailsFromResponse()
-    {
-        _context.Response.Body.Seek(0, SeekOrigin.Begin);
-        using var reader = new StreamReader(_context.Response.Body);
-        var body = await reader.ReadToEndAsync();
-        return JsonSerializer.Deserialize<ProblemDetails>(body, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        })!;
     }
 }
