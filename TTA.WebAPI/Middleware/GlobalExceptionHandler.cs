@@ -26,14 +26,21 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
     /// Returns <c>true</c> if the exception was successfully handled.
     /// </returns>
     public async ValueTask<bool> TryHandleAsync(
-         HttpContext httpContext,
-         Exception exception,
-         CancellationToken cancellationToken)
+        HttpContext httpContext,
+        Exception exception,
+        CancellationToken cancellationToken)
     {
         logger.LogError(exception, "An unhandled exception has occurred: {Message}", exception.Message);
 
         var (statusCode, message) = MapException(exception);
-        var detailedMessage = GetDetailedValidationMessage(exception);
+
+        // 1. Get sanitized validation errors if applicable
+        var sanitizedErrors = GetSanitizedValidationErrors(exception);
+
+        // 2. Format a single string for the 'Detail' field
+        string? detailedMessage = sanitizedErrors != null
+            ? string.Join(" | ", sanitizedErrors.Select(e => $"{e.Key}: {string.Join(", ", e.Value)}"))
+            : null;
 
         var problemDetails = new ProblemDetails
         {
@@ -45,15 +52,35 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
 
         problemDetails.Extensions["traceId"] = httpContext.TraceIdentifier;
 
-        if (exception is ValidationException && exception.Data.Count > 0)
+        // 3. Assign only the sanitized dictionary to extensions (Sonar & CodeRabbit fix)
+        if (sanitizedErrors != null)
         {
-            problemDetails.Extensions["errors"] = exception.Data;
+            problemDetails.Extensions["errors"] = sanitizedErrors;
         }
 
         httpContext.Response.StatusCode = statusCode;
         await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
 
         return true;
+    }
+
+    // New helper method to ensure data safety
+    private static Dictionary<string, string[]>? GetSanitizedValidationErrors(Exception exception)
+    {
+        if (exception is not ValidationException || exception.Data.Count == 0)
+            return null;
+
+        var sanitized = new Dictionary<string, string[]>();
+
+        foreach (System.Collections.DictionaryEntry entry in exception.Data)
+        {
+            if (entry.Key is string key && entry.Value is string[] values)
+            {
+                sanitized[key] = values;
+            }
+        }
+
+        return sanitized.Count > 0 ? sanitized : null;
     }
 
     private static (int StatusCode, string Message) MapException(Exception exception) => exception switch
@@ -70,15 +97,4 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
         OptionsValidationException => (StatusCodes.Status500InternalServerError, "Configuration error."),
         _ => (StatusCodes.Status500InternalServerError, "Internal Server Error.")
     };
-
-    private static string? GetDetailedValidationMessage(Exception exception)
-    {
-        if (exception is not ValidationException || exception.Data.Count == 0) return null;
-
-        var errorList = exception.Data.Cast<System.Collections.DictionaryEntry>()
-            .Where(e => e.Value is string[])
-            .Select(e => $"{e.Key}: {string.Join(", ", (string[])e.Value!)}");
-
-        return string.Join(" | ", errorList);
-    }
 }
