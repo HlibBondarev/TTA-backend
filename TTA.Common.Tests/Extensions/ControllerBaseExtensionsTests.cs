@@ -33,7 +33,7 @@ public class ControllerBaseExtensionsTests
         // Arrange
         var token = "Bearer some-token";
         var expectedDto = new UserFromClaimsDto("id-123", "test@test.com", "Name");
-        _controller.Request.Headers["Authorization"] = token;
+        _controller.Request.Headers.Authorization = token;
 
         // Explicitly include It.IsAny<CancellationToken>() to fix CS0854
         _userServiceMock.Setup(s => s.GetUserPropertiesFromClaims(token, It.IsAny<CancellationToken>()))
@@ -60,7 +60,7 @@ public class ControllerBaseExtensionsTests
         // Arrange
         var token = "Bearer some-token";
         var expectedDto = new UserFromClaimsDto("user-unique-id", "test@test.com", "Name");
-        _controller.Request.Headers["Authorization"] = token;
+        _controller.Request.Headers.Authorization = token;
 
         // Fix for CS0854 here as well
         _userServiceMock.Setup(s => s.GetUserPropertiesFromClaims(token, It.IsAny<CancellationToken>()))
@@ -79,7 +79,7 @@ public class ControllerBaseExtensionsTests
     public async Task GetUserClaims_ShouldThrowInvalidOperationException_WhenHeaderIsWhiteSpace(string headerValue)
     {
         // Arrange
-        _controller.Request.Headers["Authorization"] = headerValue;
+        _controller.Request.Headers.Authorization = headerValue;
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(() =>

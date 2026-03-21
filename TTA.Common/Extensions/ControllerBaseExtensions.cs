@@ -45,7 +45,7 @@ public static class ControllerBaseExtensions
         ICurrentUserService currentUserService,
         CancellationToken ct = default)
     {
-        var authorizationHeader = controllerBase.Request.Headers["Authorization"].FirstOrDefault();
+        var authorizationHeader = controllerBase.Request.Headers.Authorization.FirstOrDefault();
 
         // Validate that the header exists and is not just whitespace
         if (string.IsNullOrWhiteSpace(authorizationHeader))
