@@ -18,6 +18,7 @@ public static class StatusCodeExtensions
         StatusCodes.Status401Unauthorized => "Unauthorized",
         StatusCodes.Status403Forbidden => "Forbidden",
         StatusCodes.Status404NotFound => "Not Found",
-        _ => "Internal Server Error"
+        StatusCodes.Status500InternalServerError => "Internal Server Error",
+        _ => $"Status {statusCode}" // neutral representation
     };
 }
