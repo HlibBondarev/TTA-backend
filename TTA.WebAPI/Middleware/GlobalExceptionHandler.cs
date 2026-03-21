@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using System.ComponentModel.DataAnnotations;
-using System.Security.Authentication;
 using TTA.Common.Exceptions;
 using TTA.Common.Extensions;
 
@@ -92,16 +91,32 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
 
     private static (int StatusCode, string Message) MapException(Exception exception) => exception switch
     {
+        // Custom application-specific exceptions (400, 401, 403, 404)
+        // These are explicitly thrown by us when we know it's a client/business logic error
         BaseException customEx => (customEx.StatusCode, customEx.Message),
-        ArgumentNullException => (StatusCodes.Status400BadRequest, "Request data is missing."),
-        InvalidOperationException => (StatusCodes.Status400BadRequest, exception.Message ?? "Invalid operation."),
-        ArgumentException ex => (StatusCodes.Status400BadRequest, ex.Message ?? "Validation error."),
-        AuthenticationException ex => (StatusCodes.Status401Unauthorized, ex.Message ?? "Auth failed."),
-        KeyNotFoundException ex => (StatusCodes.Status404NotFound, ex.Message ?? "Not found."),
-        UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "Access denied."),
+
+        // Resource not found (404)
+        KeyNotFoundException ex => (StatusCodes.Status404NotFound,
+            string.IsNullOrWhiteSpace(ex.Message) ? "The requested entity was not found." : ex.Message),
+
+        // Permissions and access control (403)
+        UnauthorizedAccessException => (StatusCodes.Status403Forbidden,
+            "Access denied. You do not have the required permissions."),
+
+        // Explicit validation failures (400)
         ValidationException ex => (StatusCodes.Status400BadRequest, ex.Message),
-        NpgsqlException => (StatusCodes.Status500InternalServerError, "Database error."),
-        OptionsValidationException => (StatusCodes.Status500InternalServerError, "Configuration error."),
-        _ => (StatusCodes.Status500InternalServerError, "Internal Server Error.")
+
+        // Database layer exceptions (500)
+        NpgsqlException => (StatusCodes.Status500InternalServerError,
+            "A database error occurred. Please try again later."),
+
+        // Configuration failures (500)
+        OptionsValidationException => (StatusCodes.Status500InternalServerError,
+            "Internal server configuration error."),
+
+        // Fallback for everything else (500)
+        // ArgumentNullException, InvalidOperationException, etc., will now correctly result in a 500 error
+        _ => (StatusCodes.Status500InternalServerError,
+            "An unexpected internal server error occurred. Please try again later.")
     };
 }

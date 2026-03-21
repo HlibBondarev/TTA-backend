@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Moq;
 using System.ComponentModel.DataAnnotations;
-using System.Security.Authentication;
 using System.Text.Json;
 using TTA.Common.Exceptions;
 using TTA.WebAPI.Middleware;
@@ -53,10 +52,12 @@ public class GlobalExceptionHandlerTests
     }
 
     [Theory]
-    [InlineData(typeof(ArgumentNullException), StatusCodes.Status400BadRequest)]
+    // System exceptions should now map to 500 (Internal Server Error)
+    [InlineData(typeof(ArgumentNullException), StatusCodes.Status500InternalServerError)]
+    [InlineData(typeof(InvalidOperationException), StatusCodes.Status500InternalServerError)]
+    // Specifically mapped framework exceptions
     [InlineData(typeof(KeyNotFoundException), StatusCodes.Status404NotFound)]
     [InlineData(typeof(UnauthorizedAccessException), StatusCodes.Status403Forbidden)]
-    [InlineData(typeof(AuthenticationException), StatusCodes.Status401Unauthorized)]
     public async Task TryHandleAsync_ShouldMapExceptionsToCorrectStatusCodes(Type exceptionType, int expectedStatusCode)
     {
         // Arrange
@@ -101,5 +102,20 @@ public class GlobalExceptionHandlerTests
         var response = await GetProblemDetailsFromResponse();
         Assert.True(response.Extensions.ContainsKey("traceId"));
         Assert.Equal("test-trace-id", response.Extensions["traceId"]?.ToString());
+    }
+
+    [Fact]
+    public async Task TryHandleAsync_ShouldMapBaseExceptionToCustomStatusCode()
+    {
+        // Arrange
+        // Assuming you have a BadRequestException inherited from BaseException
+        var exception = new BadRequestException("Client side error");
+
+        // Act
+        var result = await _handler.TryHandleAsync(_context, exception, CancellationToken.None);
+
+        // Assert
+        Assert.True(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, _context.Response.StatusCode);
     }
 }
