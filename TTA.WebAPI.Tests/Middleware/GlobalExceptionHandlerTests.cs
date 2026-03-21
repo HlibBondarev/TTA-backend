@@ -32,7 +32,7 @@ public class GlobalExceptionHandlerTests
         return context;
     }
 
-    private async Task<ProblemDetails> GetProblemDetailsFromResponse(HttpContext context)
+    private static async Task<ProblemDetails> GetProblemDetailsFromResponse(HttpContext context)
     {
         context.Response.Body.Seek(0, SeekOrigin.Begin);
         using var reader = new StreamReader(context.Response.Body);
@@ -80,22 +80,6 @@ public class GlobalExceptionHandlerTests
     }
 
     [Fact]
-    public async Task TryHandleAsync_ShouldFormatValidationExceptionData_WhenPresent()
-    {
-        // Arrange
-        var context = CreateFreshContext();
-        var exception = new ValidationException("Validation failed");
-        exception.Data.Add("Email", EmailErrors);
-
-        // Act
-        await _handler.TryHandleAsync(context, exception, CancellationToken.None);
-
-        // Assert
-        var response = await GetProblemDetailsFromResponse(context);
-        Assert.Contains("Email: Invalid format, Too short", response.Detail);
-    }
-
-    [Fact]
     public async Task TryHandleAsync_ShouldHandleBaseException_WithCustomStatusCode()
     {
         // Arrange
@@ -123,5 +107,32 @@ public class GlobalExceptionHandlerTests
         var response = await GetProblemDetailsFromResponse(context);
         Assert.True(response.Extensions.ContainsKey("traceId"));
         Assert.Equal("test-trace-id", response.Extensions["traceId"]?.ToString());
+    }
+
+    [Fact]
+    public async Task TryHandleAsync_ShouldFormatValidationExceptionData_WhenPresent()
+    {
+        // Arrange
+        var context = CreateFreshContext();
+        var exception = new ValidationException("Validation failed");
+        exception.Data.Add("Email", EmailErrors);
+
+        // Act
+        await _handler.TryHandleAsync(context, exception, CancellationToken.None);
+
+        // Assert
+        var response = await GetProblemDetailsFromResponse(context);
+
+        // 1. Check the flattened string in Detail
+        Assert.Contains("Email: Invalid format, Too short", response.Detail);
+
+        // 2. Check the structured dictionary in Extensions (Nitpick fix)
+        Assert.True(response.Extensions.ContainsKey("errors"));
+        var errors = JsonSerializer.Deserialize<Dictionary<string, string[]>>(
+            response.Extensions["errors"]!.ToString()!, JsonOptions);
+
+        Assert.NotNull(errors);
+        Assert.True(errors.ContainsKey("Email"));
+        Assert.Equal(EmailErrors, errors["Email"]);
     }
 }
