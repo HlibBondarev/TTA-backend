@@ -80,20 +80,6 @@ public class GlobalExceptionHandlerTests
     }
 
     [Fact]
-    public async Task TryHandleAsync_ShouldHandleBaseException_WithCustomStatusCode()
-    {
-        // Arrange
-        var context = CreateFreshContext();
-        var exception = new BadRequestException("Custom client error");
-
-        // Act
-        await _handler.TryHandleAsync(context, exception, CancellationToken.None);
-
-        // Assert
-        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
-    }
-
-    [Fact]
     public async Task TryHandleAsync_ShouldIncludeTraceIdInResponse()
     {
         // Arrange
@@ -134,5 +120,24 @@ public class GlobalExceptionHandlerTests
         Assert.NotNull(errors);
         Assert.True(errors.ContainsKey("Email"));
         Assert.Equal(EmailErrors, errors["Email"]);
+    }
+
+    [Fact]
+    public async Task TryHandleAsync_ShouldHandleBaseException_WithCustomStatusCode()
+    {
+        // Arrange
+        var context = CreateFreshContext();
+        var exception = new BadRequestException("Custom client error");
+
+        // Act
+        // Consolidated: asserting both the return value and the status code in one test
+        var result = await _handler.TryHandleAsync(context, exception, CancellationToken.None);
+
+        // Assert
+        Assert.True(result); // Added as per CodeRabbit's suggestion
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+
+        var response = await GetProblemDetailsFromResponse(context);
+        Assert.Equal("Custom client error", response.Detail);
     }
 }
