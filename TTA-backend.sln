@@ -12,12 +12,17 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.WebAPI", "TTA.WebAPI\TTA.WebAPI.csproj", "{3B70FB1E-4305-4A25-879E-8BD822F9E7E0}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+	ProjectSection(SolutionItems) = preProject
+		coverlet.runsettings = coverlet.runsettings
+	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.BusinessLogic.Tests", "TTA.BusinessLogic.Tests\TTA.BusinessLogic.Tests.csproj", "{9E56CD18-C236-4124-A8E4-CC3B4E074916}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.DataAccess.Tests", "TTA.DataAccess.Tests\TTA.DataAccess.Tests.csproj", "{C0016351-7D6B-5676-924F-CF7A79E60003}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.WebAPI.Tests", "TTA.WebAPI.Tests\TTA.WebAPI.Tests.csproj", "{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TTA.Common.Tests", "TTA.Common.Tests\TTA.Common.Tests.csproj", "{6D9F5C24-3B35-4A9D-87AF-3B7398702D8F}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -53,6 +58,10 @@ Global
 		{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6D9F5C24-3B35-4A9D-87AF-3B7398702D8F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6D9F5C24-3B35-4A9D-87AF-3B7398702D8F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6D9F5C24-3B35-4A9D-87AF-3B7398702D8F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6D9F5C24-3B35-4A9D-87AF-3B7398702D8F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -61,6 +70,7 @@ Global
 		{9E56CD18-C236-4124-A8E4-CC3B4E074916} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{C0016351-7D6B-5676-924F-CF7A79E60003} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{CAF742A6-21BE-4E2D-A81B-7D9FE8B59DCF} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{6D9F5C24-3B35-4A9D-87AF-3B7398702D8F} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {3A04BE64-0091-456F-AAF8-8FA61926869C}
