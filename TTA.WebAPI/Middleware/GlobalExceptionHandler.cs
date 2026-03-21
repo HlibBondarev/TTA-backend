@@ -25,19 +25,25 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
     /// A <see cref="ValueTask{TResult}"/> representing the completion of the operation. 
     /// Returns <c>true</c> if the exception was successfully handled.
     /// </returns>
+
     public async ValueTask<bool> TryHandleAsync(
-        HttpContext httpContext,
-        Exception exception,
-        CancellationToken cancellationToken)
+    HttpContext httpContext,
+    Exception exception,
+    CancellationToken cancellationToken)
     {
         logger.LogError(exception, "An unhandled exception has occurred: {Message}", exception.Message);
 
-        var (statusCode, message) = MapException(exception);
+        // If the response has already started, we cannot modify it
+        if (httpContext.Response.HasStarted)
+        {
+            logger.LogWarning("The response has already started, the error handler will not be executed.");
+            return false;
+        }
 
-        // 1. Get sanitized validation errors if applicable
+        var (statusCode, message) = MapException(exception);
         var sanitizedErrors = GetSanitizedValidationErrors(exception);
 
-        // 2. Format a single string for the 'Detail' field
+        // Format a single string for the 'Detail' field
         string? detailedMessage = sanitizedErrors != null
             ? string.Join(" | ", sanitizedErrors.Select(e => $"{e.Key}: {string.Join(", ", e.Value)}"))
             : null;
@@ -52,12 +58,12 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
 
         problemDetails.Extensions["traceId"] = httpContext.TraceIdentifier;
 
-        // 3. Assign only the sanitized dictionary to extensions (Sonar & CodeRabbit fix)
         if (sanitizedErrors != null)
         {
             problemDetails.Extensions["errors"] = sanitizedErrors;
         }
 
+        // Now it's safe to set status and write the body
         httpContext.Response.StatusCode = statusCode;
         await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
 
