@@ -25,6 +25,7 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
     /// Returns <c>true</c> if the exception was successfully handled.
     /// </returns>
 
+
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext,
         Exception exception,
@@ -65,7 +66,12 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
         httpContext.Response.StatusCode = statusCode;
         httpContext.Response.ContentType = "application/problem+json"; // Fix for CodeRabbit/RFC 7807
 
-        await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
+        // Use the overload that doesn't overwrite our custom Content-Type or set it explicitly in the call
+        await httpContext.Response.WriteAsJsonAsync(
+            problemDetails,
+            options: null, // use default options or your custom ones
+            contentType: "application/problem+json",
+            cancellationToken: cancellationToken);
 
         return true;
     }
