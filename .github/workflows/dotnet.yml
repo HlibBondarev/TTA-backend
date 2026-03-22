@@ -37,8 +37,10 @@ jobs:
           /d:sonar.token="$SONAR_TOKEN" \
           /d:sonar.host.url="https://sonarcloud.io" \
           /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
-          /d:sonar.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**" \
-          /d:sonar.coverage.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**"
+          /d:sonar.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**,**/*.sql" \
+          /d:sonar.coverage.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**,**/*.sql" \
+          /d:sonar.lang.patterns.plsql="**/*.not_exists" \
+          /d:sonar.lang.patterns.tsql="**/*.sql"
 
       - name: Restore dependencies
         run: dotnet restore TTA-backend.sln
