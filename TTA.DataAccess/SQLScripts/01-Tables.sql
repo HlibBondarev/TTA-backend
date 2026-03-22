@@ -196,14 +196,25 @@ CREATE TABLE PlayerPresences (
 
 CREATE TABLE AccessPolicies (
     Id UUID PRIMARY KEY,
-    UserId VARCHAR(64) NOT NULL REFERENCES Users(Id) ON DELETE CASCADE,   
-    -- Storing Enum names for readability: 'FullControl', 'Editor', 'Viewer'
+    UserId VARCHAR(64) NOT NULL REFERENCES Users(Id) ON DELETE CASCADE,
     Role VARCHAR(20) NOT NULL, 
-    -- Scope definition: 'Global', 'Club', 'Team'
     TargetType VARCHAR(20) NOT NULL, 
-    TargetId UUID NULL,             -- NULL for Global scope
+    TargetId UUID NULL,             
     CreatedAt TIMESTAMP NOT NULL,
-    ExpiresAt TIMESTAMP NULL        
+    ExpiresAt TIMESTAMP NULL,
+
+    -- Role and TargetType validation
+    CONSTRAINT CHK_AccessPolicy_Role CHECK (Role IN ('FullControl', 'Editor', 'Viewer')),
+    CONSTRAINT CHK_AccessPolicy_TargetType CHECK (TargetType IN ('Global', 'Club', 'Team')),
+
+    -- TargetId nullability logic based on TargetType
+    CONSTRAINT CHK_AccessPolicy_TargetId_Scope_Logic CHECK (
+        (TargetType = 'Global' AND TargetId IS NULL) OR 
+        (TargetType IN ('Club', 'Team') AND TargetId IS NOT NULL)
+    ),
+
+    -- Date integrity: ExpiresAt must be in the future relative to CreatedAt
+    CONSTRAINT CHK_AccessPolicy_Dates CHECK (ExpiresAt IS NULL OR ExpiresAt > CreatedAt)
 );
 
 CREATE INDEX IX_AccessPolicies_UserId ON AccessPolicies(UserId);
