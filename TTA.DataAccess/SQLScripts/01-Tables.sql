@@ -72,7 +72,7 @@ CREATE TABLE SportConfigurations (
     UsesCleanTime BOOLEAN NOT NULL,
     PeriodsCount INT NOT NULL,
     PeriodDurationMinutes INT NOT NULL,
-    FieldSize VARCHAR(50) NULL,
+    FieldSize VARCHAR(50) NOT NULL,
     RosterLimit INT NOT NULL,
     LineupLimit INT NOT NULL
 );
@@ -189,3 +189,22 @@ CREATE TABLE PlayerPresences (
     TimeIn TIMESTAMP NOT NULL,
     TimeOut TIMESTAMP NULL
 );
+
+-- ==========================================
+-- 6. ACCESS CONTROL & PERMISSIONS
+-- ==========================================
+
+CREATE TABLE AccessPolicies (
+    Id UUID PRIMARY KEY,
+    UserId VARCHAR(64) NOT NULL REFERENCES Users(Id) ON DELETE CASCADE,   
+    -- Storing Enum names for readability: 'FullControl', 'Editor', 'Viewer'
+    Role VARCHAR(20) NOT NULL, 
+    -- Scope definition: 'Global', 'Club', 'Team'
+    TargetType VARCHAR(20) NOT NULL, 
+    TargetId UUID NULL,             -- NULL for Global scope
+    CreatedAt TIMESTAMP NOT NULL,
+    ExpiresAt TIMESTAMP NULL        
+);
+
+CREATE INDEX IX_AccessPolicies_UserId ON AccessPolicies(UserId);
+CREATE INDEX IX_AccessPolicies_Scope ON AccessPolicies(TargetType, TargetId);
