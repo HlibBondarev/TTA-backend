@@ -161,7 +161,11 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
     }
 
     /// <inheritdoc />
-    public async Task<T> ExecuteQueryInTransaction<T>(string procName, DynamicParameters parameters, CancellationToken ct = default)
+    public async Task<T> ExecuteQueryInTransaction<T>(
+    string procName,
+    DynamicParameters parameters,
+    CommandType commandType = CommandType.StoredProcedure, // Added parameter with default value
+    CancellationToken ct = default)
     {
         using var connection = GetConnection();
         if (connection is NpgsqlConnection npgsqlConn) await npgsqlConn.OpenAsync(ct);
@@ -171,7 +175,8 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
 
         try
         {
-            var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+            // Use the passed commandType instead of the hardcoded one
+            var command = new CommandDefinition(procName, parameters, transaction, commandType: commandType, cancellationToken: ct);
             var result = await connection.QuerySingleAsync<T>(command);
             transaction.Commit();
             return result;

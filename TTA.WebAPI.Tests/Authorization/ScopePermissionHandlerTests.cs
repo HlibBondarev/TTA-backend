@@ -150,7 +150,7 @@ public class ScopePermissionHandlerTests
         var authHeader = "Bearer token";
         var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club);
         var httpContext = new DefaultHttpContext();
-        httpContext.Request.Headers["Authorization"] = authHeader;
+        httpContext.Request.Headers.Authorization = authHeader;
 
         // Identity provider returns a DTO but the Id is null/empty
         _currentUserServiceMock

@@ -5,6 +5,7 @@ using TTA.DataAccess.Repository.Auth;
 
 namespace TTA.BusinessLogic.Tests.Services.Auth;
 
+
 /// <summary>
 /// Contains unit tests for the AccessService to verify role-based access logic and hierarchy.
 /// </summary>
@@ -29,8 +30,8 @@ public class AccessServiceTests
         var userId = "auth0|test-user";
         var targetId = Guid.NewGuid();
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club.ToString(), targetId))
-            .ReturnsAsync(AppRole.Editor.ToString());
+            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId))
+            .ReturnsAsync(AppRole.Editor);
 
         // Act
         var result = await _service.HasAccessAsync(userId, AppRole.Editor, TargetScope.Club, targetId);
@@ -51,8 +52,8 @@ public class AccessServiceTests
 
         // User is FullControl (0)
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club.ToString(), targetId))
-            .ReturnsAsync(AppRole.FullControl.ToString());
+            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId))
+            .ReturnsAsync(AppRole.FullControl);
 
         // Act
         // Requirement is only Viewer (2)
@@ -74,8 +75,8 @@ public class AccessServiceTests
 
         // User is Viewer (2)
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club.ToString(), targetId))
-            .ReturnsAsync(AppRole.Viewer.ToString());
+            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId))
+            .ReturnsAsync(AppRole.Viewer);
 
         // Act
         // Requirement is Editor (1)
@@ -93,8 +94,8 @@ public class AccessServiceTests
     {
         // Arrange
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid?>()))
-            .ReturnsAsync((string?)null);
+            .Setup(x => x.GetUserRoleForScope(It.IsAny<string>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>()))
+            .ReturnsAsync((AppRole?)null);
 
         // Act
         var result = await _service.HasAccessAsync("unknown-user", AppRole.Viewer, TargetScope.Global);
