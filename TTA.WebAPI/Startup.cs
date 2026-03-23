@@ -51,19 +51,26 @@ public static class Startup
             options.Audience = configuration["Auth0:Audience"];
         });
 
-        // Authorization Policies
-        services.AddAuthorization(options =>
-        {
-            // Add your custom policies here
-            options.AddPolicy("ClubViewer", policy =>
-                policy.Requirements.Add(new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club)));
+        // Registering the handler with Scoped lifetime (to resolve IAccessService correctly)
+        builder.Services.AddScoped<IAuthorizationHandler, ScopePermissionHandler>();
 
-            options.AddPolicy("ClubAdmin", policy =>
-                policy.Requirements.Add(new ScopePermissionRequirement(AppRole.FullControl, TargetScope.Club)));
-
-            options.AddPolicy("TeamEditor", policy =>
-                policy.Requirements.Add(new ScopePermissionRequirement(AppRole.Editor, TargetScope.Team)));
-        });
+        // Defining policies using the modern AuthorizationBuilder
+        builder.Services.AddAuthorizationBuilder()
+            .AddPolicy("ClubViewer", policy =>
+            {
+                policy.RequireAuthenticatedUser();
+                policy.Requirements.Add(new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club));
+            })
+            .AddPolicy("ClubAdmin", policy =>
+            {
+                policy.RequireAuthenticatedUser();
+                policy.Requirements.Add(new ScopePermissionRequirement(AppRole.FullControl, TargetScope.Club));
+            })
+            .AddPolicy("TeamEditor", policy =>
+            {
+                policy.RequireAuthenticatedUser();
+                policy.Requirements.Add(new ScopePermissionRequirement(AppRole.Editor, TargetScope.Team));
+            });
 
         // Registering HttpClient for CurrentUserService
         services.AddHttpClient<ICurrentUserService, CurrentUserService>(client =>
@@ -73,9 +80,6 @@ public static class Startup
 
         services.AddScoped<IAccessRepository, AccessRepository>();
         services.AddScoped<IAccessService, AccessService>();
-
-        // Handler must be registered as Singleton
-        services.AddSingleton<IAuthorizationHandler, ScopePermissionHandler>();
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
