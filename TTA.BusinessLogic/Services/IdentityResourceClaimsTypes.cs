@@ -1,4 +1,4 @@
-﻿namespace TTA.Common.Services;
+﻿namespace TTA.BusinessLogic.Services;
 
 /// <summary>
 /// Contains names of the standard identity resource claims types.

@@ -1,8 +1,14 @@
 ﻿using DbUp;
+using Microsoft.AspNetCore.Authorization;
 using Serilog;
 using Serilog.Exceptions;
+using TTA.BusinessLogic.Services;
+using TTA.BusinessLogic.Services.Api;
+using TTA.Common.Enums;
 using TTA.DataAccess;
+using TTA.DataAccess.Repository.Auth;
 using TTA.DataAccess.Repository.Base;
+using TTA.WebAPI.Authorization;
 using TTA.WebAPI.Middleware;
 
 namespace TTA.WebAPI;
@@ -26,20 +32,60 @@ public static class Startup
         // REMOVED .WriteTo.Console() here because it's already in appsettings.json
 
         var services = builder.Services;
+        var configuration = builder.Configuration;
+
         // Get connection string from configuration (secrets.json)
-        var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+        var connectionString = configuration.GetConnectionString("DefaultConnection");
 
         // Run DbUp migrations
         EnsureDatabaseUpsert(connectionString);
 
-        // Register the factory as a singleton since it only holds the connection string logic
-        builder.Services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
+        // Authentication (Auth0)
+        _ = services.AddAuthentication(options =>
+        {
+            options.DefaultAuthenticateScheme = "JwtBearer";
+            options.DefaultChallengeScheme = "JwtBearer";
+        }).AddJwtBearer("JwtBearer", options =>
+        {
+            options.Authority = configuration["Auth0:Authority"];
+            options.Audience = configuration["Auth0:Audience"];
+        });
+
+        // Registering the handler with Scoped lifetime (to resolve IAccessService correctly)
+        builder.Services.AddScoped<IAuthorizationHandler, ScopePermissionHandler>();
+
+        // Defining policies using the modern AuthorizationBuilder
+        builder.Services.AddAuthorizationBuilder()
+            .AddPolicy("ClubViewer", policy =>
+            {
+                policy.RequireAuthenticatedUser();
+                policy.Requirements.Add(new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club));
+            })
+            .AddPolicy("ClubAdmin", policy =>
+            {
+                policy.RequireAuthenticatedUser();
+                policy.Requirements.Add(new ScopePermissionRequirement(AppRole.FullControl, TargetScope.Club));
+            })
+            .AddPolicy("TeamEditor", policy =>
+            {
+                policy.RequireAuthenticatedUser();
+                policy.Requirements.Add(new ScopePermissionRequirement(AppRole.Editor, TargetScope.Team));
+            });
+
+        // Registering HttpClient for CurrentUserService
+        services.AddHttpClient<ICurrentUserService, CurrentUserService>(client =>
+        {
+            client.BaseAddress = new Uri(configuration["Auth0:Authority"]!);
+        });
+
+        services.AddScoped<IAccessRepository, AccessRepository>();
+        services.AddScoped<IAccessService, AccessService>();
+
+        services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
         services.AddControllers();
-
         services.AddExceptionHandler<GlobalExceptionHandler>();
         services.AddProblemDetails();
-
         services.AddEndpointsApiExplorer();
         services.AddSwaggerGen();
     }
@@ -58,6 +104,10 @@ public static class Startup
         }
 
         app.UseRouting();
+
+        app.UseAuthentication(); // Who are you? (JWT check)
+        app.UseAuthorization();  // Can you come here? (Policy check)
+
         app.MapControllers();
 
         // Ensure all logs are written before the application exits

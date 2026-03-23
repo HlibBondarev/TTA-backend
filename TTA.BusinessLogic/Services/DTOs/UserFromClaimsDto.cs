@@ -1,7 +1,7 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 
-namespace TTA.Common.Services.DTOs;
+namespace TTA.BusinessLogic.Services.DTOs;
 
 /// <summary>
 /// Data transfer object representing user information retrieved from identity claims.
@@ -23,3 +23,4 @@ public record UserFromClaimsDto(
     [StringLength(100, MinimumLength = 3)]
     string Name
 );
+

@@ -2,11 +2,11 @@
 using System.Net.Http.Json;
 using System.Security.Authentication;
 using System.Text.Json;
+using TTA.BusinessLogic.Services.Api;
+using TTA.BusinessLogic.Services.DTOs;
 using TTA.Common.Extensions;
-using TTA.Common.Services.Api;
-using TTA.Common.Services.DTOs;
 
-namespace TTA.Common.Services;
+namespace TTA.BusinessLogic.Services;
 
 /// <summary>
 /// Implementation of the current user service using an HttpClient to communicate with a 'userinfo' endpoint.

@@ -1,8 +1,9 @@
-﻿using TTA.DataAccess.Enums;
+using TTA.Common.Enums;
+using TTA.DataAccess.Models.Base;
 
 namespace TTA.DataAccess.Models.Auth;
 
-public class AccessPolicy
+public class AccessPolicy : IKeyedEntity<Guid>
 {
     public Guid Id { get; set; }
     public string UserId { get; set; } = string.Empty;

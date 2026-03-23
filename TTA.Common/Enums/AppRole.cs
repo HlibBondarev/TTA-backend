@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel;
 
-namespace TTA.DataAccess.Enums;
+namespace TTA.Common.Enums;
 
 public enum AppRole
 {
