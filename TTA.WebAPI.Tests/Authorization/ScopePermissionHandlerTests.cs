@@ -3,70 +3,62 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging;
-using Microsoft.Net.Http.Headers;
 using Moq;
 using System.Security.Claims;
 using TTA.BusinessLogic.Services.Api;
-using TTA.BusinessLogic.Services.DTOs;
 using TTA.Common.Enums;
 using TTA.WebAPI.Authorization;
 
 namespace TTA.WebAPI.Tests.Authorization;
 
 /// <summary>
-/// Unit tests for ScopePermissionHandler to ensure proper integration between
-/// HTTP context data, user identity fetching, and access validation.
+/// Unit tests for ScopePermissionHandler to ensure proper extraction of user identity 
+/// from claims and validation of permissions via AccessService.
 /// </summary>
 public class ScopePermissionHandlerTests
 {
     private readonly Mock<IAccessService> _accessServiceMock;
-    private readonly Mock<ICurrentUserService> _currentUserServiceMock;
     private readonly Mock<ILogger<ScopePermissionHandler>> _loggerMock;
     private readonly ScopePermissionHandler _handler;
 
     public ScopePermissionHandlerTests()
     {
         _accessServiceMock = new Mock<IAccessService>();
-        _currentUserServiceMock = new Mock<ICurrentUserService>();
         _loggerMock = new Mock<ILogger<ScopePermissionHandler>>();
 
+        // ICurrentUserService is no longer needed in the constructor
         _handler = new ScopePermissionHandler(
             _accessServiceMock.Object,
-            _currentUserServiceMock.Object,
             _loggerMock.Object);
     }
 
     [Fact]
-    public async Task HandleAsync_ShouldSucceed_WhenUserHasValidPermission()
+    public async Task HandleAsync_ShouldSucceed_WhenUserHasValidPermissionInClaims()
     {
         // Arrange
         var userId = "auth0|789";
         var clubId = Guid.NewGuid();
-        var authHeader = "Bearer valid-token";
         var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club);
 
-        var httpContext = new DefaultHttpContext();
-        httpContext.Request.Headers[HeaderNames.Authorization] = authHeader;
+        // 1. Create ClaimsPrincipal with 'sub' claim
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("sub", userId)
+        }, "TestAuth"));
 
-        // FIX: Manually inject the Routing Feature
+        // 2. Setup HttpContext with Routing Feature
+        var httpContext = new DefaultHttpContext();
         var routeValuesFeature = new RouteValuesFeature
         {
             RouteValues = new RouteValueDictionary { { "clubId", clubId.ToString() } }
         };
         httpContext.Features.Set<IRouteValuesFeature>(routeValuesFeature);
 
-        // FIX: Use positional constructor for the record
-        var userDto = new UserFromClaimsDto(userId, "test@example.com", "Test User");
-
-        _currentUserServiceMock
-            .Setup(x => x.GetUserPropertiesFromClaims(authHeader, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(userDto);
-
         _accessServiceMock
             .Setup(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Club, clubId))
             .ReturnsAsync(true);
 
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, new System.Security.Claims.ClaimsPrincipal(), httpContext);
+        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
 
         // Act
         await _handler.HandleAsync(authContext);
@@ -74,27 +66,25 @@ public class ScopePermissionHandlerTests
         // Assert
         Assert.True(authContext.HasSucceeded);
     }
+
     [Fact]
-    public async Task HandleAsync_ShouldNotSucceed_WhenUserIdIsMissingFromClaims()
+    public async Task HandleAsync_ShouldNotSucceed_WhenSubClaimIsMissing()
     {
         // Arrange
-        var authHeader = "Bearer token-with-no-sub";
         var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club);
 
+        // Empty principal without 'sub' or 'NameIdentifier'
+        var user = new ClaimsPrincipal(new ClaimsIdentity());
         var httpContext = new DefaultHttpContext();
-        httpContext.Request.Headers[HeaderNames.Authorization] = authHeader;
 
-        _currentUserServiceMock
-            .Setup(x => x.GetUserPropertiesFromClaims(authHeader, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UserFromClaimsDto(string.Empty, "test@example.com", "Test User"));
-
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, new ClaimsPrincipal(), httpContext);
+        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
 
         // Act
         await _handler.HandleAsync(authContext);
 
         // Assert
         Assert.False(authContext.HasSucceeded);
+        _accessServiceMock.Verify(x => x.HasAccessAsync(It.IsAny<string>(), It.IsAny<AppRole>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>()), Times.Never);
     }
 
     [Fact]
@@ -102,62 +92,16 @@ public class ScopePermissionHandlerTests
     {
         // Arrange
         var userId = "auth0|denied-user";
-        var authHeader = "Bearer some-token";
         var requirement = new ScopePermissionRequirement(AppRole.FullControl, TargetScope.Club);
 
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, userId) }));
         var httpContext = new DefaultHttpContext();
-        httpContext.Request.Headers[HeaderNames.Authorization] = authHeader;
-
-        _currentUserServiceMock
-            .Setup(x => x.GetUserPropertiesFromClaims(authHeader, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UserFromClaimsDto(userId, "test@example.com", "Test User"));
 
         _accessServiceMock
             .Setup(x => x.HasAccessAsync(userId, It.IsAny<AppRole>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>()))
             .ReturnsAsync(false);
 
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, new ClaimsPrincipal(), httpContext);
-
-        // Act
-        await _handler.HandleAsync(authContext);
-
-        // Assert
-        Assert.False(authContext.HasSucceeded);
-    }
-
-    [Fact]
-    public async Task HandleRequirementAsync_ShouldNotSucceed_WhenAuthHeaderIsMissing()
-    {
-        // Arrange
-        var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club);
-        var httpContext = new DefaultHttpContext(); // No Authorization header added here
-
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, new ClaimsPrincipal(), httpContext);
-
-        // Act
-        await _handler.HandleAsync(authContext);
-
-        // Assert
-        Assert.False(authContext.HasSucceeded);
-        // Verify that access service was never even called
-        _accessServiceMock.Verify(x => x.HasAccessAsync(It.IsAny<string>(), It.IsAny<AppRole>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task HandleRequirementAsync_ShouldNotSucceed_WhenIdentityReturnsEmptyId()
-    {
-        // Arrange
-        var authHeader = "Bearer token";
-        var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club);
-        var httpContext = new DefaultHttpContext();
-        httpContext.Request.Headers.Authorization = authHeader;
-
-        // Identity provider returns a DTO but the Id is null/empty
-        _currentUserServiceMock
-            .Setup(x => x.GetUserPropertiesFromClaims(authHeader, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UserFromClaimsDto(string.Empty, "test@test.com", "User"));
-
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, new ClaimsPrincipal(), httpContext);
+        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
 
         // Act
         await _handler.HandleAsync(authContext);
@@ -171,33 +115,52 @@ public class ScopePermissionHandlerTests
     {
         // Arrange
         var userId = "auth0|global-user";
-        var authHeader = "Bearer global-token";
-
-        // 1. Requirement with TargetScope.Global
         var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Global);
 
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", userId) }));
         var httpContext = new DefaultHttpContext();
-        httpContext.Request.Headers[HeaderNames.Authorization] = authHeader;
-        // Note: No route values are set because Global scope doesn't target a specific resource ID
 
-        _currentUserServiceMock
-            .Setup(x => x.GetUserPropertiesFromClaims(authHeader, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new UserFromClaimsDto(userId, "admin@tta.com", "Admin User"));
-
-        // 2. Mock AccessService to return true for Global scope (resourceId must be null)
         _accessServiceMock
             .Setup(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Global, null))
             .ReturnsAsync(true);
 
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, new ClaimsPrincipal(), httpContext);
+        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
 
         // Act
         await _handler.HandleAsync(authContext);
 
         // Assert
         Assert.True(authContext.HasSucceeded);
-
-        // Verify that the service was indeed called with null for the resourceId
         _accessServiceMock.Verify(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Global, null), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ShouldCorrectlyParseTeamIdFromRoute()
+    {
+        // Arrange
+        var userId = "auth0|team-user";
+        var teamId = Guid.NewGuid();
+        var requirement = new ScopePermissionRequirement(AppRole.Editor, TargetScope.Team);
+
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", userId) }));
+        var httpContext = new DefaultHttpContext();
+
+        var routeValuesFeature = new RouteValuesFeature
+        {
+            RouteValues = new RouteValueDictionary { { "teamId", teamId.ToString() } }
+        };
+        httpContext.Features.Set<IRouteValuesFeature>(routeValuesFeature);
+
+        _accessServiceMock
+            .Setup(x => x.HasAccessAsync(userId, AppRole.Editor, TargetScope.Team, teamId))
+            .ReturnsAsync(true);
+
+        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
+
+        // Act
+        await _handler.HandleAsync(authContext);
+
+        // Assert
+        Assert.True(authContext.HasSucceeded);
     }
 }
