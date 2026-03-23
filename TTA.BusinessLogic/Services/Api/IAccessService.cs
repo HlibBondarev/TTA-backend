@@ -16,5 +16,6 @@ public interface IAccessService
         string userId,
         AppRole requiredRole,
         TargetScope targetType,
-        Guid? targetId = null);
+        Guid? targetId = null,
+        CancellationToken ct = default);
 }

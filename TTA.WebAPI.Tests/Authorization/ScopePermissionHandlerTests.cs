@@ -41,10 +41,10 @@ public class ScopePermissionHandlerTests
         var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club);
 
         // 1. Create ClaimsPrincipal with 'sub' claim
-        var user = new ClaimsPrincipal(new ClaimsIdentity(new[]
-        {
+        var user = new ClaimsPrincipal(new ClaimsIdentity(
+        [
             new Claim("sub", userId)
-        }, "TestAuth"));
+        ], "TestAuth"));
 
         // 2. Setup HttpContext with Routing Feature
         var httpContext = new DefaultHttpContext();
@@ -55,10 +55,10 @@ public class ScopePermissionHandlerTests
         httpContext.Features.Set<IRouteValuesFeature>(routeValuesFeature);
 
         _accessServiceMock
-            .Setup(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Club, clubId))
+            .Setup(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Club, clubId, default))
             .ReturnsAsync(true);
 
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
+        var authContext = new AuthorizationHandlerContext([requirement], user, httpContext);
 
         // Act
         await _handler.HandleAsync(authContext);
@@ -77,14 +77,14 @@ public class ScopePermissionHandlerTests
         var user = new ClaimsPrincipal(new ClaimsIdentity());
         var httpContext = new DefaultHttpContext();
 
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
+        var authContext = new AuthorizationHandlerContext([requirement], user, httpContext);
 
         // Act
         await _handler.HandleAsync(authContext);
 
         // Assert
         Assert.False(authContext.HasSucceeded);
-        _accessServiceMock.Verify(x => x.HasAccessAsync(It.IsAny<string>(), It.IsAny<AppRole>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>()), Times.Never);
+        _accessServiceMock.Verify(x => x.HasAccessAsync(It.IsAny<string>(), It.IsAny<AppRole>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>(), default), Times.Never);
     }
 
     [Fact]
@@ -94,14 +94,14 @@ public class ScopePermissionHandlerTests
         var userId = "auth0|denied-user";
         var requirement = new ScopePermissionRequirement(AppRole.FullControl, TargetScope.Club);
 
-        var user = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, userId) }));
+        var user = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, userId)]));
         var httpContext = new DefaultHttpContext();
 
         _accessServiceMock
-            .Setup(x => x.HasAccessAsync(userId, It.IsAny<AppRole>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>()))
+            .Setup(x => x.HasAccessAsync(userId, It.IsAny<AppRole>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>(), default))
             .ReturnsAsync(false);
 
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
+        var authContext = new AuthorizationHandlerContext([requirement], user, httpContext);
 
         // Act
         await _handler.HandleAsync(authContext);
@@ -117,21 +117,21 @@ public class ScopePermissionHandlerTests
         var userId = "auth0|global-user";
         var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Global);
 
-        var user = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", userId) }));
+        var user = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", userId)]));
         var httpContext = new DefaultHttpContext();
 
         _accessServiceMock
-            .Setup(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Global, null))
+            .Setup(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Global, null, default))
             .ReturnsAsync(true);
 
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
+        var authContext = new AuthorizationHandlerContext([requirement], user, httpContext);
 
         // Act
         await _handler.HandleAsync(authContext);
 
         // Assert
         Assert.True(authContext.HasSucceeded);
-        _accessServiceMock.Verify(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Global, null), Times.Once);
+        _accessServiceMock.Verify(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Global, null, default), Times.Once);
     }
 
     [Fact]
@@ -142,7 +142,7 @@ public class ScopePermissionHandlerTests
         var teamId = Guid.NewGuid();
         var requirement = new ScopePermissionRequirement(AppRole.Editor, TargetScope.Team);
 
-        var user = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", userId) }));
+        var user = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", userId)]));
         var httpContext = new DefaultHttpContext();
 
         var routeValuesFeature = new RouteValuesFeature
@@ -152,10 +152,10 @@ public class ScopePermissionHandlerTests
         httpContext.Features.Set<IRouteValuesFeature>(routeValuesFeature);
 
         _accessServiceMock
-            .Setup(x => x.HasAccessAsync(userId, AppRole.Editor, TargetScope.Team, teamId))
+            .Setup(x => x.HasAccessAsync(userId, AppRole.Editor, TargetScope.Team, teamId, default))
             .ReturnsAsync(true);
 
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
+        var authContext = new AuthorizationHandlerContext([requirement], user, httpContext);
 
         // Act
         await _handler.HandleAsync(authContext);
@@ -170,7 +170,7 @@ public class ScopePermissionHandlerTests
         // Arrange
         var userId = "auth0|test-user";
         var requirement = new ScopePermissionRequirement(AppRole.Editor, TargetScope.Club);
-        var user = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", userId) }));
+        var user = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", userId)]));
 
         var httpContext = new DefaultHttpContext();
         // Providing an invalid GUID string to trigger the short-circuit
@@ -180,7 +180,7 @@ public class ScopePermissionHandlerTests
         };
         httpContext.Features.Set<IRouteValuesFeature>(routeValuesFeature);
 
-        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
+        var authContext = new AuthorizationHandlerContext([requirement], user, httpContext);
 
         // Act
         await _handler.HandleAsync(authContext);
@@ -192,6 +192,7 @@ public class ScopePermissionHandlerTests
             It.IsAny<string>(),
             It.IsAny<AppRole>(),
             It.IsAny<TargetScope>(),
-            It.IsAny<Guid?>()), Times.Never);
+            It.IsAny<Guid?>(),
+            default), Times.Never);
     }
 }

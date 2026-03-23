@@ -30,7 +30,7 @@ public class AccessServiceTests
         var userId = "auth0|test-user";
         var targetId = Guid.NewGuid();
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId))
+            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId, default))
             .ReturnsAsync(AppRole.Editor);
 
         // Act
@@ -52,7 +52,7 @@ public class AccessServiceTests
 
         // User is FullControl (0)
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId))
+            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId, default))
             .ReturnsAsync(AppRole.FullControl);
 
         // Act
@@ -75,7 +75,7 @@ public class AccessServiceTests
 
         // User is Viewer (2)
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId))
+            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId, default))
             .ReturnsAsync(AppRole.Viewer);
 
         // Act
@@ -94,7 +94,7 @@ public class AccessServiceTests
     {
         // Arrange
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(It.IsAny<string>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>()))
+            .Setup(x => x.GetUserRoleForScope(It.IsAny<string>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>(), default))
             .ReturnsAsync((AppRole?)null);
 
         // Act
