@@ -74,4 +74,30 @@ public class CurrentUserServiceTests
 
         Assert.Contains("Identity provider returned an unexpected status code: InternalServerError", ex.Message);
     }
+
+    [Fact]
+    public async Task GetUserPropertiesFromClaims_ShouldThrowAuthenticationException_WhenDeserializationReturnsNull()
+    {
+        // Arrange
+        // "null" is a valid JSON token that results in a null object after deserialization.
+        // This allows the code to pass the JSON check but fail the null check on line 48.
+        var responseContent = new StringContent("null", System.Text.Encoding.UTF8, "application/json");
+
+        _handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = responseContent
+            });
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<System.Security.Authentication.AuthenticationException>(() =>
+            _service.GetUserPropertiesFromClaims("Bearer valid-token"));
+
+        Assert.Equal("Failed to deserialize user properties from the identity provider response.", ex.Message);
+    }
 }
