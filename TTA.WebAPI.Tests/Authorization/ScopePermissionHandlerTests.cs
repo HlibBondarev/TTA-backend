@@ -124,4 +124,80 @@ public class ScopePermissionHandlerTests
         // Assert
         Assert.False(authContext.HasSucceeded);
     }
+
+    [Fact]
+    public async Task HandleRequirementAsync_ShouldNotSucceed_WhenAuthHeaderIsMissing()
+    {
+        // Arrange
+        var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club);
+        var httpContext = new DefaultHttpContext(); // No Authorization header added here
+
+        var authContext = new AuthorizationHandlerContext(new[] { requirement }, new ClaimsPrincipal(), httpContext);
+
+        // Act
+        await _handler.HandleAsync(authContext);
+
+        // Assert
+        Assert.False(authContext.HasSucceeded);
+        // Verify that access service was never even called
+        _accessServiceMock.Verify(x => x.HasAccessAsync(It.IsAny<string>(), It.IsAny<AppRole>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleRequirementAsync_ShouldNotSucceed_WhenIdentityReturnsEmptyId()
+    {
+        // Arrange
+        var authHeader = "Bearer token";
+        var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["Authorization"] = authHeader;
+
+        // Identity provider returns a DTO but the Id is null/empty
+        _currentUserServiceMock
+            .Setup(x => x.GetUserPropertiesFromClaims(authHeader, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UserFromClaimsDto(string.Empty, "test@test.com", "User"));
+
+        var authContext = new AuthorizationHandlerContext(new[] { requirement }, new ClaimsPrincipal(), httpContext);
+
+        // Act
+        await _handler.HandleAsync(authContext);
+
+        // Assert
+        Assert.False(authContext.HasSucceeded);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ShouldSucceed_WhenRequirementIsGlobal()
+    {
+        // Arrange
+        var userId = "auth0|global-user";
+        var authHeader = "Bearer global-token";
+
+        // 1. Requirement with TargetScope.Global
+        var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Global);
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers[HeaderNames.Authorization] = authHeader;
+        // Note: No route values are set because Global scope doesn't target a specific resource ID
+
+        _currentUserServiceMock
+            .Setup(x => x.GetUserPropertiesFromClaims(authHeader, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UserFromClaimsDto(userId, "admin@tta.com", "Admin User"));
+
+        // 2. Mock AccessService to return true for Global scope (resourceId must be null)
+        _accessServiceMock
+            .Setup(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Global, null))
+            .ReturnsAsync(true);
+
+        var authContext = new AuthorizationHandlerContext(new[] { requirement }, new ClaimsPrincipal(), httpContext);
+
+        // Act
+        await _handler.HandleAsync(authContext);
+
+        // Assert
+        Assert.True(authContext.HasSucceeded);
+
+        // Verify that the service was indeed called with null for the resourceId
+        _accessServiceMock.Verify(x => x.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Global, null), Times.Once);
+    }
 }

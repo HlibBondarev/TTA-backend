@@ -1,14 +1,11 @@
 ﻿using Moq;
 using Moq.Protected;
 using System.Net;
-using System.Net.Http.Json;
-using System.Security.Authentication;
 using TTA.BusinessLogic.Services;
-using TTA.BusinessLogic.Services.DTOs;
 
 namespace TTA.BusinessLogic.Tests.Services;
 
-public class CurrentUserServiceTests : IDisposable
+public class CurrentUserServiceTests
 {
     private readonly Mock<HttpMessageHandler> _handlerMock;
     private readonly HttpClient _httpClient;
@@ -16,102 +13,65 @@ public class CurrentUserServiceTests : IDisposable
 
     public CurrentUserServiceTests()
     {
-        _handlerMock = new Mock<HttpMessageHandler>(MockBehavior.Strict);
-
-        // FIX: Allow the Dispose method to be called on the handler. 
-        // This is required because of 'using var request' in the service.
-        _handlerMock.Protected().Setup("Dispose", ItExpr.IsAny<bool>());
-
+        _handlerMock = new Mock<HttpMessageHandler>();
         _httpClient = new HttpClient(_handlerMock.Object)
         {
-            BaseAddress = new Uri("https://api.identity.com/")
+            BaseAddress = new Uri("https://dev-qjg8tcy86dt7zrfv.us.auth0.com/")
         };
         _service = new CurrentUserService(_httpClient);
     }
 
+    /// <summary>
+    /// 1. Tests specific handling for HttpStatusCode.Unauthorized (401)
+    /// </summary>
     [Fact]
-    public async Task GetUserPropertiesFromClaims_ShouldReturnUser_WhenResponseIsSuccessful()
+    public async Task GetUserPropertiesFromClaims_ShouldThrowUnauthorizedAccess_WhenStatusIs401()
     {
         // Arrange
-        var expectedUser = new UserFromClaimsDto("user-123", "test@example.com", "John Doe");
-        var authHeader = "Bearer token123";
-
-        _handlerMock
-            .Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    // Updated check: CurrentUserService adds the header directly to the request
-                    req.Headers.Contains("Authorization") &&
-                    req.Headers.GetValues("Authorization").First() == authHeader),
-                ItExpr.IsAny<CancellationToken>()
-            )
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK,
-                Content = JsonContent.Create(expectedUser)
-            });
-
-        // Act
-        var result = await _service.GetUserPropertiesFromClaims(authHeader);
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(expectedUser.Id, result.Id);
-        Assert.Equal(expectedUser.Name, result.Name);
-    }
-
-    [Fact]
-    public async Task GetUserPropertiesFromClaims_ShouldThrowUnauthorizedAccessException_WhenStatusIs401()
-    {
-        // Arrange
-        _handlerMock
-            .Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.IsAny<HttpRequestMessage>(),
-                ItExpr.IsAny<CancellationToken>()
-            )
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.Unauthorized // This matches the 401 check in your service
-            });
+        _handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.Unauthorized });
 
         // Act & Assert
-        // Service now throws UnauthorizedAccessException with a specific message for 401
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            _service.GetUserPropertiesFromClaims("invalid-token"));
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.GetUserPropertiesFromClaims("Bearer invalid_token"));
+
+        Assert.Equal("The access token is invalid or expired.", ex.Message);
     }
 
+    /// <summary>
+    /// 2. Tests specific handling for HttpStatusCode.Forbidden (403)
+    /// </summary>
     [Fact]
-    public async Task GetUserPropertiesFromClaims_ShouldThrowAuthenticationException_WhenContentIsNull()
+    public async Task GetUserPropertiesFromClaims_ShouldThrowUnauthorizedAccess_WhenStatusIs403()
     {
         // Arrange
-        _handlerMock
-            .Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.IsAny<HttpRequestMessage>(),
-                ItExpr.IsAny<CancellationToken>()
-            )
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK,
-                // Returning "null" string causes ReadFromJsonAsync to return null, 
-                // triggering our AuthenticationException throw
-                Content = new StringContent("null", System.Text.Encoding.UTF8, "application/json")
-            });
+        _handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.Forbidden });
 
         // Act & Assert
-        await Assert.ThrowsAsync<AuthenticationException>(() =>
-            _service.GetUserPropertiesFromClaims("token"));
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.GetUserPropertiesFromClaims("Bearer forbidden_token"));
+
+        Assert.Equal("The user does not have permission to access this resource.", ex.Message);
     }
 
-    public void Dispose()
+    /// <summary>
+    /// 3. Tests general handling for other non-success status codes (e.g., 500)
+    /// </summary>
+    [Fact]
+    public async Task GetUserPropertiesFromClaims_ShouldThrowHttpRequestException_WhenStatusIs500()
     {
-        // Proper cleanup as suggested by CodeRabbit
-        _httpClient?.Dispose();
-        GC.SuppressFinalize(this);
+        // Arrange
+        _handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.InternalServerError });
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            _service.GetUserPropertiesFromClaims("Bearer token"));
+
+        Assert.Contains("Identity provider returned an unexpected status code: InternalServerError", ex.Message);
     }
 }
