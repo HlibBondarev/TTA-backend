@@ -11,7 +11,7 @@ public class AccessService(IAccessRepository accessRepository) : IAccessService
     public async Task<bool> HasAccessAsync(
         string userId,
         AppRole requiredRole,
-        TargetScope targetScope,
+        TargetScope targetType,
         Guid? targetId = null,
         CancellationToken ct = default)
     {
@@ -19,7 +19,7 @@ public class AccessService(IAccessRepository accessRepository) : IAccessService
         // The repository now returns AppRole? directly, so we don't need string parsing.
         var userRole = await accessRepository.GetUserRoleForScope(
             userId,
-            targetScope,
+            targetType,
             targetId,
             ct);
 
