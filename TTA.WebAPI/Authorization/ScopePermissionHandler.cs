@@ -25,10 +25,9 @@ public class ScopePermissionHandler(
     /// <param name="context">The authorization context containing the user and resource.</param>
     /// <param name="requirement">The specific permission requirement to evaluate.</param>
     /// <returns>A task representing the asynchronous evaluation process.</returns>
-
     protected override async Task HandleRequirementAsync(
-    AuthorizationHandlerContext context,
-    ScopePermissionRequirement requirement)
+        AuthorizationHandlerContext context,
+        ScopePermissionRequirement requirement)
     {
         if (context.Resource is not HttpContext httpContext)
         {
@@ -46,10 +45,11 @@ public class ScopePermissionHandler(
                 return;
             }
 
-            // 1. Extract resource ID from route
+            // 1. Create a non-PII identifier for logging (last 8 characters)
+            var shortUserId = userId.Length > 8 ? $"...{userId[^8..]}" : userId;
+
             var resourceId = GetResourceIdFromRoute(httpContext, requirement.TargetType);
 
-            // 2. Short-circuit: If scope is not Global but ID is missing or invalid, fail immediately
             if (requirement.TargetType != TargetScope.Global && resourceId == null)
             {
                 logger.LogWarning("Authorization failed: Missing or malformed ID for {TargetType} scope.", requirement.TargetType);
@@ -57,7 +57,6 @@ public class ScopePermissionHandler(
                 return;
             }
 
-            // 3. Proceed to database check only if route data is valid
             var hasAccess = await accessService.HasAccessAsync(
                 userId,
                 requirement.RequiredRole,
@@ -66,12 +65,16 @@ public class ScopePermissionHandler(
 
             if (hasAccess)
             {
-                logger.LogDebug("Access granted for user {UserId} to {TargetType} {ResourceId}.", userId, requirement.TargetType, resourceId);
+                // 2. Use shortUserId in logs instead of raw userId
+                logger.LogDebug("Access granted for user {ShortUserId} to {TargetType} {ResourceId}.",
+                    shortUserId, requirement.TargetType, resourceId);
                 context.Succeed(requirement);
             }
             else
             {
-                logger.LogInformation("Access denied for user {UserId} to {TargetType} {ResourceId}.", userId, requirement.TargetType, resourceId);
+                // 3. Use shortUserId in logs instead of raw userId
+                logger.LogInformation("Access denied for user {ShortUserId} to {TargetType} {ResourceId}. Insufficient permissions.",
+                    shortUserId, requirement.TargetType, resourceId);
             }
         }
         catch (Exception ex)
