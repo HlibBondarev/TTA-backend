@@ -25,8 +25,7 @@ BEGIN
       )
       AND ("ExpiresAt" IS NULL OR "ExpiresAt" > CURRENT_TIMESTAMP)
     ORDER BY 
-        -- 1. Role strength precedence:
-        -- Map role strings to integers to ensure 'FullControl' (0) > 'Editor' (1) > 'Viewer' (2)
+        -- 1. Role strength precedence (FullControl > Editor > Viewer)
         (CASE 
             WHEN "Role" = 'FullControl' THEN 0 
             WHEN "Role" = 'Editor' THEN 1 
