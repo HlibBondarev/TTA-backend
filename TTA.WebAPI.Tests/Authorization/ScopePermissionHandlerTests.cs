@@ -163,4 +163,35 @@ public class ScopePermissionHandlerTests
         // Assert
         Assert.True(authContext.HasSucceeded);
     }
+
+    [Fact]
+    public async Task HandleAsync_ShouldFailImmediately_WhenResourceIdIsInvalidForScopedRequirement()
+    {
+        // Arrange
+        var userId = "auth0|test-user";
+        var requirement = new ScopePermissionRequirement(AppRole.Editor, TargetScope.Club);
+        var user = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", userId) }));
+
+        var httpContext = new DefaultHttpContext();
+        // Providing an invalid GUID string to trigger the short-circuit
+        var routeValuesFeature = new RouteValuesFeature
+        {
+            RouteValues = new RouteValueDictionary { { "clubId", "invalid-guid-format" } }
+        };
+        httpContext.Features.Set<IRouteValuesFeature>(routeValuesFeature);
+
+        var authContext = new AuthorizationHandlerContext(new[] { requirement }, user, httpContext);
+
+        // Act
+        await _handler.HandleAsync(authContext);
+
+        // Assert
+        Assert.False(authContext.HasSucceeded);
+        // Verify that the database service was never called (short-circuit worked)
+        _accessServiceMock.Verify(x => x.HasAccessAsync(
+            It.IsAny<string>(),
+            It.IsAny<AppRole>(),
+            It.IsAny<TargetScope>(),
+            It.IsAny<Guid?>()), Times.Never);
+    }
 }

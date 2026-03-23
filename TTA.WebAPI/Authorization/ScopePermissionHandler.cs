@@ -25,11 +25,11 @@ public class ScopePermissionHandler(
     /// <param name="context">The authorization context containing the user and resource.</param>
     /// <param name="requirement">The specific permission requirement to evaluate.</param>
     /// <returns>A task representing the asynchronous evaluation process.</returns>
+
     protected override async Task HandleRequirementAsync(
-        AuthorizationHandlerContext context,
-        ScopePermissionRequirement requirement)
+    AuthorizationHandlerContext context,
+    ScopePermissionRequirement requirement)
     {
-        // 1. Get HttpContext from the resource
         if (context.Resource is not HttpContext httpContext)
         {
             return;
@@ -37,21 +37,27 @@ public class ScopePermissionHandler(
 
         try
         {
-            // 2. Extract 'sub' (Subject) directly from the already authenticated User Principal.
-            // This is the unique User ID from Auth0/Identity Provider.
             var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                          ?? context.User.FindFirst("sub")?.Value;
 
             if (string.IsNullOrEmpty(userId))
             {
-                logger.LogWarning("Authorization denied: 'sub' or 'NameIdentifier' claim is missing.");
+                logger.LogWarning("Authorization denied: User identifier claim is missing.");
                 return;
             }
 
-            // 3. Extract Resource ID from Route Data based on the target scope
+            // 1. Extract resource ID from route
             var resourceId = GetResourceIdFromRoute(httpContext, requirement.TargetType);
 
-            // 4. Validate access via Business Logic service
+            // 2. Short-circuit: If scope is not Global but ID is missing or invalid, fail immediately
+            if (requirement.TargetType != TargetScope.Global && resourceId == null)
+            {
+                logger.LogWarning("Authorization failed: Missing or malformed ID for {TargetType} scope.", requirement.TargetType);
+                context.Fail();
+                return;
+            }
+
+            // 3. Proceed to database check only if route data is valid
             var hasAccess = await accessService.HasAccessAsync(
                 userId,
                 requirement.RequiredRole,
@@ -65,13 +71,12 @@ public class ScopePermissionHandler(
             }
             else
             {
-                logger.LogInformation("Access denied for user {UserId} to {TargetType} {ResourceId}. Insufficient permissions.", userId, requirement.TargetType, resourceId);
-                // We don't call context.Fail() to allow other handlers to potentially succeed
+                logger.LogInformation("Access denied for user {UserId} to {TargetType} {ResourceId}.", userId, requirement.TargetType, resourceId);
             }
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "An error occurred while processing authorization for a user.");
+            logger.LogError(ex, "An error occurred during the authorization process.");
         }
     }
 
