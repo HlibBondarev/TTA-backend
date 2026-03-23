@@ -230,4 +230,79 @@ public class ScopePermissionHandlerTests
             It.IsAny<Guid?>(),
             default), Times.Never);
     }
+
+    [Fact]
+    public async Task HandleAsync_ShouldReturn_WhenResourceIsNotHttpContext()
+    {
+        // Arrange
+        var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club);
+        var user = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, "user-123")]));
+
+        // Pass a string instead of HttpContext to trigger the first 'if' check
+        var authContext = new AuthorizationHandlerContext([requirement], user, "not-a-http-context");
+
+        // Act
+        await _handler.HandleAsync(authContext);
+
+        // Assert
+        Assert.False(authContext.HasSucceeded);
+        _accessServiceMock.Verify(x => x.HasAccessAsync(
+            It.IsAny<string>(),
+            It.IsAny<AppRole>(),
+            It.IsAny<TargetScope>(),
+            It.IsAny<Guid?>(),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ShouldFail_WhenScopedResourceIdIsMissing()
+    {
+        // Arrange
+        var userId = "auth0|123";
+        var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Club);
+        var user = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, userId)]));
+
+        var httpContext = new DefaultHttpContext();
+        // Route values are empty, so GetResourceIdFromRoute will return null
+        var authContext = new AuthorizationHandlerContext([requirement], user, httpContext);
+
+        // Act
+        await _handler.HandleAsync(authContext);
+
+        // Assert
+        Assert.False(authContext.HasSucceeded);
+        // This covers the 'LogWarning' and 'context.Fail()' branch
+        _accessServiceMock.Verify(x => x.HasAccessAsync(
+            It.IsAny<string>(),
+            It.IsAny<AppRole>(),
+            It.IsAny<TargetScope>(),
+            It.IsAny<Guid?>(),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ShouldLogError_WhenExceptionIsThrown()
+    {
+        // Arrange
+        var userId = "auth0|123";
+        var requirement = new ScopePermissionRequirement(AppRole.Viewer, TargetScope.Global);
+        var user = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, userId)]));
+        var httpContext = new DefaultHttpContext();
+
+        // Force an exception in the service to trigger the 'catch' block
+        _accessServiceMock
+            .Setup(x => x.HasAccessAsync(It.IsAny<string>(), It.IsAny<AppRole>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("Database connection failed"));
+
+        var authContext = new AuthorizationHandlerContext([requirement], user, httpContext);
+
+        // Act
+        await _handler.HandleAsync(authContext);
+
+        // Assert
+        Assert.False(authContext.HasSucceeded);
+        // This covers 'logger.LogError' in the catch block
+    }
 }
