@@ -1,4 +1,4 @@
-﻿using TTA.Common.Enums;
+using TTA.Common.Enums;
 using TTA.DataAccess.Models.Base;
 
 namespace TTA.DataAccess.Models.Auth;
