@@ -5,10 +5,6 @@ using TTA.DataAccess.Repository.Auth;
 
 namespace TTA.BusinessLogic.Tests.Services.Auth;
 
-
-/// <summary>
-/// Contains unit tests for the AccessService to verify role-based access logic and hierarchy.
-/// </summary>
 public class AccessServiceTests
 {
     private readonly Mock<IAccessRepository> _accessRepositoryMock;
@@ -20,9 +16,6 @@ public class AccessServiceTests
         _service = new AccessService(_accessRepositoryMock.Object);
     }
 
-    /// <summary>
-    /// Verifies that access is granted when the user has the exact required role.
-    /// </summary>
     [Fact]
     public async Task HasAccessAsync_ShouldReturnTrue_WhenUserHasExactRole()
     {
@@ -30,7 +23,7 @@ public class AccessServiceTests
         var userId = "auth0|test-user";
         var targetId = Guid.NewGuid();
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId, default))
+            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(AppRole.Editor);
 
         // Act
@@ -38,11 +31,11 @@ public class AccessServiceTests
 
         // Assert
         Assert.True(result);
+        _accessRepositoryMock.Verify(x =>
+            x.GetUserRoleForScope(userId, TargetScope.Club, targetId, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
-    /// <summary>
-    /// Verifies the hierarchy: a user with FullControl should have access to Viewer-level resources.
-    /// </summary>
     [Fact]
     public async Task HasAccessAsync_ShouldReturnTrue_WhenUserHasHigherRoleInHierarchy()
     {
@@ -50,22 +43,20 @@ public class AccessServiceTests
         var userId = "auth0|admin-user";
         var targetId = Guid.NewGuid();
 
-        // User is FullControl (0)
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId, default))
+            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(AppRole.FullControl);
 
         // Act
-        // Requirement is only Viewer (2)
         var result = await _service.HasAccessAsync(userId, AppRole.Viewer, TargetScope.Club, targetId);
 
         // Assert
         Assert.True(result);
+        _accessRepositoryMock.Verify(x =>
+            x.GetUserRoleForScope(userId, TargetScope.Club, targetId, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
-    /// <summary>
-    /// Verifies that access is denied when the user's role is lower than the required role.
-    /// </summary>
     [Fact]
     public async Task HasAccessAsync_ShouldReturnFalse_WhenUserHasLowerRole()
     {
@@ -73,34 +64,37 @@ public class AccessServiceTests
         var userId = "auth0|viewer-user";
         var targetId = Guid.NewGuid();
 
-        // User is Viewer (2)
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId, default))
+            .Setup(x => x.GetUserRoleForScope(userId, TargetScope.Club, targetId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(AppRole.Viewer);
 
         // Act
-        // Requirement is Editor (1)
         var result = await _service.HasAccessAsync(userId, AppRole.Editor, TargetScope.Club, targetId);
 
         // Assert
         Assert.False(result);
+        _accessRepositoryMock.Verify(x =>
+            x.GetUserRoleForScope(userId, TargetScope.Club, targetId, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
-    /// <summary>
-    /// Verifies that access is denied if the repository returns no role for the user.
-    /// </summary>
     [Fact]
     public async Task HasAccessAsync_ShouldReturnFalse_WhenNoRoleIsAssigned()
     {
         // Arrange
+        var userId = "unknown-user";
+        var scope = TargetScope.Global;
         _accessRepositoryMock
-            .Setup(x => x.GetUserRoleForScope(It.IsAny<string>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>(), default))
+            .Setup(x => x.GetUserRoleForScope(userId, scope, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync((AppRole?)null);
 
         // Act
-        var result = await _service.HasAccessAsync("unknown-user", AppRole.Viewer, TargetScope.Global);
+        var result = await _service.HasAccessAsync(userId, AppRole.Viewer, scope);
 
         // Assert
         Assert.False(result);
+        _accessRepositoryMock.Verify(x =>
+            x.GetUserRoleForScope(userId, scope, null, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 }

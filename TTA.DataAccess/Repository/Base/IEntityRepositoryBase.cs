@@ -94,12 +94,12 @@ public interface IEntityRepositoryBase<TKey, TEntity>
     /// Executes a query that returns a scalar result of type <typeparamref name="T"/> within a transaction.
     /// </summary>
     /// <typeparam name="T">The type of the result (e.g., long, int, string).</typeparam>
-    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="commandTextOrProcName">The name of the PostgreSQL function.</param>
     /// <param name="parameters">Dynamic parameters for the query.</param>
     /// <param name="commandType">Type of Command for the query.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<T> ExecuteQueryInTransaction<T>(
-        string procName,
+        string commandTextOrProcName,
         DynamicParameters parameters,
         CommandType commandType = CommandType.StoredProcedure,
         CancellationToken ct = default);

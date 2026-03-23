@@ -92,13 +92,18 @@ public class ScopePermissionHandlerTests
     {
         // Arrange
         var userId = "auth0|denied-user";
+        var clubId = Guid.NewGuid();
         var requirement = new ScopePermissionRequirement(AppRole.FullControl, TargetScope.Club);
 
+        // Using ClaimTypes.NameIdentifier (sub) as per our previous refactoring
         var user = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, userId)]));
+
         var httpContext = new DefaultHttpContext();
+        // Setting up the route value to exercise the scoped logic
+        httpContext.Request.RouteValues["clubId"] = clubId.ToString();
 
         _accessServiceMock
-            .Setup(x => x.HasAccessAsync(userId, It.IsAny<AppRole>(), It.IsAny<TargetScope>(), It.IsAny<Guid?>(), default))
+            .Setup(x => x.HasAccessAsync(userId, AppRole.FullControl, TargetScope.Club, clubId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         var authContext = new AuthorizationHandlerContext([requirement], user, httpContext);
@@ -108,6 +113,36 @@ public class ScopePermissionHandlerTests
 
         // Assert
         Assert.False(authContext.HasSucceeded);
+        _accessServiceMock.Verify(x =>
+            x.HasAccessAsync(userId, AppRole.FullControl, TargetScope.Club, clubId, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ShouldShortCircuit_WhenUserIdIsMissingFromClaims()
+    {
+        // Arrange
+        var requirement = new ScopePermissionRequirement(AppRole.FullControl, TargetScope.Club);
+
+        // User without any ID claims
+        var user = new ClaimsPrincipal(new ClaimsIdentity());
+        var httpContext = new DefaultHttpContext();
+        var authContext = new AuthorizationHandlerContext([requirement], user, httpContext);
+
+        // Act
+        await _handler.HandleAsync(authContext);
+
+        // Assert
+        Assert.False(authContext.HasSucceeded);
+
+        // Verification that HasAccessAsync was NEVER called (Short-circuit)
+        _accessServiceMock.Verify(x => x.HasAccessAsync(
+            It.IsAny<string>(),
+            It.IsAny<AppRole>(),
+            It.IsAny<TargetScope>(),
+            It.IsAny<Guid?>(),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
