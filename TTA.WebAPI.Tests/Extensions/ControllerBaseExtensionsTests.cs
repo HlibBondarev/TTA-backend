@@ -1,11 +1,11 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
-using TTA.Common.Extensions;
-using TTA.Common.Services.Api;
-using TTA.Common.Services.DTOs;
+using TTA.BusinessLogic.Services.Api;
+using TTA.BusinessLogic.Services.DTOs;
+using TTA.WebAPI.Extensions;
 
-namespace TTA.Common.Tests.Extensions;
+namespace TTA.WebAPI.Tests.Extensions;
 
 public class ControllerBaseExtensionsTests
 {

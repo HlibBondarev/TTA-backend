@@ -1,14 +1,11 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using System.Security.Authentication;
-using TTA.Common.Services;
-using TTA.Common.Services.Api;
-using TTA.Common.Services.DTOs;
+using TTA.BusinessLogic.Services;
+using TTA.BusinessLogic.Services.Api;
+using TTA.BusinessLogic.Services.DTOs;
 
-namespace TTA.Common.Extensions;
+namespace TTA.WebAPI.Extensions;
 
-/// <summary>
-/// Provides extension methods for <see cref="ControllerBase"/> to manage user claims and identification.
-/// </summary>
 public static class ControllerBaseExtensions
 {
     /// <summary>

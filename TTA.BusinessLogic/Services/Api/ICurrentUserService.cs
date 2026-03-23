@@ -1,6 +1,7 @@
-﻿using TTA.Common.Services.DTOs;
+﻿
+using TTA.BusinessLogic.Services.DTOs;
 
-namespace TTA.Common.Services.Api;
+namespace TTA.BusinessLogic.Services.Api;
 
 /// <summary>
 /// Defines a service for retrieving current user properties based on security claims.

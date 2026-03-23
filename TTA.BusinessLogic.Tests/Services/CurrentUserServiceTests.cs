@@ -3,10 +3,10 @@ using Moq.Protected;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Authentication;
-using TTA.Common.Services;
-using TTA.Common.Services.DTOs;
+using TTA.BusinessLogic.Services;
+using TTA.BusinessLogic.Services.DTOs;
 
-namespace TTA.Common.Tests.Services;
+namespace TTA.BusinessLogic.Tests.Services;
 
 public class CurrentUserServiceTests : IDisposable
 {
