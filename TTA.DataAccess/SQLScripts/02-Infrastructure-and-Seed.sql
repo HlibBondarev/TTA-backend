@@ -109,15 +109,22 @@ BEGIN
     SELECT Id INTO v_team_id FROM Teams WHERE Name = 'Dynamo Lviv (Men)' LIMIT 1;
 
     -- 3. Associate user with the team (Membership)
+    -- Using INSERT ... SELECT to prevent duplicates when UserId/TeamId already exists
     INSERT INTO TeamMemberships (Id, UserId, TeamId, RoleInTeam, JoinedAt, IsPrimary)
-    VALUES (gen_random_uuid(), v_user_id, v_team_id, 'HeadCoach', NOW(), true)
-    ON CONFLICT DO NOTHING;
+    SELECT gen_random_uuid(), v_user_id, v_team_id, 'HeadCoach', NOW(), true
+    WHERE NOT EXISTS (
+        SELECT 1 FROM TeamMemberships 
+        WHERE UserId = v_user_id AND TeamId = v_team_id
+    );
 
     -- 4. Define Access Policy (RBAC)
-    -- Granting 'Editor' role for the specific team scope
+    -- Using INSERT ... SELECT to prevent duplicate policies for the same user/target
     INSERT INTO AccessPolicies (Id, UserId, Role, TargetType, TargetId, CreatedAt)
-    VALUES (gen_random_uuid(), v_user_id, 'Editor', 'Team', v_team_id, NOW())
-    ON CONFLICT DO NOTHING;
+    SELECT gen_random_uuid(), v_user_id, 'Editor', 'Team', v_team_id, NOW()
+    WHERE NOT EXISTS (
+        SELECT 1 FROM AccessPolicies 
+        WHERE UserId = v_user_id AND Role = 'Editor' AND TargetId = v_team_id
+    );
 
     RAISE NOTICE 'Seed completed: User % linked to Team %', v_user_id, v_team_id;
 END $$;
