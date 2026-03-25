@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Diagnostics.CodeAnalysis;
 
 namespace TTA.WebAPI.Controllers
 {
+    [ExcludeFromCodeCoverage] // Sonar will ignore this class for coverage metrics
     [ApiController]
     [Route("[controller]")]
     public class WeatherForecastController(ILogger<WeatherForecastController> logger) : ControllerBase
