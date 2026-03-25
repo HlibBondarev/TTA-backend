@@ -88,6 +88,9 @@ public static class Startup
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
 
+        // Retrieve and validate settings at startup
+        var auth0Settings = Auth0ConfigHelper.GetRequiredAuth0Settings(builder.Configuration);
+
         // Swagger Configuration with OAuth2 Client Credentials Flow
         builder.Services.AddSwaggerGen(options =>
         {
@@ -98,15 +101,15 @@ public static class Startup
                 {
                     AuthorizationCode = new OpenApiOAuthFlow
                     {
-                        // Clean URLs without query parameters
-                        AuthorizationUrl = new Uri($"{builder.Configuration["Auth0:Authority"]}authorize"),
-                        TokenUrl = new Uri($"{builder.Configuration["Auth0:Authority"]}oauth/token"),
+                        // Use normalized URIs from the settings record
+                        AuthorizationUrl = new Uri(auth0Settings.AuthorizationUrl),
+                        TokenUrl = new Uri(auth0Settings.TokenUrl),
                         Scopes = new Dictionary<string, string>
-                        {
-                            { "openid", "OpenID Profile" },
-                            { "profile", "User Profile" },
-                            { "email", "User Email" }
-                        }
+                {
+                    { "openid", "OpenID" },
+                    { "profile", "Profile" },
+                    { "email", "Email" }
+                }
                     }
                 }
             });
