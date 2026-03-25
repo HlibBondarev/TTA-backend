@@ -91,7 +91,7 @@ public static class Startup
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
 
-        // Swagger Configuration with OAuth2 Client Credentials Flow
+        // Swagger configuration for OAuth2 Authorization Code flow with PKCE
         builder.Services.AddSwaggerGen(options =>
         {
             options.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
