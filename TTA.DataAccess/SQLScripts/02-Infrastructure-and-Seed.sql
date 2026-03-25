@@ -87,3 +87,53 @@ INSERT INTO Teams (Id, ClubId, Name, CreatedAt) VALUES
 (gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Donetsk Oblast Team' LIMIT 1), 'Donetsk Oblast Selection (Women)', NOW()),
 (gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Kyiv City Team' LIMIT 1), 'Kyiv City Selection (Women)', NOW()),
 (gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Kharkiv Oblast Team' LIMIT 1), 'Kharkiv Oblast Selection (Women)', NOW());
+
+-- ==========================================
+-- 5. OAuth CHECK
+-- ==========================================
+
+DO $$ 
+DECLARE 
+    -- FIXED: Using Auth0 Subject ID (sub) instead of email address
+    v_user_id VARCHAR := 'auth0|698b9560880889e5401cef7c'; 
+    v_club_id UUID;
+    v_team_id UUID;
+BEGIN
+    -- 1. Create user in Users table using Auth0 Identity ID as PK
+    INSERT INTO Users (Id, Email, DisplayName, CreatedAt)
+    VALUES (v_user_id, 'user1@example.com', 'UserOne', NOW())
+    ON CONFLICT (Id) DO NOTHING;
+
+    -- 2. Retrieve existing IDs for Club and Team
+    SELECT Id INTO v_club_id FROM Clubs WHERE Name = 'Dynamo Lviv' LIMIT 1;
+    SELECT Id INTO v_team_id FROM Teams WHERE Name = 'Dynamo Lviv (Men)' LIMIT 1;
+
+    -- 3. Associate user with the team (Membership)
+    -- Using INSERT ... SELECT to prevent duplicates when UserId/TeamId already exists
+    INSERT INTO TeamMemberships (Id, UserId, TeamId, RoleInTeam, JoinedAt, IsPrimary)
+    SELECT gen_random_uuid(), v_user_id, v_team_id, 'HeadCoach', NOW(), true
+    WHERE NOT EXISTS (
+        SELECT 1 FROM TeamMemberships 
+        WHERE UserId = v_user_id AND TeamId = v_team_id
+    );
+
+    -- 4. Define Access Policy (RBAC)
+    -- Using INSERT ... SELECT to ensure idempotency for the business key
+    INSERT INTO AccessPolicies (Id, UserId, Role, TargetType, TargetId, CreatedAt)
+    SELECT 
+        gen_random_uuid(), 
+        v_user_id, 
+        'Editor', 
+        'Team', 
+        v_team_id, 
+        NOW()
+    WHERE NOT EXISTS (
+        SELECT 1 FROM AccessPolicies 
+        WHERE UserId = v_user_id 
+          AND Role = 'Editor' 
+          AND TargetType = 'Team' 
+          AND TargetId = v_team_id
+    );
+
+    RAISE NOTICE 'Seed completed: User % linked to Team %', v_user_id, v_team_id;
+END $$;

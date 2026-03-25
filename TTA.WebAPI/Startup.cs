@@ -1,5 +1,6 @@
 ﻿using DbUp;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.OpenApi.Models;
 using Serilog;
 using Serilog.Exceptions;
 using TTA.BusinessLogic.Services;
@@ -29,7 +30,6 @@ public static class Startup
             .Enrich.FromLogContext()
             .Enrich.WithExceptionDetails()
             .Enrich.WithProcessId());
-        // REMOVED .WriteTo.Console() here because it's already in appsettings.json
 
         var services = builder.Services;
         var configuration = builder.Configuration;
@@ -40,6 +40,9 @@ public static class Startup
         // Run DbUp migrations
         EnsureDatabaseUpsert(connectionString);
 
+        // Retrieve and validate settings at startup
+        var auth0Settings = Auth0ConfigHelper.GetRequiredAuth0Settings(builder.Configuration);
+
         // Authentication (Auth0)
         _ = services.AddAuthentication(options =>
         {
@@ -47,8 +50,8 @@ public static class Startup
             options.DefaultChallengeScheme = "JwtBearer";
         }).AddJwtBearer("JwtBearer", options =>
         {
-            options.Authority = configuration["Auth0:Authority"];
-            options.Audience = configuration["Auth0:Audience"];
+            options.Authority = auth0Settings.Authority; // Using validated value
+            options.Audience = auth0Settings.Audience;   // Using validated value
         });
 
         // Registering the handler with Scoped lifetime (to resolve IAccessService correctly)
@@ -87,7 +90,41 @@ public static class Startup
         services.AddExceptionHandler<GlobalExceptionHandler>();
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
-        services.AddSwaggerGen();
+
+        // Swagger configuration for OAuth2 Authorization Code flow with PKCE
+        builder.Services.AddSwaggerGen(options =>
+        {
+            options.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
+            {
+                Type = SecuritySchemeType.OAuth2,
+                Flows = new OpenApiOAuthFlows
+                {
+                    AuthorizationCode = new OpenApiOAuthFlow
+                    {
+                        // Use normalized URIs from the settings record
+                        AuthorizationUrl = new Uri(auth0Settings.AuthorizationUrl),
+                        TokenUrl = new Uri(auth0Settings.TokenUrl),
+                        Scopes = new Dictionary<string, string>
+                {
+                    { "openid", "OpenID" },
+                    { "profile", "Profile" },
+                    { "email", "Email" }
+                }
+                    }
+                }
+            });
+
+            options.AddSecurityRequirement(new OpenApiSecurityRequirement
+            {
+                {
+                    new OpenApiSecurityScheme
+                    {
+                        Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "oauth2" }
+                    },
+                    new[] { "openid", "profile", "email" }
+                }
+            });
+        });
     }
 
     /// <summary>
@@ -100,7 +137,24 @@ public static class Startup
         if (app.Environment.IsDevelopment())
         {
             app.UseSwagger();
-            app.UseSwaggerUI();
+            app.UseSwaggerUI(options =>
+            {
+                options.SwaggerEndpoint("/swagger/v1/swagger.json", "TTA API V1");
+
+                // Public Client ID is safe for the browser
+                options.OAuthClientId(app.Configuration["Auth0:ClientId"]);
+
+                // REMOVED: OAuthClientSecret(app.Configuration["Auth0:ClientSecret"]) 
+                // Confidential secrets must never be exposed to the browser UI.
+
+                // PKCE must remain enabled to handle secure code exchange without a secret
+                options.OAuthUsePkce();
+
+                options.OAuthAdditionalQueryStringParams(new Dictionary<string, string>
+                {
+                    { "audience", app.Configuration["Auth0:Audience"]! }
+                });
+            });
         }
 
         app.UseRouting();
