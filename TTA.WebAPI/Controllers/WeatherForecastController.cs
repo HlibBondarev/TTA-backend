@@ -21,18 +21,16 @@ namespace TTA.WebAPI.Controllers
 
         [Authorize]
         [HttpGet]
+        [ProducesResponseType(typeof(WeatherForecastResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public IActionResult Get()
         {
-            // 1. Try to get ID via standard NameIdentifier
-            // 2. Fallback to raw "sub" claim if NameIdentifier is null
+            // Our existing fallback logic for auth0Id
             var auth0Id = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
                          ?? User.FindFirst("sub")?.Value;
 
-            return Ok(new
-            {
-                Message = "Success",
-                CurrentUser = auth0Id
-            });
+            // Returning a typed record instead of an anonymous object
+            return Ok(new WeatherForecastResponse("Success", auth0Id));
         }
     }
 }
