@@ -8,9 +8,17 @@ public static class Auth0ConfigHelper
     /// </summary>
     public static Auth0Settings GetRequiredAuth0Settings(IConfiguration config)
     {
-        // Normalize authority by ensuring it ends with a single trailing slash
-        var authority = config["Auth0:Authority"]?.TrimEnd('/') + "/"
-            ?? throw new InvalidOperationException("Auth0:Authority is missing in configuration.");
+        // 1. Get the raw value first
+        var rawAuthority = config["Auth0:Authority"];
+
+        // 2. Check if it's missing BEFORE adding the slash
+        if (string.IsNullOrWhiteSpace(rawAuthority))
+        {
+            throw new InvalidOperationException("Auth0:Authority is missing in configuration.");
+        }
+
+        // 3. Now it's safe to normalize
+        var authority = rawAuthority.TrimEnd('/') + "/";
 
         var clientId = config["Auth0:ClientId"]
             ?? throw new InvalidOperationException("Auth0:ClientId is missing in configuration.");

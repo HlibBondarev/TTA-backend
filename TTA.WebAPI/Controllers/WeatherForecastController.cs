@@ -22,7 +22,7 @@ namespace TTA.WebAPI.Controllers
             var auth0Id = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
                          ?? User.FindFirst("sub")?.Value;
 
-            _logger.LogInformation("Get auth0Id = {auth0Id}.", auth0Id);
+            _logger.LogInformation("Get Auth0Id = {Auth0Id}.", auth0Id);
 
             // Returning a typed record instead of an anonymous object
             return Ok(new WeatherForecastResponse("Success", auth0Id));
