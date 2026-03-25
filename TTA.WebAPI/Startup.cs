@@ -40,6 +40,9 @@ public static class Startup
         // Run DbUp migrations
         EnsureDatabaseUpsert(connectionString);
 
+        // Retrieve and validate settings at startup
+        var auth0Settings = Auth0ConfigHelper.GetRequiredAuth0Settings(builder.Configuration);
+
         // Authentication (Auth0)
         _ = services.AddAuthentication(options =>
         {
@@ -47,8 +50,8 @@ public static class Startup
             options.DefaultChallengeScheme = "JwtBearer";
         }).AddJwtBearer("JwtBearer", options =>
         {
-            options.Authority = configuration["Auth0:Authority"];
-            options.Audience = configuration["Auth0:Audience"];
+            options.Authority = auth0Settings.Authority; // Using validated value
+            options.Audience = auth0Settings.Audience;   // Using validated value
         });
 
         // Registering the handler with Scoped lifetime (to resolve IAccessService correctly)
@@ -87,9 +90,6 @@ public static class Startup
         services.AddExceptionHandler<GlobalExceptionHandler>();
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
-
-        // Retrieve and validate settings at startup
-        var auth0Settings = Auth0ConfigHelper.GetRequiredAuth0Settings(builder.Configuration);
 
         // Swagger Configuration with OAuth2 Client Credentials Flow
         builder.Services.AddSwaggerGen(options =>
