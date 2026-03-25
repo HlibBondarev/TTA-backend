@@ -1,5 +1,6 @@
 ﻿using DbUp;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.OpenApi.Models;
 using Serilog;
 using Serilog.Exceptions;
 using TTA.BusinessLogic.Services;
@@ -29,7 +30,6 @@ public static class Startup
             .Enrich.FromLogContext()
             .Enrich.WithExceptionDetails()
             .Enrich.WithProcessId());
-        // REMOVED .WriteTo.Console() here because it's already in appsettings.json
 
         var services = builder.Services;
         var configuration = builder.Configuration;
@@ -87,7 +87,41 @@ public static class Startup
         services.AddExceptionHandler<GlobalExceptionHandler>();
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
-        services.AddSwaggerGen();
+
+        // Swagger Configuration with OAuth2 Client Credentials Flow
+        builder.Services.AddSwaggerGen(options =>
+        {
+            options.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
+            {
+                Type = SecuritySchemeType.OAuth2,
+                Flows = new OpenApiOAuthFlows
+                {
+                    AuthorizationCode = new OpenApiOAuthFlow
+                    {
+                        // Clean URLs without query parameters
+                        AuthorizationUrl = new Uri($"{builder.Configuration["Auth0:Authority"]}authorize"),
+                        TokenUrl = new Uri($"{builder.Configuration["Auth0:Authority"]}oauth/token"),
+                        Scopes = new Dictionary<string, string>
+                        {
+                            { "openid", "OpenID Profile" },
+                            { "profile", "User Profile" },
+                            { "email", "User Email" }
+                        }
+                    }
+                }
+            });
+
+            options.AddSecurityRequirement(new OpenApiSecurityRequirement
+            {
+                {
+                    new OpenApiSecurityScheme
+                    {
+                        Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "oauth2" }
+                    },
+                    new[] { "openid", "profile", "email" }
+                }
+            });
+        });
     }
 
     /// <summary>
@@ -100,7 +134,22 @@ public static class Startup
         if (app.Environment.IsDevelopment())
         {
             app.UseSwagger();
-            app.UseSwaggerUI();
+            app.UseSwaggerUI(options =>
+            {
+                options.SwaggerEndpoint("/swagger/v1/swagger.json", "TTA API V1");
+
+                options.OAuthClientId(app.Configuration["Auth0:ClientId"]);
+                options.OAuthClientSecret(app.Configuration["Auth0:ClientSecret"]);
+
+                // Use PKCE for enhanced security during the code exchange
+                options.OAuthUsePkce();
+
+                // CRITICAL: Tells Auth0 to issue a JWT for your specific API
+                options.OAuthAdditionalQueryStringParams(new Dictionary<string, string>
+                {
+                    { "audience", app.Configuration["Auth0:Audience"]! }
+                });
+            });
         }
 
         app.UseRouting();

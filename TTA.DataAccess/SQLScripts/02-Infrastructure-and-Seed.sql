@@ -87,3 +87,36 @@ INSERT INTO Teams (Id, ClubId, Name, CreatedAt) VALUES
 (gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Donetsk Oblast Team' LIMIT 1), 'Donetsk Oblast Selection (Women)', NOW()),
 (gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Kyiv City Team' LIMIT 1), 'Kyiv City Selection (Women)', NOW()),
 (gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Kharkiv Oblast Team' LIMIT 1), 'Kharkiv Oblast Selection (Women)', NOW());
+
+-- ==========================================
+-- 5. 0Auth CHECK
+-- ==========================================
+
+DO $$ 
+DECLARE 
+    v_user_id VARCHAR := 'user1@example.com';
+    v_club_id UUID;
+    v_team_id UUID;
+BEGIN
+    -- 1. Create user in Users table using Auth0 Identity ID as PK
+    INSERT INTO Users (Id, Email, DisplayName, CreatedAt)
+    VALUES (v_user_id, 'user1@example.com', 'UserOne', NOW())
+    ON CONFLICT (Id) DO NOTHING;
+
+    -- 2. Retrieve existing IDs for Club and Team
+    SELECT Id INTO v_club_id FROM Clubs WHERE Name = 'Dynamo Lviv' LIMIT 1;
+    SELECT Id INTO v_team_id FROM Teams WHERE Name = 'Dynamo Lviv (Men)' LIMIT 1;
+
+    -- 3. Associate user with the team (Membership)
+    INSERT INTO TeamMemberships (Id, UserId, TeamId, RoleInTeam, JoinedAt, IsPrimary)
+    VALUES (gen_random_uuid(), v_user_id, v_team_id, 'HeadCoach', NOW(), true)
+    ON CONFLICT DO NOTHING;
+
+    -- 4. Define Access Policy (RBAC)
+    -- Granting 'Editor' role for the specific team scope
+    INSERT INTO AccessPolicies (Id, UserId, Role, TargetType, TargetId, CreatedAt)
+    VALUES (gen_random_uuid(), v_user_id, 'Editor', 'Team', v_team_id, NOW())
+    ON CONFLICT DO NOTHING;
+
+    RAISE NOTICE 'Seed completed: User % linked to Team %', v_user_id, v_team_id;
+END $$;
