@@ -138,13 +138,15 @@ public static class Startup
             {
                 options.SwaggerEndpoint("/swagger/v1/swagger.json", "TTA API V1");
 
+                // Public Client ID is safe for the browser
                 options.OAuthClientId(app.Configuration["Auth0:ClientId"]);
-                options.OAuthClientSecret(app.Configuration["Auth0:ClientSecret"]);
 
-                // Use PKCE for enhanced security during the code exchange
+                // REMOVED: OAuthClientSecret(app.Configuration["Auth0:ClientSecret"]) 
+                // Confidential secrets must never be exposed to the browser UI.
+
+                // PKCE must remain enabled to handle secure code exchange without a secret
                 options.OAuthUsePkce();
 
-                // CRITICAL: Tells Auth0 to issue a JWT for your specific API
                 options.OAuthAdditionalQueryStringParams(new Dictionary<string, string>
                 {
                     { "audience", app.Configuration["Auth0:Audience"]! }
