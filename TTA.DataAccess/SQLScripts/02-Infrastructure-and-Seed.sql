@@ -89,12 +89,13 @@ INSERT INTO Teams (Id, ClubId, Name, CreatedAt) VALUES
 (gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Kharkiv Oblast Team' LIMIT 1), 'Kharkiv Oblast Selection (Women)', NOW());
 
 -- ==========================================
--- 5. 0Auth CHECK
+-- 5. OAuth CHECK
 -- ==========================================
 
 DO $$ 
 DECLARE 
-    v_user_id VARCHAR := 'user1@example.com';
+    -- FIXED: Using Auth0 Subject ID (sub) instead of email address
+    v_user_id VARCHAR := 'auth0|698b9560880889e5401cef7c'; 
     v_club_id UUID;
     v_team_id UUID;
 BEGIN
