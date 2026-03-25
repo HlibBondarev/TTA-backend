@@ -118,12 +118,21 @@ BEGIN
     );
 
     -- 4. Define Access Policy (RBAC)
-    -- Using INSERT ... SELECT to prevent duplicate policies for the same user/target
+    -- Using INSERT ... SELECT to ensure idempotency for the business key
     INSERT INTO AccessPolicies (Id, UserId, Role, TargetType, TargetId, CreatedAt)
-    SELECT gen_random_uuid(), v_user_id, 'Editor', 'Team', v_team_id, NOW()
+    SELECT 
+        gen_random_uuid(), 
+        v_user_id, 
+        'Editor', 
+        'Team', 
+        v_team_id, 
+        NOW()
     WHERE NOT EXISTS (
         SELECT 1 FROM AccessPolicies 
-        WHERE UserId = v_user_id AND Role = 'Editor' AND TargetId = v_team_id
+        WHERE UserId = v_user_id 
+          AND Role = 'Editor' 
+          AND TargetType = 'Team' 
+          AND TargetId = v_team_id
     );
 
     RAISE NOTICE 'Seed completed: User % linked to Team %', v_user_id, v_team_id;
