@@ -7,11 +7,6 @@ namespace TTA.WebAPI.Controllers
     [Route("[controller]")]
     public class WeatherForecastController : ControllerBase
     {
-        private static readonly string[] Summaries = new[]
-        {
-            "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-        };
-
         private readonly ILogger<WeatherForecastController> _logger;
 
         public WeatherForecastController(ILogger<WeatherForecastController> logger)
@@ -25,9 +20,14 @@ namespace TTA.WebAPI.Controllers
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public IActionResult Get()
         {
+            _logger.LogInformation("Start  Get action in {WeatherForecastController}.",
+                typeof(WeatherForecastController).Name);
+
             // Our existing fallback logic for auth0Id
             var auth0Id = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
                          ?? User.FindFirst("sub")?.Value;
+
+            _logger.LogInformation("Get auth0Id = {auth0Id}.", auth0Id);
 
             // Returning a typed record instead of an anonymous object
             return Ok(new WeatherForecastResponse("Success", auth0Id));
