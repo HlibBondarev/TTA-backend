@@ -23,10 +23,16 @@ namespace TTA.WebAPI.Controllers
         [HttpGet]
         public IActionResult Get()
         {
-            // Auth0 usually puts the User ID in the 'sub' claim
-            var auth0Id = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            // 1. Try to get ID via standard NameIdentifier
+            // 2. Fallback to raw "sub" claim if NameIdentifier is null
+            var auth0Id = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                         ?? User.FindFirst("sub")?.Value;
 
-            return Ok(new { Message = "Success", CurrentUser = auth0Id });
+            return Ok(new
+            {
+                Message = "Success",
+                CurrentUser = auth0Id
+            });
         }
     }
 }
