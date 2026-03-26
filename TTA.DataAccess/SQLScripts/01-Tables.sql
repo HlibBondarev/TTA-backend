@@ -19,6 +19,8 @@ CREATE TABLE Regions (
     UNIQUE(CountryId, Name)
 );
 
+CREATE INDEX IX_Regions_CountryId ON Regions (CountryId);
+
 CREATE TABLE Cities (
     Id UUID PRIMARY KEY,
     RegionId INT NOT NULL REFERENCES Regions(Id),
