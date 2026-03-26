@@ -1,20 +1,46 @@
-﻿-- 1. GEOGRAPHY
+﻿-- ==========================================
+-- 1. GEOGRAPHY
 -- ==========================================
 
-INSERT INTO Regions (Name) VALUES 
-('Lviv Oblast'), ('Kyiv City'), ('Kyiv Oblast'), ('Kharkiv Oblast'), 
-('Dnipropetrovsk Oblast'), ('Odessa Oblast'), ('Donetsk Oblast'), ('Zakarpattia Oblast');
+DO $$ 
+DECLARE 
+    v_ukraine_id INT;
+BEGIN
+    -- Insert Ukraine and store its ID for region mapping
+    INSERT INTO Countries (Name, Code) 
+    VALUES ('Ukraine', 'UKR')
+    ON CONFLICT (Code) DO NOTHING;
 
-INSERT INTO Cities (Id, RegionId, Name) VALUES 
-(gen_random_uuid(), 1, 'Lviv'),
-(gen_random_uuid(), 2, 'Kyiv'),
-(gen_random_uuid(), 3, 'Brovary'),
-(gen_random_uuid(), 4, 'Kharkiv'),
-(gen_random_uuid(), 5, 'Dnipro'),
-(gen_random_uuid(), 6, 'Odessa'),
-(gen_random_uuid(), 7, 'Mariupol'),
-(gen_random_uuid(), 7, 'Kramatorsk'),
-(gen_random_uuid(), 8, 'Uzhhorod');
+    SELECT Id INTO v_ukraine_id FROM Countries WHERE Code = 'UKR';
+
+    -- Insert Ukrainian Regions linked to Ukraine ID
+    INSERT INTO Regions (CountryId, Name) VALUES 
+    (v_ukraine_id, 'Lviv Oblast'), 
+    (v_ukraine_id, 'Kyiv City'), 
+    (v_ukraine_id, 'Kyiv Oblast'), 
+    (v_ukraine_id, 'Kharkiv Oblast'), 
+    (v_ukraine_id, 'Dnipropetrovsk Oblast'), 
+    (v_ukraine_id, 'Odessa Oblast'), 
+    (v_ukraine_id, 'Donetsk Oblast'), 
+    (v_ukraine_id, 'Zakarpattia Oblast')
+    ON CONFLICT DO NOTHING;
+
+    -- Insert Cities
+    -- Note: Using subqueries to ensure correct RegionId mapping
+    INSERT INTO Cities (Id, RegionId, Name) VALUES 
+    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Lviv Oblast' AND CountryId = v_ukraine_id), 'Lviv'),
+    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Kyiv City' AND CountryId = v_ukraine_id), 'Kyiv'),
+    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Kyiv Oblast' AND CountryId = v_ukraine_id), 'Brovary'),
+    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Kharkiv Oblast' AND CountryId = v_ukraine_id), 'Kharkiv'),
+    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Dnipropetrovsk Oblast' AND CountryId = v_ukraine_id), 'Dnipro'),
+    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Odessa Oblast' AND CountryId = v_ukraine_id), 'Odessa'),
+    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Donetsk Oblast' AND CountryId = v_ukraine_id), 'Mariupol'),
+    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Donetsk Oblast' AND CountryId = v_ukraine_id), 'Kramatorsk'),
+    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Zakarpattia Oblast' AND CountryId = v_ukraine_id), 'Uzhhorod')
+    ON CONFLICT DO NOTHING;
+
+    RAISE NOTICE 'Geography seeding for Ukraine completed successfully.';
+END $$;
 
 -- ==========================================
 -- 2. SPORT DEFINITION (Using a variable to ensure ID consistency)
