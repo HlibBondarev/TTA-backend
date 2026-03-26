@@ -4,10 +4,22 @@
 -- 1. GEOGRAPHY & USERS
 -- ==========================================
 
+-- table to support multiple countries
+CREATE TABLE Countries (
+    Id SERIAL PRIMARY KEY,
+    Name VARCHAR(100) NOT NULL UNIQUE,
+    Code VARCHAR(3) NOT NULL UNIQUE, -- ISO 3166-1 alpha-3 code (e.g., UKR, USA)
+    CreatedAt TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE Regions (
     Id SERIAL PRIMARY KEY,
-    Name VARCHAR(100) NOT NULL UNIQUE
+    CountryId INT NOT NULL REFERENCES Countries(Id) ON DELETE RESTRICT,
+    Name VARCHAR(100) NOT NULL,
+    UNIQUE(CountryId, Name)
 );
+
+CREATE INDEX IX_Regions_CountryId ON Regions (CountryId);
 
 CREATE TABLE Cities (
     Id UUID PRIMARY KEY,
