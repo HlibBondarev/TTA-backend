@@ -6,14 +6,12 @@ DO $$
 DECLARE 
     v_ukraine_id INT;
 BEGIN
-    -- Insert Ukraine and store its ID for region mapping
     INSERT INTO Countries (Name, Code) 
     VALUES ('Ukraine', 'UKR')
     ON CONFLICT (Code) DO NOTHING;
 
     SELECT Id INTO v_ukraine_id FROM Countries WHERE Code = 'UKR';
 
-    -- Insert Ukrainian Regions linked to Ukraine ID
     INSERT INTO Regions (CountryId, Name) VALUES 
     (v_ukraine_id, 'Lviv Oblast'), 
     (v_ukraine_id, 'Kyiv City'), 
@@ -25,7 +23,7 @@ BEGIN
     (v_ukraine_id, 'Zakarpattia Oblast')
     ON CONFLICT (CountryId, Name) DO NOTHING;
 
-    -- Insert Cities using fixed UUIDs and qualified region lookups
+    -- FIX: Changed ON CONFLICT target to (RegionId, Name) as requested by reviewer
     INSERT INTO Cities (Id, RegionId, Name) VALUES 
     ('c0000000-0000-0000-0000-000000000001', (SELECT Id FROM Regions WHERE Name = 'Lviv Oblast' AND CountryId = v_ukraine_id), 'Lviv'),
     ('c0000000-0000-0000-0000-000000000002', (SELECT Id FROM Regions WHERE Name = 'Kyiv City' AND CountryId = v_ukraine_id), 'Kyiv'),
@@ -36,9 +34,9 @@ BEGIN
     ('c0000000-0000-0000-0000-000000000007', (SELECT Id FROM Regions WHERE Name = 'Donetsk Oblast' AND CountryId = v_ukraine_id), 'Mariupol'),
     ('c0000000-0000-0000-0000-000000000008', (SELECT Id FROM Regions WHERE Name = 'Donetsk Oblast' AND CountryId = v_ukraine_id), 'Kramatorsk'),
     ('c0000000-0000-0000-0000-000000000009', (SELECT Id FROM Regions WHERE Name = 'Zakarpattia Oblast' AND CountryId = v_ukraine_id), 'Uzhhorod')
-    ON CONFLICT (Id) DO NOTHING;
+    ON CONFLICT (RegionId, Name) DO NOTHING;
 
-    RAISE NOTICE 'Geography seeding for Ukraine completed successfully.';
+    RAISE NOTICE 'Geography seeding completed successfully.';
 END $$;
 
 -- ==========================================
@@ -66,7 +64,10 @@ BEGIN
     VALUES ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70', sport_id, true, 4, 8, '25x20m', 15, 13)
     ON CONFLICT (Id) DO NOTHING;
 
-    -- 3. TECHNICAL & TACTICAL ACTIONS
+-- ==========================================
+-- 3. TECHNICAL & TACTICAL ACTIONS
+-- ==========================================
+
     INSERT INTO EventDefinitions (Id, SportId, Name, ShortName, IsPositive, CreatedAt) VALUES 
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f81', sport_id, 'Goal', 'GOAL', true, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82', sport_id, 'Assist', 'ASST', true, NOW()),
@@ -92,7 +93,7 @@ END $$;
 -- 4. CLUBS & TEAMS
 -- ==========================================
 
--- Fix: CityId lookup is now deterministic by joining with Regions and Countries
+-- FIX: Deterministic CityId lookup using JOINS to Countries and Regions
 INSERT INTO Clubs (Id, CityId, Name, CreatedAt) VALUES 
 ('11111111-1111-1111-1111-111111111101', 
     (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
