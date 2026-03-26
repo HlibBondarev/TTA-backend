@@ -28,17 +28,18 @@ BEGIN
 
     -- Insert Cities
     -- Fix: Explicitly target the UNIQUE(RegionId, Name) constraint
+    -- Note: Using fixed UUIDs for consistency
     INSERT INTO Cities (Id, RegionId, Name) VALUES 
-    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Lviv Oblast' AND CountryId = v_ukraine_id), 'Lviv'),
-    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Kyiv City' AND CountryId = v_ukraine_id), 'Kyiv'),
-    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Kyiv Oblast' AND CountryId = v_ukraine_id), 'Brovary'),
-    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Kharkiv Oblast' AND CountryId = v_ukraine_id), 'Kharkiv'),
-    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Dnipropetrovsk Oblast' AND CountryId = v_ukraine_id), 'Dnipro'),
-    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Odessa Oblast' AND CountryId = v_ukraine_id), 'Odessa'),
-    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Donetsk Oblast' AND CountryId = v_ukraine_id), 'Mariupol'),
-    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Donetsk Oblast' AND CountryId = v_ukraine_id), 'Kramatorsk'),
-    (gen_random_uuid(), (SELECT Id FROM Regions WHERE Name = 'Zakarpattia Oblast' AND CountryId = v_ukraine_id), 'Uzhhorod')
-    ON CONFLICT (RegionId, Name) DO NOTHING;
+    ('c0000000-0000-0000-0000-000000000001', (SELECT Id FROM Regions WHERE Name = 'Lviv Oblast' AND CountryId = v_ukraine_id), 'Lviv'),
+    ('c0000000-0000-0000-0000-000000000002', (SELECT Id FROM Regions WHERE Name = 'Kyiv City' AND CountryId = v_ukraine_id), 'Kyiv'),
+    ('c0000000-0000-0000-0000-000000000003', (SELECT Id FROM Regions WHERE Name = 'Kyiv Oblast' AND CountryId = v_ukraine_id), 'Brovary'),
+    ('c0000000-0000-0000-0000-000000000004', (SELECT Id FROM Regions WHERE Name = 'Kharkiv Oblast' AND CountryId = v_ukraine_id), 'Kharkiv'),
+    ('c0000000-0000-0000-0000-000000000005', (SELECT Id FROM Regions WHERE Name = 'Dnipropetrovsk Oblast' AND CountryId = v_ukraine_id), 'Dnipro'),
+    ('c0000000-0000-0000-0000-000000000006', (SELECT Id FROM Regions WHERE Name = 'Odessa Oblast' AND CountryId = v_ukraine_id), 'Odessa'),
+    ('c0000000-0000-0000-0000-000000000007', (SELECT Id FROM Regions WHERE Name = 'Donetsk Oblast' AND CountryId = v_ukraine_id), 'Mariupol'),
+    ('c0000000-0000-0000-0000-000000000008', (SELECT Id FROM Regions WHERE Name = 'Donetsk Oblast' AND CountryId = v_ukraine_id), 'Kramatorsk'),
+    ('c0000000-0000-0000-0000-000000000009', (SELECT Id FROM Regions WHERE Name = 'Zakarpattia Oblast' AND CountryId = v_ukraine_id), 'Uzhhorod')
+    ON CONFLICT (Id) DO NOTHING;
 
     RAISE NOTICE 'Geography seeding for Ukraine completed successfully.';
 END $$;
@@ -51,139 +52,80 @@ DO $$
 DECLARE 
     sport_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f';
 BEGIN
-    -- Added ON CONFLICT for idempotency
     INSERT INTO Sports (Id, Name) 
     VALUES (sport_id, 'Water Polo')
     ON CONFLICT (Id) DO NOTHING;
 
+    -- Fix: Replaced gen_random_uuid() with fixed UUIDs for idempotency
     INSERT INTO PlayerPositionDefinitions (Id, SportId, Name, ShortName) VALUES 
-    (gen_random_uuid(), sport_id, 'Goalkeeper', 'GK'),
-    (gen_random_uuid(), sport_id, 'Center Forward', 'CF'),
-    (gen_random_uuid(), sport_id, 'Center Back', 'CB'),
-    (gen_random_uuid(), sport_id, 'Driver', 'D'),
-    (gen_random_uuid(), sport_id, 'Wing', 'W'),
-    (gen_random_uuid(), sport_id, 'Utility', 'UTL')
-    ON CONFLICT DO NOTHING;
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', sport_id, 'Goalkeeper', 'GK'),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', sport_id, 'Center Forward', 'CF'),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', sport_id, 'Center Back', 'CB'),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', sport_id, 'Driver', 'D'),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', sport_id, 'Wing', 'W'),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', sport_id, 'Utility', 'UTL')
+    ON CONFLICT (Id) DO NOTHING;
 
     INSERT INTO SportConfigurations (Id, SportId, UsesCleanTime, PeriodsCount, PeriodDurationMinutes, FieldSize, RosterLimit, LineupLimit)
-    VALUES (gen_random_uuid(), sport_id, true, 4, 8, '25x20m', 15, 13)
-    ON CONFLICT DO NOTHING;
+    VALUES ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70', sport_id, true, 4, 8, '25x20m', 15, 13)
+    ON CONFLICT (Id) DO NOTHING;
 
     -- 3. TECHNICAL & TACTICAL ACTIONS
+    -- Fix: Replaced gen_random_uuid() with fixed UUIDs
     INSERT INTO EventDefinitions (Id, SportId, Name, ShortName, IsPositive, CreatedAt) VALUES 
-    (gen_random_uuid(), sport_id, 'Goal', 'GOAL', true, NOW()),
-    (gen_random_uuid(), sport_id, 'Assist', 'ASST', true, NOW()),
-    (gen_random_uuid(), sport_id, 'Sprint Won', 'SPR+', true, NOW()),
-    (gen_random_uuid(), sport_id, 'Exclusion Earned', 'EXCL+', true, NOW()),
-    (gen_random_uuid(), sport_id, 'Penalty Earned', 'PEN+', true, NOW()),
-    (gen_random_uuid(), sport_id, 'Steal', 'STL', true, NOW()),
-    (gen_random_uuid(), sport_id, 'Shot Saved', 'SAVE', true, NOW()),
-    (gen_random_uuid(), sport_id, 'Block', 'BLK', true, NOW()),
-    (gen_random_uuid(), sport_id, 'Shot Missed', 'MISS', false, NOW()),
-    (gen_random_uuid(), sport_id, 'Turnover', 'T-OVER', false, NOW()),
-    (gen_random_uuid(), sport_id, 'Exclusion Received', 'EXCL-', false, NOW()),
-    (gen_random_uuid(), sport_id, 'Penalty Committed', 'PEN-', false, NOW()),
-    (gen_random_uuid(), sport_id, 'Sprint Lost', 'SPR-', false, NOW()),
-    (gen_random_uuid(), sport_id, 'Critical Foul', 'C-FOUL', false, NOW()),
-    (gen_random_uuid(), sport_id, 'Bad Goal Conceded', 'B-GOAL', false, NOW()),
-    (gen_random_uuid(), sport_id, 'Tactical Error', 'T-ERR', false, NOW()),
-    (gen_random_uuid(), sport_id, 'Defensive Transition Failure', 'D-TRANS', false, NOW())
-    ON CONFLICT DO NOTHING;
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f81', sport_id, 'Goal', 'GOAL', true, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82', sport_id, 'Assist', 'ASST', true, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f83', sport_id, 'Sprint Won', 'SPR+', true, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f84', sport_id, 'Exclusion Earned', 'EXCL+', true, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f85', sport_id, 'Penalty Earned', 'PEN+', true, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f86', sport_id, 'Steal', 'STL', true, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f87', sport_id, 'Shot Saved', 'SAVE', true, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f88', sport_id, 'Block', 'BLK', true, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f89', sport_id, 'Shot Missed', 'MISS', false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f90', sport_id, 'Turnover', 'T-OVER', false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f91', sport_id, 'Exclusion Received', 'EXCL-', false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f92', sport_id, 'Penalty Committed', 'PEN-', false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f93', sport_id, 'Sprint Lost', 'SPR-', false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f94', sport_id, 'Critical Foul', 'C-FOUL', false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f95', sport_id, 'Bad Goal Conceded', 'B-GOAL', false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f96', sport_id, 'Tactical Error', 'T-ERR', false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f97', sport_id, 'Defensive Transition Failure', 'D-TRANS', false, NOW())
+    ON CONFLICT (Id) DO NOTHING;
 END $$;
 
 -- ==========================================
 -- 4. CLUBS & TEAMS
 -- ==========================================
 
--- Use subqueries to insert only if the club doesn't exist by name
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Cities WHERE Name = 'Lviv' LIMIT 1), 'Dynamo Lviv', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Clubs WHERE Name = 'Dynamo Lviv');
+-- Fix: Using fixed UUIDs and simple ON CONFLICT (Id) for clubs
+INSERT INTO Clubs (Id, CityId, Name, CreatedAt) VALUES 
+('11111111-1111-1111-1111-111111111101', (SELECT Id FROM Cities WHERE Name = 'Lviv' LIMIT 1), 'Dynamo Lviv', NOW()),
+('11111111-1111-1111-1111-111111111102', (SELECT Id FROM Cities WHERE Name = 'Mariupol' LIMIT 1), 'Mariupol', NOW()),
+('11111111-1111-1111-1111-111111111103', (SELECT Id FROM Cities WHERE Name = 'Kharkiv' LIMIT 1), 'NTU-KhPI Kharkiv', NOW()),
+('11111111-1111-1111-1111-111111111104', (SELECT Id FROM Cities WHERE Name = 'Lviv' LIMIT 1), 'KIVS-Levy Lviv', NOW()),
+('11111111-1111-1111-1111-111111111105', (SELECT Id FROM Cities WHERE Name = 'Kharkiv' LIMIT 1), 'Kharkiv Oblast Team', NOW()),
+('11111111-1111-1111-1111-111111111106', (SELECT Id FROM Cities WHERE Name = 'Uzhhorod' LIMIT 1), 'Zakarpattia Oblast Team', NOW()),
+('11111111-1111-1111-1111-111111111107', (SELECT Id FROM Cities WHERE Name = 'Kyiv' LIMIT 1), 'Kyiv City Team', NOW()),
+('11111111-1111-1111-1111-111111111108', (SELECT Id FROM Cities WHERE Name = 'Lviv' LIMIT 1), 'LFKS-Aquatico Lviv', NOW()),
+('11111111-1111-1111-1111-111111111109', (SELECT Id FROM Cities WHERE Name = 'Lviv' LIMIT 1), 'Dynamo-Amazonky Lviv', NOW()),
+('11111111-1111-1111-1111-111111111110', (SELECT Id FROM Cities WHERE Name = 'Kramatorsk' LIMIT 1), 'Donetsk Oblast Team', NOW())
+ON CONFLICT (Id) DO NOTHING;
 
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Cities WHERE Name = 'Mariupol' LIMIT 1), 'Mariupol', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Clubs WHERE Name = 'Mariupol');
-
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Cities WHERE Name = 'Kharkiv' LIMIT 1), 'NTU-KhPI Kharkiv', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Clubs WHERE Name = 'NTU-KhPI Kharkiv');
-
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Cities WHERE Name = 'Lviv' LIMIT 1), 'KIVS-Levy Lviv', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Clubs WHERE Name = 'KIVS-Levy Lviv');
-
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Cities WHERE Name = 'Kharkiv' LIMIT 1), 'Kharkiv Oblast Team', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Clubs WHERE Name = 'Kharkiv Oblast Team');
-
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Cities WHERE Name = 'Uzhhorod' LIMIT 1), 'Zakarpattia Oblast Team', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Clubs WHERE Name = 'Zakarpattia Oblast Team');
-
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Cities WHERE Name = 'Kyiv' LIMIT 1), 'Kyiv City Team', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Clubs WHERE Name = 'Kyiv City Team');
-
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Cities WHERE Name = 'Lviv' LIMIT 1), 'LFKS-Aquatico Lviv', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Clubs WHERE Name = 'LFKS-Aquatico Lviv');
-
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Cities WHERE Name = 'Lviv' LIMIT 1), 'Dynamo-Amazonky Lviv', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Clubs WHERE Name = 'Dynamo-Amazonky Lviv');
-
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Cities WHERE Name = 'Kramatorsk' LIMIT 1), 'Donetsk Oblast Team', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Clubs WHERE Name = 'Donetsk Oblast Team');
-
--- Insert Teams only if they don't exist
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Dynamo Lviv' LIMIT 1), 'Dynamo Lviv (Men)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'Dynamo Lviv (Men)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Mariupol' LIMIT 1), 'SHVSM Mariupol (Men)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'SHVSM Mariupol (Men)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'NTU-KhPI Kharkiv' LIMIT 1), 'NTU-KhPI - SHVSM (Men)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'NTU-KhPI - SHVSM (Men)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'KIVS-Levy Lviv' LIMIT 1), 'KIVS-Levy (Men)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'KIVS-Levy (Men)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Kharkiv Oblast Team' LIMIT 1), 'Kharkiv Oblast Selection (Men)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'Kharkiv Oblast Selection (Men)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Zakarpattia Oblast Team' LIMIT 1), 'Zakarpattia Oblast - UzhNU (Men)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'Zakarpattia Oblast - UzhNU (Men)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Kyiv City Team' LIMIT 1), 'Kyiv City Selection (Men)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'Kyiv City Selection (Men)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'LFKS-Aquatico Lviv' LIMIT 1), 'LFKS-Aquatico (Men)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'LFKS-Aquatico (Men)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Dynamo-Amazonky Lviv' LIMIT 1), 'Dynamo-Amazonky (Women)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'Dynamo-Amazonky (Women)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Donetsk Oblast Team' LIMIT 1), 'Donetsk Oblast Selection (Women)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'Donetsk Oblast Selection (Women)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Kyiv City Team' LIMIT 1), 'Kyiv City Selection (Women)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'Kyiv City Selection (Women)');
-
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt)
-SELECT gen_random_uuid(), (SELECT Id FROM Clubs WHERE Name = 'Kharkiv Oblast Team' LIMIT 1), 'Kharkiv Oblast Selection (Women)', NOW()
-WHERE NOT EXISTS (SELECT 1 FROM Teams WHERE Name = 'Kharkiv Oblast Selection (Women)');
+-- Fix: Using fixed UUIDs and explicit ClubId linking
+INSERT INTO Teams (Id, ClubId, Name, CreatedAt) VALUES 
+('22222222-2222-2222-2222-222222222201', '11111111-1111-1111-1111-111111111101', 'Dynamo Lviv (Men)', NOW()),
+('22222222-2222-2222-2222-222222222202', '11111111-1111-1111-1111-111111111102', 'SHVSM Mariupol (Men)', NOW()),
+('22222222-2222-2222-2222-222222222203', '11111111-1111-1111-1111-111111111103', 'NTU-KhPI - SHVSM (Men)', NOW()),
+('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111104', 'KIVS-Levy (Men)', NOW()),
+('22222222-2222-2222-2222-222222222205', '11111111-1111-1111-1111-111111111105', 'Kharkiv Oblast Selection (Men)', NOW()),
+('22222222-2222-2222-2222-222222222206', '11111111-1111-1111-1111-111111111106', 'Zakarpattia Oblast - UzhNU (Men)', NOW()),
+('22222222-2222-2222-2222-222222222207', '11111111-1111-1111-1111-111111111107', 'Kyiv City Selection (Men)', NOW()),
+('22222222-2222-2222-2222-222222222208', '11111111-1111-1111-1111-111111111108', 'LFKS-Aquatico (Men)', NOW()),
+('22222222-2222-2222-2222-222222222209', '11111111-1111-1111-1111-111111111109', 'Dynamo-Amazonky (Women)', NOW()),
+('22222222-2222-2222-2222-222222222210', '11111111-1111-1111-1111-111111111110', 'Donetsk Oblast Selection (Women)', NOW()),
+('22222222-2222-2222-2222-222222222211', '11111111-1111-1111-1111-111111111107', 'Kyiv City Selection (Women)', NOW()),
+('22222222-2222-2222-2222-222222222212', '11111111-1111-1111-1111-111111111105', 'Kharkiv Oblast Selection (Women)', NOW())
+ON CONFLICT (Id) DO NOTHING;
 
 -- ==========================================
 -- 5. OAuth CHECK
@@ -193,8 +135,7 @@ DO $$
 DECLARE 
     -- FIXED: Using Auth0 Subject ID (sub) instead of email address
     v_user_id VARCHAR := 'auth0|698b9560880889e5401cef7c'; 
-    v_club_id UUID;
-    v_team_id UUID;
+    v_team_id UUID := '22222222-2222-2222-2222-222222222201'; -- Linked to 'Dynamo Lviv (Men)'
 BEGIN
     -- 1. Create user in Users table using Auth0 Identity ID as PK
     -- Fix: Explicitly target the PK constraint (Id)
@@ -202,24 +143,20 @@ BEGIN
     VALUES (v_user_id, 'user1@example.com', 'UserOne', NOW())
     ON CONFLICT (Id) DO NOTHING;
 
-    -- 2. Retrieve existing IDs for Club and Team
-    SELECT Id INTO v_club_id FROM Clubs WHERE Name = 'Dynamo Lviv' LIMIT 1;
-    SELECT Id INTO v_team_id FROM Teams WHERE Name = 'Dynamo Lviv (Men)' LIMIT 1;
-
-    -- 3. Associate user with the team (Membership)
+    -- 2. Associate user with the team (Membership)
     -- Using INSERT ... SELECT to prevent duplicates when UserId/TeamId already exists
     INSERT INTO TeamMemberships (Id, UserId, TeamId, RoleInTeam, JoinedAt, IsPrimary)
-    SELECT gen_random_uuid(), v_user_id, v_team_id, 'HeadCoach', NOW(), true
+    SELECT '99999999-9999-9999-9999-999999999901', v_user_id, v_team_id, 'HeadCoach', NOW(), true
     WHERE NOT EXISTS (
         SELECT 1 FROM TeamMemberships 
         WHERE UserId = v_user_id AND TeamId = v_team_id
     );
 
-    -- 4. Define Access Policy (RBAC)
+    -- 3. Define Access Policy (RBAC)
     -- Using INSERT ... SELECT to ensure idempotency for the business key
     INSERT INTO AccessPolicies (Id, UserId, Role, TargetType, TargetId, CreatedAt)
     SELECT 
-        gen_random_uuid(), 
+        '99999999-9999-9999-9999-999999999902', 
         v_user_id, 
         'Editor', 
         'Team', 
