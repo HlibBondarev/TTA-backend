@@ -92,7 +92,9 @@ CREATE TABLE Teams (
     MinBirthYear INT NULL, 
     -- Team gender (e.g., Male, Female). Note: Girls can play in Male teams until age 15.
     Gender VARCHAR(20) NOT NULL, 
-    CreatedAt TIMESTAMP NOT NULL
+    CreatedAt TIMESTAMP NOT NULL,
+    -- Requirement: Ensure DB values match C# Gender Enum
+    CONSTRAINT CHK_Teams_Gender CHECK (Gender IN ('Male', 'Female'))
 );
 
 CREATE TABLE TeamMemberships (
