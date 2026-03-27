@@ -253,5 +253,5 @@ CREATE TABLE auth.AccessPolicies (
     CONSTRAINT CHK_AccessPolicy_Dates CHECK (ExpiresAt IS NULL OR ExpiresAt > CreatedAt)
 );
 
-CREATE INDEX IX_AccessPolicies_UserId ON AccessPolicies(UserId);
-CREATE INDEX IX_AccessPolicies_Scope ON AccessPolicies(TargetType, TargetId);
+CREATE INDEX IX_AccessPolicies_UserId ON auth.AccessPolicies(UserId);
+CREATE INDEX IX_AccessPolicies_Scope ON auth.AccessPolicies(TargetType, TargetId);
