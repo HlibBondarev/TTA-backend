@@ -156,7 +156,7 @@ BEGIN
     );
 
     -- 3. Define Access Policy (RBAC)
-    INSERT INTO AccessPolicies (Id, UserId, Role, TargetType, TargetId, CreatedAt)
+    INSERT INTO auth.AccessPolicies (Id, UserId, Role, TargetType, TargetId, CreatedAt)
     SELECT 
         '99999999-9999-9999-9999-999999999902', 
         v_user_id, 
@@ -165,7 +165,7 @@ BEGIN
         v_team_id, 
         NOW()
     WHERE NOT EXISTS (
-        SELECT 1 FROM AccessPolicies 
+        SELECT 1 FROM auth.AccessPolicies 
         WHERE UserId = v_user_id 
           AND Role = 'Editor' 
           AND TargetType = 'Team' 
