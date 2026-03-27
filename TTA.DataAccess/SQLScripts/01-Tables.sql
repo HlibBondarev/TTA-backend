@@ -43,6 +43,7 @@ CREATE TABLE Sports (
     Id UUID PRIMARY KEY,
     Name VARCHAR(50) NOT NULL UNIQUE,
     DefaultConfigId UUID NULL 
+    -- We will add the Composite FK after SportConfigurations is defined
 );
 
 CREATE TABLE PlayerPositionDefinitions (
@@ -60,11 +61,16 @@ CREATE TABLE SportConfigurations (
     PeriodDurationMinutes INT NOT NULL,
     FieldSize VARCHAR(50) NOT NULL,
     RosterLimit INT NOT NULL,
-    LineupLimit INT NOT NULL
+    LineupLimit INT NOT NULL,
+    -- Requirement: Unique constraint to allow composite FKs
+    UNIQUE (SportId, Id)
 );
 
--- Circular reference handling for Sports
-ALTER TABLE Sports ADD CONSTRAINT fk_default_config FOREIGN KEY (DefaultConfigId) REFERENCES SportConfigurations(Id);
+-- Requirement: Enforce that DefaultConfigId belongs to the same Sport
+ALTER TABLE Sports 
+ADD CONSTRAINT fk_sports_default_config 
+FOREIGN KEY (Id, DefaultConfigId) 
+REFERENCES SportConfigurations (SportId, Id);
 
 -- ==========================================
 -- 3. ORGANIZATIONS & TEAMS
@@ -106,11 +112,15 @@ CREATE TABLE TeamMemberships (
 CREATE TABLE Tournaments (
     Id UUID PRIMARY KEY,
     SportId UUID NOT NULL REFERENCES Sports(Id),
-    ConfigurationId UUID NOT NULL REFERENCES SportConfigurations(Id),
+    ConfigurationId UUID NOT NULL, -- Will be part of composite FK
     Name VARCHAR(200) NOT NULL,
     StartDate TIMESTAMP NOT NULL,
     EndDate TIMESTAMP NULL,
-    CreatedAt TIMESTAMP NOT NULL
+    CreatedAt TIMESTAMP NOT NULL,
+    -- Requirement: Enforce that Tournament Configuration belongs to the correct Sport
+    CONSTRAINT fk_tournaments_sport_config
+    FOREIGN KEY (SportId, ConfigurationId) 
+    REFERENCES SportConfigurations (SportId, Id)
 );
 
 CREATE TABLE Matches (
