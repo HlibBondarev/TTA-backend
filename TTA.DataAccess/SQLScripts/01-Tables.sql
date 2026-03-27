@@ -36,41 +36,14 @@ CREATE TABLE Users (
 );
 
 -- ==========================================
--- 2. ORGANIZATIONS & TEAMS
--- ==========================================
-
-CREATE TABLE Clubs (
-    Id UUID PRIMARY KEY,
-    CityId UUID NOT NULL REFERENCES Cities(Id),
-    Name VARCHAR(100) NOT NULL,
-    CreatedAt TIMESTAMP NOT NULL
-);
-
-CREATE TABLE Teams (
-    Id UUID PRIMARY KEY,
-    ClubId UUID NOT NULL REFERENCES Clubs(Id) ON DELETE CASCADE,
-    Name VARCHAR(100) NOT NULL,
-    CreatedAt TIMESTAMP NOT NULL
-);
-
-CREATE TABLE TeamMemberships (
-    Id UUID PRIMARY KEY,
-    UserId VARCHAR(64) NOT NULL REFERENCES Users(Id) ON DELETE CASCADE,
-    TeamId UUID NOT NULL REFERENCES Teams(Id) ON DELETE CASCADE,
-    RoleInTeam VARCHAR(50) NOT NULL, -- Enum: HeadCoach, Player, etc.
-    JoinedAt TIMESTAMP NOT NULL,
-    LeftAt TIMESTAMP NULL,
-    IsPrimary BOOLEAN NOT NULL
-);
-
--- ==========================================
--- 3. SPORT & TOURNAMENTS
+-- 2. SPORT DEFINITIONS
 -- ==========================================
 
 CREATE TABLE Sports (
     Id UUID PRIMARY KEY,
     Name VARCHAR(50) NOT NULL UNIQUE,
     DefaultConfigId UUID NULL 
+    -- We will add the Composite FK after SportConfigurations is defined
 );
 
 CREATE TABLE PlayerPositionDefinitions (
@@ -88,19 +61,68 @@ CREATE TABLE SportConfigurations (
     PeriodDurationMinutes INT NOT NULL,
     FieldSize VARCHAR(50) NOT NULL,
     RosterLimit INT NOT NULL,
-    LineupLimit INT NOT NULL
+    LineupLimit INT NOT NULL,
+    -- Requirement: Unique constraint to allow composite FKs
+    UNIQUE (SportId, Id)
 );
 
-ALTER TABLE Sports ADD CONSTRAINT fk_default_config FOREIGN KEY (DefaultConfigId) REFERENCES SportConfigurations(Id);
+-- Requirement: Enforce that DefaultConfigId belongs to the same Sport
+ALTER TABLE Sports 
+ADD CONSTRAINT fk_sports_default_config 
+FOREIGN KEY (Id, DefaultConfigId) 
+REFERENCES SportConfigurations (SportId, Id);
+
+-- ==========================================
+-- 3. ORGANIZATIONS & TEAMS
+-- ==========================================
+
+CREATE TABLE Clubs (
+    Id UUID PRIMARY KEY,
+    CityId UUID NOT NULL REFERENCES Cities(Id),
+    Name VARCHAR(100) NOT NULL,
+    CreatedAt TIMESTAMP NOT NULL
+);
+
+CREATE TABLE Teams (
+    Id UUID PRIMARY KEY,
+    ClubId UUID NOT NULL REFERENCES Clubs(Id) ON DELETE CASCADE,
+    SportId UUID NOT NULL REFERENCES Sports(Id), -- Link to a specific sport (Multi-sport club support)
+    Name VARCHAR(100) NOT NULL,
+    -- Earliest birth year allowed (e.g., 2011). NULL means no age limit (Senior/Pro).
+    MinBirthYear INT NULL, 
+    -- Team gender (e.g., Male, Female). Note: Girls can play in Male teams until age 15.
+    Gender VARCHAR(20) NOT NULL, 
+    CreatedAt TIMESTAMP NOT NULL,
+    -- Requirement: Ensure DB values match C# Gender Enum
+    CONSTRAINT CHK_Teams_Gender CHECK (Gender IN ('Male', 'Female'))
+);
+
+CREATE TABLE TeamMemberships (
+    Id UUID PRIMARY KEY,
+    UserId VARCHAR(64) NOT NULL REFERENCES Users(Id) ON DELETE CASCADE,
+    TeamId UUID NOT NULL REFERENCES Teams(Id) ON DELETE CASCADE,
+    RoleInTeam VARCHAR(50) NOT NULL, -- Enum: HeadCoach, Player, etc.
+    JoinedAt TIMESTAMP NOT NULL,
+    LeftAt TIMESTAMP NULL,
+    IsPrimary BOOLEAN NOT NULL
+);
+
+-- ==========================================
+-- 4. TOURNAMENTS & MATCHES
+-- ==========================================
 
 CREATE TABLE Tournaments (
     Id UUID PRIMARY KEY,
     SportId UUID NOT NULL REFERENCES Sports(Id),
-    ConfigurationId UUID NOT NULL REFERENCES SportConfigurations(Id),
+    ConfigurationId UUID NOT NULL, -- Will be part of composite FK
     Name VARCHAR(200) NOT NULL,
     StartDate TIMESTAMP NOT NULL,
     EndDate TIMESTAMP NULL,
-    CreatedAt TIMESTAMP NOT NULL
+    CreatedAt TIMESTAMP NOT NULL,
+    -- Requirement: Enforce that Tournament Configuration belongs to the correct Sport
+    CONSTRAINT fk_tournaments_sport_config
+    FOREIGN KEY (SportId, ConfigurationId) 
+    REFERENCES SportConfigurations (SportId, Id)
 );
 
 CREATE TABLE Matches (
@@ -118,7 +140,7 @@ CREATE TABLE Matches (
 );
 
 -- ==========================================
--- 4. PLAYERS & ROSTERS
+-- 5. PLAYERS & ROSTERS
 -- ==========================================
 
 CREATE TABLE Players (
@@ -158,7 +180,7 @@ CREATE TABLE MatchLineups (
 );
 
 -- ==========================================
--- 5. TTA ENGINE (EVENTS & TIME)
+-- 6. TTA ENGINE (EVENTS & TIME)
 -- ==========================================
 
 CREATE TABLE EventDefinitions (
@@ -205,15 +227,15 @@ CREATE TABLE PlayerPresences (
 );
 
 -- ==========================================
--- 6. ACCESS CONTROL & PERMISSIONS
+-- 7. ACCESS CONTROL & PERMISSIONS
 -- ==========================================
 
-CREATE TABLE AccessPolicies (
+CREATE TABLE auth.AccessPolicies (
     Id UUID PRIMARY KEY,
     UserId VARCHAR(64) NOT NULL REFERENCES Users(Id) ON DELETE CASCADE,
     Role VARCHAR(20) NOT NULL, 
     TargetType VARCHAR(20) NOT NULL, 
-    TargetId UUID NULL,             
+    TargetId UUID NULL,              
     CreatedAt TIMESTAMP NOT NULL,
     ExpiresAt TIMESTAMP NULL,
 
@@ -231,5 +253,5 @@ CREATE TABLE AccessPolicies (
     CONSTRAINT CHK_AccessPolicy_Dates CHECK (ExpiresAt IS NULL OR ExpiresAt > CreatedAt)
 );
 
-CREATE INDEX IX_AccessPolicies_UserId ON AccessPolicies(UserId);
-CREATE INDEX IX_AccessPolicies_Scope ON AccessPolicies(TargetType, TargetId);
+CREATE INDEX IX_AccessPolicies_UserId ON auth.AccessPolicies(UserId);
+CREATE INDEX IX_AccessPolicies_Scope ON auth.AccessPolicies(TargetType, TargetId);

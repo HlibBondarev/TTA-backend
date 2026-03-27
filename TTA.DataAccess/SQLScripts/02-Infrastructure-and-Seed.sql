@@ -23,7 +23,6 @@ BEGIN
     (v_ukraine_id, 'Zakarpattia Oblast')
     ON CONFLICT (CountryId, Name) DO NOTHING;
 
-    -- FIX: Changed ON CONFLICT target to (RegionId, Name) as requested by reviewer
     INSERT INTO Cities (Id, RegionId, Name) VALUES 
     ('c0000000-0000-0000-0000-000000000001', (SELECT Id FROM Regions WHERE Name = 'Lviv Oblast' AND CountryId = v_ukraine_id), 'Lviv'),
     ('c0000000-0000-0000-0000-000000000002', (SELECT Id FROM Regions WHERE Name = 'Kyiv City' AND CountryId = v_ukraine_id), 'Kyiv'),
@@ -93,7 +92,7 @@ END $$;
 -- 4. CLUBS & TEAMS
 -- ==========================================
 
--- FIX: Deterministic CityId lookup using JOINS to Countries and Regions
+-- Clubs Seeding
 INSERT INTO Clubs (Id, CityId, Name, CreatedAt) VALUES 
 ('11111111-1111-1111-1111-111111111101', 
     (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
@@ -104,47 +103,38 @@ INSERT INTO Clubs (Id, CityId, Name, CreatedAt) VALUES
 ('11111111-1111-1111-1111-111111111103', 
     (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
      WHERE c.Name = 'Kharkiv' AND r.Name = 'Kharkiv Oblast' AND co.Code = 'UKR' LIMIT 1), 'NTU-KhPI Kharkiv', NOW()),
-('11111111-1111-1111-1111-111111111104', 
-    (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Lviv' AND r.Name = 'Lviv Oblast' AND co.Code = 'UKR' LIMIT 1), 'KIVS-Levy Lviv', NOW()),
-('11111111-1111-1111-1111-111111111105', 
-    (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Kharkiv' AND r.Name = 'Kharkiv Oblast' AND co.Code = 'UKR' LIMIT 1), 'Kharkiv Oblast Team', NOW()),
-('11111111-1111-1111-1111-111111111106', 
-    (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Uzhhorod' AND r.Name = 'Zakarpattia Oblast' AND co.Code = 'UKR' LIMIT 1), 'Zakarpattia Oblast Team', NOW()),
 ('11111111-1111-1111-1111-111111111107', 
     (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
      WHERE c.Name = 'Kyiv' AND r.Name = 'Kyiv City' AND co.Code = 'UKR' LIMIT 1), 'Kyiv City Team', NOW()),
-('11111111-1111-1111-1111-111111111108', 
-    (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Lviv' AND r.Name = 'Lviv Oblast' AND co.Code = 'UKR' LIMIT 1), 'LFKS-Aquatico Lviv', NOW()),
 ('11111111-1111-1111-1111-111111111109', 
     (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Lviv' AND r.Name = 'Lviv Oblast' AND co.Code = 'UKR' LIMIT 1), 'Dynamo-Amazonky Lviv', NOW()),
-('11111111-1111-1111-1111-111111111110', 
-    (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Kramatorsk' AND r.Name = 'Donetsk Oblast' AND co.Code = 'UKR' LIMIT 1), 'Donetsk Oblast Team', NOW())
+     WHERE c.Name = 'Lviv' AND r.Name = 'Lviv Oblast' AND co.Code = 'UKR' LIMIT 1), 'Dynamo-Amazonky Lviv', NOW())
 ON CONFLICT (Id) DO NOTHING;
 
--- Teams insert using fixed UUIDs
-INSERT INTO Teams (Id, ClubId, Name, CreatedAt) VALUES 
-('22222222-2222-2222-2222-222222222201', '11111111-1111-1111-1111-111111111101', 'Dynamo Lviv (Men)', NOW()),
-('22222222-2222-2222-2222-222222222202', '11111111-1111-1111-1111-111111111102', 'SHVSM Mariupol (Men)', NOW()),
-('22222222-2222-2222-2222-222222222203', '11111111-1111-1111-1111-111111111103', 'NTU-KhPI - SHVSM (Men)', NOW()),
-('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111104', 'KIVS-Levy (Men)', NOW()),
-('22222222-2222-2222-2222-222222222205', '11111111-1111-1111-1111-111111111105', 'Kharkiv Oblast Selection (Men)', NOW()),
-('22222222-2222-2222-2222-222222222206', '11111111-1111-1111-1111-111111111106', 'Zakarpattia Oblast - UzhNU (Men)', NOW()),
-('22222222-2222-2222-2222-222222222207', '11111111-1111-1111-1111-111111111107', 'Kyiv City Selection (Men)', NOW()),
-('22222222-2222-2222-2222-222222222208', '11111111-1111-1111-1111-111111111108', 'LFKS-Aquatico (Men)', NOW()),
-('22222222-2222-2222-2222-222222222209', '11111111-1111-1111-1111-111111111109', 'Dynamo-Amazonky (Women)', NOW()),
-('22222222-2222-2222-2222-222222222210', '11111111-1111-1111-1111-111111111110', 'Donetsk Oblast Selection (Women)', NOW()),
-('22222222-2222-2222-2222-222222222211', '11111111-1111-1111-1111-111111111107', 'Kyiv City Selection (Women)', NOW()),
-('22222222-2222-2222-2222-222222222212', '11111111-1111-1111-1111-111111111105', 'Kharkiv Oblast Selection (Women)', NOW())
-ON CONFLICT (Id) DO NOTHING;
+-- Teams Seeding (Updated with SportId, MinBirthYear, Gender)
+-- sport_id: '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f' (Water Polo)
+DO $$ 
+DECLARE 
+    v_wp_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f';
+BEGIN
+    INSERT INTO Teams (Id, ClubId, SportId, Name, MinBirthYear, Gender, CreatedAt) VALUES 
+    -- Professional / Men's Teams
+    ('22222222-2222-2222-2222-222222222201', '11111111-1111-1111-1111-111111111101', v_wp_id, 'Dynamo Lviv (Men)', NULL, 'Male', NOW()),
+    ('22222222-2222-2222-2222-222222222202', '11111111-1111-1111-1111-111111111102', v_wp_id, 'SHVSM Mariupol (Men)', NULL, 'Male', NOW()),
+    ('22222222-2222-2222-2222-222222222203', '11111111-1111-1111-1111-111111111103', v_wp_id, 'NTU-KhPI - SHVSM (Men)', NULL, 'Male', NOW()),
+    
+    -- Youth Teams (Male) - Testing MinBirthYear logic
+    ('22222222-2222-2222-2222-222222222213', '11111111-1111-1111-1111-111111111101', v_wp_id, 'Dynamo Lviv U-13 (2013)', 2013, 'Male', NOW()),
+    ('22222222-2222-2222-2222-222222222209', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv U-15 (2011)', 2011, 'Male', NOW()),
+
+    -- Women's Teams
+    ('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111109', v_wp_id, 'Dynamo-Amazonky (Women)', NULL, 'Female', NOW()),
+    ('22222222-2222-2222-2222-222222222211', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv City Selection (Women)', NULL, 'Female', NOW())
+    ON CONFLICT (Id) DO NOTHING;
+END $$;
 
 -- ==========================================
--- 5. OAuth CHECK
+-- 5. OAuth CHECK & PERMISSIONS
 -- ==========================================
 
 DO $$ 
@@ -166,7 +156,7 @@ BEGIN
     );
 
     -- 3. Define Access Policy (RBAC)
-    INSERT INTO AccessPolicies (Id, UserId, Role, TargetType, TargetId, CreatedAt)
+    INSERT INTO auth.AccessPolicies (Id, UserId, Role, TargetType, TargetId, CreatedAt)
     SELECT 
         '99999999-9999-9999-9999-999999999902', 
         v_user_id, 
@@ -175,7 +165,7 @@ BEGIN
         v_team_id, 
         NOW()
     WHERE NOT EXISTS (
-        SELECT 1 FROM AccessPolicies 
+        SELECT 1 FROM auth.AccessPolicies 
         WHERE UserId = v_user_id 
           AND Role = 'Editor' 
           AND TargetType = 'Team' 
