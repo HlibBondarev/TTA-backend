@@ -3,7 +3,7 @@
 -- ======================================================
 
 -- Retrieves the effective user role for a specific target or global scope.
--- Updated to fix column naming (ResourceId -> TargetId)
+-- Optimized to handle role precedence and explicit schema qualification.
 CREATE OR REPLACE FUNCTION auth.get_user_permission(
     p_user_id VARCHAR(64),
     p_target_type VARCHAR(20),
@@ -14,14 +14,15 @@ DECLARE
     v_role VARCHAR(20);
 BEGIN
     SELECT "Role" INTO v_role
-    FROM AccessPolicies -- Table from our 01-Tables.sql
+    -- Explicitly using auth schema to remove search_path dependency
+    FROM auth.AccessPolicies 
     WHERE "UserId" = p_user_id
       AND (
           -- Check for global administrator privileges
           ("TargetType" = 'Global') 
           OR 
           -- Check for specific resource access (Club or Team)
-          -- FIX: Changed ResourceId to TargetId to match the table schema
+          -- TargetId matches the naming convention in 01-Tables.sql
           ("TargetType" = p_target_type AND "TargetId" = p_target_id)
       )
       AND ("ExpiresAt" IS NULL OR "ExpiresAt" > CURRENT_TIMESTAMP)

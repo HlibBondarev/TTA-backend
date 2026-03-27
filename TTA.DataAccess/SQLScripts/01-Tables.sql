@@ -230,7 +230,7 @@ CREATE TABLE PlayerPresences (
 -- 7. ACCESS CONTROL & PERMISSIONS
 -- ==========================================
 
-CREATE TABLE AccessPolicies (
+CREATE TABLE auth.AccessPolicies (
     Id UUID PRIMARY KEY,
     UserId VARCHAR(64) NOT NULL REFERENCES Users(Id) ON DELETE CASCADE,
     Role VARCHAR(20) NOT NULL, 
