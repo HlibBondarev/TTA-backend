@@ -1,8 +1,10 @@
 ﻿using DbUp;
+using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.OpenApi.Models;
 using Serilog;
 using Serilog.Exceptions;
+using TTA.BusinessLogic;
 using TTA.BusinessLogic.Services;
 using TTA.BusinessLogic.Services.Api;
 using TTA.Common.Enums;
@@ -56,6 +58,17 @@ public static class Startup
 
         // Registering the handler with Scoped lifetime (to resolve IAccessService correctly)
         builder.Services.AddScoped<IAuthorizationHandler, ScopePermissionHandler>();
+
+        // Reference the assembly via the stable Placeholder class
+        var businessLogicAssembly = typeof(BusinessLogicPlaceholder).Assembly;
+
+        // Register MediatR
+        builder.Services.AddMediatR(cfg =>
+            cfg.RegisterServicesFromAssembly(businessLogicAssembly));
+
+        // Register all Validators from BusinessLogic assembly
+        // This allows injecting IValidator<CreateClubRequest> into controllers
+        builder.Services.AddValidatorsFromAssembly(businessLogicAssembly);
 
         // Defining policies using the modern AuthorizationBuilder
         builder.Services.AddAuthorizationBuilder()
@@ -182,7 +195,7 @@ public static class Startup
         // Configure DbUp to look for scripts embedded in TTA.DataAccess project
         var upgrader = DeployChanges.To
             .PostgresqlDatabase(connectionString)
-            .WithScriptsEmbeddedInAssembly(typeof(Placeholder).Assembly)
+            .WithScriptsEmbeddedInAssembly(typeof(SqlPlaceholder).Assembly)
             .LogToConsole() // Correct method name for standard console output
             .Build();
 
