@@ -72,7 +72,7 @@ REFERENCES sportconfigurations (sportid, id);
 -- 3. ORGANIZATIONS & TEAMS
 -- ==========================================
 
-CREATE TABLE public.clubs (
+CREATE TABLE clubs (
     id UUID PRIMARY KEY,
     cityid UUID NOT NULL REFERENCES public.cities(id),
     name VARCHAR(100) NOT NULL,
@@ -95,9 +95,12 @@ CREATE TABLE teammemberships (
     userid VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     teamid UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     roleinteam VARCHAR(50) NOT NULL,
-    joinedat TIMESTAMPTZ NOT NULL, -- FIXED
-    leftat TIMESTAMPTZ NULL,       -- FIXED
-    isprimary BOOLEAN NOT NULL
+    joinedat TIMESTAMPTZ NOT NULL,
+    leftat TIMESTAMPTZ NULL,
+    isprimary BOOLEAN NOT NULL,
+    -- Ensure leftat is after or equal to joinedat
+    CONSTRAINT chk_teammemberships_left_after_joined 
+        CHECK (leftat IS NULL OR leftat >= joinedat)
 );
 
 -- ==========================================
@@ -109,12 +112,15 @@ CREATE TABLE tournaments (
     sportid UUID NOT NULL REFERENCES sports(id),
     configurationid UUID NOT NULL,
     name VARCHAR(200) NOT NULL,
-    startdate TIMESTAMPTZ NOT NULL, -- FIXED
-    enddate TIMESTAMPTZ NULL,       -- FIXED
-    createdat TIMESTAMPTZ NOT NULL, -- FIXED
+    startdate TIMESTAMPTZ NOT NULL,
+    enddate TIMESTAMPTZ NULL,
+    createdat TIMESTAMPTZ NOT NULL,
     CONSTRAINT fk_tournaments_sport_config
-    FOREIGN KEY (sportid, configurationid) 
-    REFERENCES sportconfigurations (sportid, id)
+        FOREIGN KEY (sportid, configurationid) 
+        REFERENCES sportconfigurations (sportid, id),
+    -- Ensure enddate is after or equal to startdate
+    CONSTRAINT chk_tournaments_end_after_start 
+        CHECK (enddate IS NULL OR enddate >= startdate)
 );
 
 CREATE TABLE matches (
@@ -212,8 +218,11 @@ CREATE TABLE playerpresences (
     matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
     playerid UUID NOT NULL REFERENCES players(id),
     periodnumber INT NOT NULL,
-    timein TIMESTAMPTZ NOT NULL, -- FIXED
-    timeout TIMESTAMPTZ NULL     -- FIXED
+    timein TIMESTAMPTZ NOT NULL,
+    timeout TIMESTAMPTZ NULL,
+    -- Ensure timeout is after or equal to timein
+    CONSTRAINT chk_playerpresences_timeout_after_timein 
+        CHECK (timeout IS NULL OR timeout >= timein)
 );
 
 -- ==========================================
@@ -228,21 +237,27 @@ CREATE TABLE auth.accesspolicies (
     targetid UUID NULL,                
     createdat TIMESTAMPTZ NOT NULL,
     expiresat TIMESTAMPTZ NULL,
-
-    CONSTRAINT chk_accesspolicy_role CHECK (role IN ('FullControl', 'Editor', 'Viewer')),
-    CONSTRAINT chk_accesspolicy_targettype CHECK (targettype IN ('Global', 'Club', 'Team')),
-
+    -- Constraints for data integrity
+    CONSTRAINT chk_accesspolicy_role 
+        CHECK (role IN ('FullControl', 'Editor', 'Viewer')),
+    CONSTRAINT chk_accesspolicy_targettype 
+        CHECK (targettype IN ('Global', 'Club', 'Team')),
+    -- Logic: Global must have NULL targetid, others must have a value
     CONSTRAINT chk_accesspolicy_targetid_scope_logic CHECK (
         (targettype = 'Global' AND targetid IS NULL) OR 
         (targettype IN ('Club', 'Team') AND targetid IS NOT NULL)
     ),
-
-    CONSTRAINT chk_accesspolicy_dates CHECK (expiresat IS NULL OR expiresat > createdat)
+    -- Explicitly named constraint with NULL-safe chronological check
+    CONSTRAINT chk_accesspolicies_expires_after_created 
+        CHECK (expiresat IS NULL OR expiresat >= createdat)
 );
 
+-- Basic indexing for performance
 CREATE INDEX ix_accesspolicies_userid ON auth.accesspolicies(userid);
 CREATE INDEX ix_accesspolicies_scope ON auth.accesspolicies(targettype, targetid);
 
+-- Partial Unique Index to enforce "One active Club Owner per User" rule
+-- Aligned with Finding #10: we only care about non-expired ownership
 CREATE UNIQUE INDEX uix_accesspolicies_club_owner 
 ON auth.accesspolicies (userid) 
 WHERE targettype = 'Club' 
