@@ -78,6 +78,7 @@ CREATE TABLE clubs (
     name VARCHAR(100) NOT NULL,
     createdat TIMESTAMPTZ NOT NULL -- VERIFIED
 );
+CREATE INDEX ix_clubs_cityid ON clubs (cityid);
 
 CREATE TABLE teams (
     id UUID PRIMARY KEY,
@@ -89,6 +90,12 @@ CREATE TABLE teams (
     createdat TIMESTAMPTZ NOT NULL, -- FIXED
     CONSTRAINT chk_teams_gender CHECK (gender IN ('Male', 'Female'))
 );
+-- Indexes for teams table
+CREATE INDEX ix_teams_clubid ON teams (clubid);
+CREATE INDEX ix_teams_sportid ON teams (sportid);
+CREATE INDEX ix_teams_gender ON teams (gender);
+-- Composite index for frequent filters by club and sport
+CREATE INDEX ix_teams_club_sport ON teams (clubid, sportid);
 
 CREATE TABLE teammemberships (
     id UUID PRIMARY KEY,

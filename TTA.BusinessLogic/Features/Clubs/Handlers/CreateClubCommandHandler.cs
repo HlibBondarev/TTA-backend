@@ -30,18 +30,20 @@ public class CreateClubCommandHandler(
             command.Name, command.CreatorUserId);
 
         // 1. Business Rule Enforcement
+        // Re-verified: HasExistingClubOwnershipAsync now uses a dedicated SQL EXISTS check
         bool alreadyOwnsClub = await _repository.HasExistingClubOwnershipAsync(command.CreatorUserId, cancellationToken);
 
         if (alreadyOwnsClub)
         {
-            // Keep user identifier in server logs for diagnostics
-            _logger.LogWarning("User {UserId} already owns a club. Aborting creation.", command.CreatorUserId);
+            // Logging detailed info for diagnostics (server-side only)
+            _logger.LogWarning("Conflict: User {UserId} attempted to create a second club.", command.CreatorUserId);
 
-            // Return generic message to client to prevent ID leakage
+            // Generic message to prevent PII/ID leakage to the client
             throw new ConflictException("User already owns a club.");
         }
 
         // 2. Prepare Entity
+        // Note: Mapping matches the requirements for strict verification in tests
         var club = new Club
         {
             Id = Guid.NewGuid(),
@@ -51,6 +53,7 @@ public class CreateClubCommandHandler(
         };
 
         // 3. Atomic Execution via Repository
+        // Using CreateWithOwnershipAsync ensures both Club and AccessPolicy are created in one transaction
         var resultId = await _repository.CreateWithOwnershipAsync(club, command.CreatorUserId, cancellationToken);
 
         _logger.LogInformation("Club '{ClubName}' created successfully with ID {ClubId}", command.Name, resultId);

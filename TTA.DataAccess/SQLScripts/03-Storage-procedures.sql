@@ -52,27 +52,33 @@ END;$$ LANGUAGE plpgsql;
 -- 1) Creates a club and its associated FullControl policy in a single transaction.
 -- The ID for the access policy is generated automatically by the table default.
 CREATE OR REPLACE FUNCTION auth.create_club_with_ownership(
-    p_id UUID,          -- Explicitly passed from C# (Club.Id)
-    p_cityid UUID,      -- Explicitly passed from C# (Club.CityId)
+    p_id UUID,
+    p_cityid UUID,
     p_name TEXT,
     p_ownerid TEXT,
     p_createdat TIMESTAMPTZ
-) RETURNS UUID AS $$BEGIN
-    -- 1. Insert the club record using the provided ID
+) RETURNS UUID AS $$
+DECLARE
+    v_constraint_name TEXT;
+BEGIN
+    -- 1. Insert the club record
     INSERT INTO public.clubs (id, cityid, name, createdat)
     VALUES (p_id, p_cityid, p_name, p_createdat);
 
     -- 2. Insert the ownership policy
-    -- 'id' is omitted here as it's handled by DEFAULT gen_random_uuid() in 01-Tables.sql
     INSERT INTO auth.accesspolicies (userid, targettype, targetid, role, createdat)
     VALUES (p_ownerid, 'Club', p_id, 'FullControl', p_createdat);
 
     RETURN p_id;
 
 EXCEPTION 
-    -- Catch the unique index violation (one club per user rule)
     WHEN unique_violation THEN
-        RAISE EXCEPTION 'User already owns a club.' USING ERRCODE = '23505';
+        GET STACKED DIAGNOSTICS v_constraint_name = CONSTRAINT_NAME;
+        IF v_constraint_name = 'uix_accesspolicies_club_owner' THEN
+            RAISE EXCEPTION 'User already owns a club.' USING ERRCODE = '23505';
+        ELSE
+            RAISE;
+        END IF;
 END;$$ LANGUAGE plpgsql;
 
 -- 2) Checks if a user already owns any club to enforce "one club per user" rule.
