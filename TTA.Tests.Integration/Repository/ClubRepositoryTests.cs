@@ -14,7 +14,7 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
     public async Task CreateWithOwnershipAsync_ShouldInsertClubAndPolicy_WhenUserExists()
     {
         // Arrange
-        var userId = "auth0|test-integration-user";
+        var userId = $"auth0|test-user-{Guid.NewGuid()}"; // Use unique ID to avoid state pollution
         var clubId = Guid.NewGuid();
         var cityId = Guid.Parse("c0000000-0000-0000-0000-000000000001");
 
@@ -43,12 +43,18 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        var sql = "INSERT INTO public.Users (Id, DisplayName, Email, CreatedAt) VALUES (@id, @name, @email, @date) ON CONFLICT (Id) DO NOTHING";
+        // Note: Using lowercase table name 'users' to match PostgreSQL conventions 
+        // and using ON CONFLICT to skip if ID already exists.
+        var sql = "INSERT INTO public.users (id, displayname, email, createdat) VALUES (@id, @name, @email, @date) ON CONFLICT (id) DO NOTHING";
 
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", userId);
         cmd.Parameters.AddWithValue("name", "Test User");
-        cmd.Parameters.AddWithValue("email", "test@test.com");
+
+        // FIX (Finding #6): Generate unique email based on userId to prevent unique constraint violation
+        cmd.Parameters.AddWithValue("email", $"{userId}@example.com");
+
+        // Npgsql correctly maps DateTime.UtcNow to TIMESTAMPTZ
         cmd.Parameters.AddWithValue("date", DateTime.UtcNow);
 
         await cmd.ExecuteNonQueryAsync();
