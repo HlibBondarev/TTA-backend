@@ -17,6 +17,13 @@ public class CreateClubCommandHandler(
     private readonly IClubRepository _repository = repository;
     private readonly ILogger<CreateClubCommandHandler> _logger = logger;
 
+    /// <summary>
+    /// Handles the club creation process, validating business rules and performing atomic database insertion.
+    /// </summary>
+    /// <param name="command">The command containing club details and creator identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The unique identifier of the newly created club.</returns>
+    /// <exception cref="ConflictException">Thrown when the user already owns a club.</exception>
     public async Task<Guid> Handle(CreateClubCommand command, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Attempting to create club '{ClubName}' for user {UserId}",
@@ -27,8 +34,11 @@ public class CreateClubCommandHandler(
 
         if (alreadyOwnsClub)
         {
+            // Keep user identifier in server logs for diagnostics
             _logger.LogWarning("User {UserId} already owns a club. Aborting creation.", command.CreatorUserId);
-            throw new ConflictException($"User {command.CreatorUserId} is already an owner of a club.");
+
+            // Return generic message to client to prevent ID leakage
+            throw new ConflictException("User already owns a club.");
         }
 
         // 2. Prepare Entity
