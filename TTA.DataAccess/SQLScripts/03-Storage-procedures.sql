@@ -3,16 +3,17 @@
 -- =============================================================
 
 -- 1) Retrieves the effective user role for a specific target or global scope.
--- Optimized to handle role precedence and explicit schema qualification.
+-- Returns an INTEGER that maps directly to the C# AppRole enum (0, 1, 2).
 CREATE OR REPLACE FUNCTION auth.get_user_permission(
     p_user_id VARCHAR(64),
     p_target_type VARCHAR(20),
     p_target_id UUID DEFAULT NULL
 )
-RETURNS VARCHAR(20) AS $$DECLARE
+RETURNS INT AS $$
+DECLARE
     v_role VARCHAR(20);
 BEGIN
-    -- Switched to lowercase column names to match the new table definitions
+    -- Fetch the role name from access policies
     SELECT role INTO v_role
     FROM auth.accesspolicies 
     WHERE userid = p_user_id 
@@ -35,7 +36,13 @@ BEGIN
          END) ASC
     LIMIT 1;
 
-    RETURN v_role;
+    -- Map string role to integer for C# enum compatibility
+    RETURN CASE 
+        WHEN v_role = 'FullControl' THEN 0 
+        WHEN v_role = 'Editor' THEN 1 
+        WHEN v_role = 'Viewer' THEN 2 
+        ELSE NULL 
+    END;
 END;$$ LANGUAGE plpgsql;
 
 -- ====================================================

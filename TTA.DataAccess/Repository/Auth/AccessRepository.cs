@@ -19,8 +19,8 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
     {
         var parameters = new DynamicParameters();
         parameters.Add("UserId", userId);
-        parameters.Add("Scope", (int)targetScope);
-        parameters.Add("ResourceId", targetId);
+        parameters.Add("TargetType", targetScope.ToString());
+        parameters.Add("TargetId", targetId);
 
         // We use CommandType.Text because SqlStatements contains an explicit SELECT 
         // to correctly invoke the PostgreSQL function.
