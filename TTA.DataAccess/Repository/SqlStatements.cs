@@ -4,7 +4,13 @@ public static class SqlStatements
 {
     public static class ForAccessPolicies
     {
-        // Explicitly define the SELECT call for the PostgreSQL function
-        public const string GetUserPermission = "SELECT auth.get_user_permission(@UserId, @Scope, @ResourceId)";
+        public const string GetUserPermission =
+            "SELECT auth.get_user_permission(@userid, @targettype, @targetid)";
+    }
+
+    public static class ForClubs
+    {
+        public const string CreateClubWithOwnership =
+            "SELECT auth.create_club_with_ownership(@id, @cityid, @name, @ownerid, @createdat)";
     }
 }

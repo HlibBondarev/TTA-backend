@@ -6,13 +6,13 @@ DO $$
 DECLARE 
     v_ukraine_id INT;
 BEGIN
-    INSERT INTO Countries (Name, Code) 
+    INSERT INTO countries (name, code) 
     VALUES ('Ukraine', 'UKR')
-    ON CONFLICT (Code) DO NOTHING;
+    ON CONFLICT (code) DO NOTHING;
 
-    SELECT Id INTO v_ukraine_id FROM Countries WHERE Code = 'UKR';
+    SELECT id INTO v_ukraine_id FROM countries WHERE code = 'UKR';
 
-    INSERT INTO Regions (CountryId, Name) VALUES 
+    INSERT INTO regions (countryid, name) VALUES 
     (v_ukraine_id, 'Lviv Oblast'), 
     (v_ukraine_id, 'Kyiv City'), 
     (v_ukraine_id, 'Kyiv Oblast'), 
@@ -21,19 +21,19 @@ BEGIN
     (v_ukraine_id, 'Odessa Oblast'), 
     (v_ukraine_id, 'Donetsk Oblast'), 
     (v_ukraine_id, 'Zakarpattia Oblast')
-    ON CONFLICT (CountryId, Name) DO NOTHING;
+    ON CONFLICT (countryid, name) DO NOTHING;
 
-    INSERT INTO Cities (Id, RegionId, Name) VALUES 
-    ('c0000000-0000-0000-0000-000000000001', (SELECT Id FROM Regions WHERE Name = 'Lviv Oblast' AND CountryId = v_ukraine_id), 'Lviv'),
-    ('c0000000-0000-0000-0000-000000000002', (SELECT Id FROM Regions WHERE Name = 'Kyiv City' AND CountryId = v_ukraine_id), 'Kyiv'),
-    ('c0000000-0000-0000-0000-000000000003', (SELECT Id FROM Regions WHERE Name = 'Kyiv Oblast' AND CountryId = v_ukraine_id), 'Brovary'),
-    ('c0000000-0000-0000-0000-000000000004', (SELECT Id FROM Regions WHERE Name = 'Kharkiv Oblast' AND CountryId = v_ukraine_id), 'Kharkiv'),
-    ('c0000000-0000-0000-0000-000000000005', (SELECT Id FROM Regions WHERE Name = 'Dnipropetrovsk Oblast' AND CountryId = v_ukraine_id), 'Dnipro'),
-    ('c0000000-0000-0000-0000-000000000006', (SELECT Id FROM Regions WHERE Name = 'Odessa Oblast' AND CountryId = v_ukraine_id), 'Odessa'),
-    ('c0000000-0000-0000-0000-000000000007', (SELECT Id FROM Regions WHERE Name = 'Donetsk Oblast' AND CountryId = v_ukraine_id), 'Mariupol'),
-    ('c0000000-0000-0000-0000-000000000008', (SELECT Id FROM Regions WHERE Name = 'Donetsk Oblast' AND CountryId = v_ukraine_id), 'Kramatorsk'),
-    ('c0000000-0000-0000-0000-000000000009', (SELECT Id FROM Regions WHERE Name = 'Zakarpattia Oblast' AND CountryId = v_ukraine_id), 'Uzhhorod')
-    ON CONFLICT (RegionId, Name) DO NOTHING;
+    INSERT INTO cities (id, regionid, name) VALUES 
+    ('c0000000-0000-0000-0000-000000000001', (SELECT id FROM regions WHERE name = 'Lviv Oblast' AND countryid = v_ukraine_id), 'Lviv'),
+    ('c0000000-0000-0000-0000-000000000002', (SELECT id FROM regions WHERE name = 'Kyiv City' AND countryid = v_ukraine_id), 'Kyiv'),
+    ('c0000000-0000-0000-0000-000000000003', (SELECT id FROM regions WHERE name = 'Kyiv Oblast' AND countryid = v_ukraine_id), 'Brovary'),
+    ('c0000000-0000-0000-0000-000000000004', (SELECT id FROM regions WHERE name = 'Kharkiv Oblast' AND countryid = v_ukraine_id), 'Kharkiv'),
+    ('c0000000-0000-0000-0000-000000000005', (SELECT id FROM regions WHERE name = 'Dnipropetrovsk Oblast' AND countryid = v_ukraine_id), 'Dnipro'),
+    ('c0000000-0000-0000-0000-000000000006', (SELECT id FROM regions WHERE name = 'Odessa Oblast' AND countryid = v_ukraine_id), 'Odessa'),
+    ('c0000000-0000-0000-0000-000000000007', (SELECT id FROM regions WHERE name = 'Donetsk Oblast' AND countryid = v_ukraine_id), 'Mariupol'),
+    ('c0000000-0000-0000-0000-000000000008', (SELECT id FROM regions WHERE name = 'Donetsk Oblast' AND countryid = v_ukraine_id), 'Kramatorsk'),
+    ('c0000000-0000-0000-0000-000000000009', (SELECT id FROM regions WHERE name = 'Zakarpattia Oblast' AND countryid = v_ukraine_id), 'Uzhhorod')
+    ON CONFLICT (regionid, name) DO NOTHING;
 
     RAISE NOTICE 'Geography seeding completed successfully.';
 END $$;
@@ -46,28 +46,28 @@ DO $$
 DECLARE 
     sport_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f';
 BEGIN
-    INSERT INTO Sports (Id, Name) 
+    INSERT INTO sports (id, name) 
     VALUES (sport_id, 'Water Polo')
-    ON CONFLICT (Id) DO NOTHING;
+    ON CONFLICT (id) DO NOTHING;
 
-    INSERT INTO PlayerPositionDefinitions (Id, SportId, Name, ShortName) VALUES 
+    INSERT INTO playerpositiondefinitions (id, sportid, name, shortname) VALUES 
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', sport_id, 'Goalkeeper', 'GK'),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', sport_id, 'Center Forward', 'CF'),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', sport_id, 'Center Back', 'CB'),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', sport_id, 'Driver', 'D'),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', sport_id, 'Wing', 'W'),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', sport_id, 'Utility', 'UTL')
-    ON CONFLICT (Id) DO NOTHING;
+    ON CONFLICT (id) DO NOTHING;
 
-    INSERT INTO SportConfigurations (Id, SportId, UsesCleanTime, PeriodsCount, PeriodDurationMinutes, FieldSize, RosterLimit, LineupLimit)
+    INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
     VALUES ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70', sport_id, true, 4, 8, '25x20m', 15, 13)
-    ON CONFLICT (Id) DO NOTHING;
+    ON CONFLICT (id) DO NOTHING;
 
 -- ==========================================
 -- 3. TECHNICAL & TACTICAL ACTIONS
 -- ==========================================
 
-    INSERT INTO EventDefinitions (Id, SportId, Name, ShortName, IsPositive, CreatedAt) VALUES 
+    INSERT INTO eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES 
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f81', sport_id, 'Goal', 'GOAL', true, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82', sport_id, 'Assist', 'ASST', true, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f83', sport_id, 'Sprint Won', 'SPR+', true, NOW()),
@@ -85,52 +85,44 @@ BEGIN
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f95', sport_id, 'Bad Goal Conceded', 'B-GOAL', false, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f96', sport_id, 'Tactical Error', 'T-ERR', false, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f97', sport_id, 'Defensive Transition Failure', 'D-TRANS', false, NOW())
-    ON CONFLICT (Id) DO NOTHING;
+    ON CONFLICT (id) DO NOTHING;
 END $$;
 
 -- ==========================================
 -- 4. CLUBS & TEAMS
 -- ==========================================
 
--- Clubs Seeding
-INSERT INTO Clubs (Id, CityId, Name, CreatedAt) VALUES 
+INSERT INTO clubs (id, cityid, name, createdat) VALUES 
 ('11111111-1111-1111-1111-111111111101', 
-    (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Lviv' AND r.Name = 'Lviv Oblast' AND co.Code = 'UKR' LIMIT 1), 'Dynamo Lviv', NOW()),
+    (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
+     WHERE c.name = 'Lviv' AND r.name = 'Lviv Oblast' AND co.code = 'UKR' LIMIT 1), 'Dynamo Lviv', NOW()),
 ('11111111-1111-1111-1111-111111111102', 
-    (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Mariupol' AND r.Name = 'Donetsk Oblast' AND co.Code = 'UKR' LIMIT 1), 'Mariupol', NOW()),
+    (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
+     WHERE c.name = 'Mariupol' AND r.name = 'Donetsk Oblast' AND co.code = 'UKR' LIMIT 1), 'Mariupol', NOW()),
 ('11111111-1111-1111-1111-111111111103', 
-    (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Kharkiv' AND r.Name = 'Kharkiv Oblast' AND co.Code = 'UKR' LIMIT 1), 'NTU-KhPI Kharkiv', NOW()),
+    (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
+     WHERE c.name = 'Kharkiv' AND r.name = 'Kharkiv Oblast' AND co.code = 'UKR' LIMIT 1), 'NTU-KhPI Kharkiv', NOW()),
 ('11111111-1111-1111-1111-111111111107', 
-    (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Kyiv' AND r.Name = 'Kyiv City' AND co.Code = 'UKR' LIMIT 1), 'Kyiv City Team', NOW()),
+    (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
+     WHERE c.name = 'Kyiv' AND r.name = 'Kyiv City' AND co.code = 'UKR' LIMIT 1), 'Kyiv City Team', NOW()),
 ('11111111-1111-1111-1111-111111111109', 
-    (SELECT c.Id FROM Cities c JOIN Regions r ON c.RegionId = r.Id JOIN Countries co ON r.CountryId = co.Id 
-     WHERE c.Name = 'Lviv' AND r.Name = 'Lviv Oblast' AND co.Code = 'UKR' LIMIT 1), 'Dynamo-Amazonky Lviv', NOW())
-ON CONFLICT (Id) DO NOTHING;
+    (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
+     WHERE c.name = 'Lviv' AND r.name = 'Lviv Oblast' AND co.code = 'UKR' LIMIT 1), 'Dynamo-Amazonky Lviv', NOW())
+ON CONFLICT (id) DO NOTHING;
 
--- Teams Seeding (Updated with SportId, MinBirthYear, Gender)
--- sport_id: '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f' (Water Polo)
 DO $$ 
 DECLARE 
     v_wp_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f';
 BEGIN
-    INSERT INTO Teams (Id, ClubId, SportId, Name, MinBirthYear, Gender, CreatedAt) VALUES 
-    -- Professional / Men's Teams
+    INSERT INTO teams (id, clubid, sportid, name, minbirthyear, gender, createdat) VALUES 
     ('22222222-2222-2222-2222-222222222201', '11111111-1111-1111-1111-111111111101', v_wp_id, 'Dynamo Lviv (Men)', NULL, 'Male', NOW()),
     ('22222222-2222-2222-2222-222222222202', '11111111-1111-1111-1111-111111111102', v_wp_id, 'SHVSM Mariupol (Men)', NULL, 'Male', NOW()),
     ('22222222-2222-2222-2222-222222222203', '11111111-1111-1111-1111-111111111103', v_wp_id, 'NTU-KhPI - SHVSM (Men)', NULL, 'Male', NOW()),
-    
-    -- Youth Teams (Male) - Testing MinBirthYear logic
     ('22222222-2222-2222-2222-222222222213', '11111111-1111-1111-1111-111111111101', v_wp_id, 'Dynamo Lviv U-13 (2013)', 2013, 'Male', NOW()),
     ('22222222-2222-2222-2222-222222222209', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv U-15 (2011)', 2011, 'Male', NOW()),
-
-    -- Women's Teams
     ('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111109', v_wp_id, 'Dynamo-Amazonky (Women)', NULL, 'Female', NOW()),
     ('22222222-2222-2222-2222-222222222211', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv City Selection (Women)', NULL, 'Female', NOW())
-    ON CONFLICT (Id) DO NOTHING;
+    ON CONFLICT (id) DO NOTHING;
 END $$;
 
 -- ==========================================
@@ -139,24 +131,21 @@ END $$;
 
 DO $$ 
 DECLARE 
-    v_user_id VARCHAR := 'auth0|698b9560880889e5401cef7c'; 
-    v_team_id UUID := '22222222-2222-2222-2222-222222222201'; -- Linked to 'Dynamo Lviv (Men)'
+    v_user_id VARCHAR := 'auth0|698b956080889e5401cef7c5'; 
+    v_team_id UUID := '22222222-2222-2222-2222-222222222201'; 
 BEGIN
-    -- 1. Create user in Users table
-    INSERT INTO Users (Id, Email, DisplayName, CreatedAt)
+    INSERT INTO users (id, email, displayname, createdat)
     VALUES (v_user_id, 'user1@example.com', 'UserOne', NOW())
-    ON CONFLICT (Id) DO NOTHING;
+    ON CONFLICT (id) DO NOTHING;
 
-    -- 2. Associate user with the team (Membership)
-    INSERT INTO TeamMemberships (Id, UserId, TeamId, RoleInTeam, JoinedAt, IsPrimary)
+    INSERT INTO teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary)
     SELECT '99999999-9999-9999-9999-999999999901', v_user_id, v_team_id, 'HeadCoach', NOW(), true
     WHERE NOT EXISTS (
-        SELECT 1 FROM TeamMemberships 
-        WHERE UserId = v_user_id AND TeamId = v_team_id
+        SELECT 1 FROM teammemberships 
+        WHERE userid = v_user_id AND teamid = v_team_id
     );
 
-    -- 3. Define Access Policy (RBAC)
-    INSERT INTO auth.AccessPolicies (Id, UserId, Role, TargetType, TargetId, CreatedAt)
+    INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
     SELECT 
         '99999999-9999-9999-9999-999999999902', 
         v_user_id, 
@@ -165,11 +154,11 @@ BEGIN
         v_team_id, 
         NOW()
     WHERE NOT EXISTS (
-        SELECT 1 FROM auth.AccessPolicies 
-        WHERE UserId = v_user_id 
-          AND Role = 'Editor' 
-          AND TargetType = 'Team' 
-          AND TargetId = v_team_id
+        SELECT 1 FROM auth.accesspolicies 
+        WHERE userid = v_user_id 
+          AND role = 'Editor' 
+          AND targettype = 'Team' 
+          AND targetid = v_team_id
     );
 
     RAISE NOTICE 'Seed completed: User % linked to Team %', v_user_id, v_team_id;

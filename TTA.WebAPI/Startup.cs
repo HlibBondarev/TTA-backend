@@ -9,6 +9,8 @@ using TTA.BusinessLogic.Services;
 using TTA.BusinessLogic.Services.Api;
 using TTA.Common.Enums;
 using TTA.DataAccess;
+using TTA.DataAccess.Repository;
+using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Auth;
 using TTA.DataAccess.Repository.Base;
 using TTA.WebAPI.Authorization;
@@ -96,6 +98,8 @@ public static class Startup
 
         services.AddScoped<IAccessRepository, AccessRepository>();
         services.AddScoped<IAccessService, AccessService>();
+
+        services.AddScoped<IClubRepository, ClubRepository>();
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
