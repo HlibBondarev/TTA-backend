@@ -76,6 +76,7 @@ EXCEPTION
 END;$$ LANGUAGE plpgsql;
 
 -- 2) Checks if a user already owns any club to enforce "one club per user" rule.
+-- Updated to only consider active (non-expired) ownership policies.
 CREATE OR REPLACE FUNCTION auth.check_user_owns_any_club(
     p_user_id TEXT
 )
@@ -86,5 +87,7 @@ RETURNS BOOLEAN AS $$BEGIN
         WHERE userid = p_user_id 
           AND targettype = 'Club' 
           AND role = 'FullControl'
+          -- FIX (Finding #10): Only count active ownerships matching the unique index logic
+          AND expiresat IS NULL
     );
 END;$$ LANGUAGE plpgsql;
