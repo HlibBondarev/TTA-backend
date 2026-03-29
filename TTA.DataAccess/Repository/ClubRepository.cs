@@ -36,14 +36,17 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
         parameters.Add("TargetType", TargetScope.Club.ToString());
         parameters.Add("TargetId", clubId);
 
-        var result = await ExecuteQueryInTransaction<string>(
+        // FIX: Change <string> to <int?> because auth.get_user_permission now RETURNS INT
+        var result = await ExecuteQueryInTransaction<int?>(
             SqlStatements.ForAccessPolicies.GetUserPermission,
             parameters,
             commandType: CommandType.Text,
             ct: ct
         );
 
-        return result == AppRole.FullControl.ToString();
+        // FIX: Compare with the enum value directly. 
+        // FullControl (0) means the user owns the club.
+        return result.HasValue && (AppRole)result.Value == AppRole.FullControl;
     }
 
     /// <inheritdoc />
