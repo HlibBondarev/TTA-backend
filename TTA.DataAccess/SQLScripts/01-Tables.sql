@@ -223,11 +223,12 @@ CREATE TABLE playerpresences (
 -- ==========================================
 
 CREATE TABLE auth.accesspolicies (
-    id UUID PRIMARY KEY,
+    -- Added DEFAULT gen_random_uuid() to automate ID generation
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
     userid VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role VARCHAR(20) NOT NULL, 
     targettype VARCHAR(20) NOT NULL, 
-    targetid UUID NULL,               
+    targetid UUID NULL,                
     createdat TIMESTAMP NOT NULL,
     expiresat TIMESTAMP NULL,
 
@@ -244,3 +245,10 @@ CREATE TABLE auth.accesspolicies (
 
 CREATE INDEX ix_accesspolicies_userid ON auth.accesspolicies(userid);
 CREATE INDEX ix_accesspolicies_scope ON auth.accesspolicies(targettype, targetid);
+
+-- Enforce "one active club ownership per user" rule at the database level.
+CREATE UNIQUE INDEX uix_accesspolicies_club_owner 
+ON auth.accesspolicies (userid) 
+WHERE targettype = 'Club' 
+  AND role = 'FullControl' 
+  AND expiresat IS NULL;
