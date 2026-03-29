@@ -12,5 +12,7 @@ public static class SqlStatements
     {
         public const string CreateClubWithOwnership =
             "SELECT auth.create_club_with_ownership(@id, @cityid, @name, @ownerid, @createdat)";
+        public const string CheckUserOwnsAnyClub =
+            "SELECT auth.check_user_owns_any_club(@userId)";
     }
 }

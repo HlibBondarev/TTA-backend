@@ -9,11 +9,12 @@ namespace TTA.DataAccess.Repository.Api;
 public interface IClubRepository : IEntityRepositoryBase<Guid, Club>
 {
     /// <summary>
-    /// Checks if the user already has a 'FullControl' role for any Club scope (global check).
+    /// Checks if the user already has a 'FullControl' role for any Club in the system.
+    /// Uses a dedicated database function for optimized performance.
     /// </summary>
     /// <param name="userId">The unique identifier of the user.</param>
     /// <param name="ct">The cancellation token.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains true if ownership exists; otherwise, false.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains true if the user owns at least one club; otherwise, false.</returns>
     Task<bool> HasExistingClubOwnershipAsync(string userId, CancellationToken ct);
 
     /// <summary>

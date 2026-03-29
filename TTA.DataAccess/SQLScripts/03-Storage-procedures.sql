@@ -61,3 +61,17 @@ RETURNS UUID AS $$BEGIN
 
     RETURN p_id;
 END;$$ LANGUAGE plpgsql;
+
+-- Checks if a user already owns any club to enforce "one club per user" rule.
+CREATE OR REPLACE FUNCTION auth.check_user_owns_any_club(
+    p_user_id TEXT
+)
+RETURNS BOOLEAN AS $$BEGIN
+    RETURN EXISTS (
+        SELECT 1 
+        FROM auth.accesspolicies 
+        WHERE userid = p_user_id 
+          AND targettype = 'Club' 
+          AND role = 'FullControl'
+    );
+END;$$ LANGUAGE plpgsql;

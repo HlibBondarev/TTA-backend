@@ -19,20 +19,13 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
     {
         var parameters = new DynamicParameters();
         parameters.Add("UserId", userId);
-        // Passing as string to match VARCHAR(20) CHECK constraints in DB
-        parameters.Add("TargetType", TargetScope.Club.ToString());
-        parameters.Add("TargetId", null);
 
-        // Execute query as Text to invoke the PostgreSQL function
-        var result = await ExecuteQueryInTransaction<string>(
-            SqlStatements.ForAccessPolicies.GetUserPermission,
+        return await ExecuteQueryInTransaction<bool>(
+            SqlStatements.ForClubs.CheckUserOwnsAnyClub,
             parameters,
             commandType: CommandType.Text,
             ct: ct
         );
-
-        // Compare against string "FullControl" as per DB CHECK constraint
-        return result == AppRole.FullControl.ToString();
     }
 
     /// <inheritdoc />
