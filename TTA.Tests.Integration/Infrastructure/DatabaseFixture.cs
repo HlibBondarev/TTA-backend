@@ -39,8 +39,8 @@ public class DatabaseFixture : IAsyncLifetime
 
     private async Task ApplyMigrationsAsync(string connectionString)
     {
-        // Adjust this path if your SQL scripts are in a different folder
-        var scriptsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "../../../../../TTA-backend/TTA.DataAccess/SQLScripts");
+        // Finding scripts path by walking up from the executable directory
+        var scriptsPath = FindSqlScriptsPath();
 
         if (!Directory.Exists(scriptsPath))
             throw new DirectoryNotFoundException($"SQL scripts folder not found at: {Path.GetFullPath(scriptsPath)}");
@@ -56,6 +56,29 @@ public class DatabaseFixture : IAsyncLifetime
             using var cmd = new NpgsqlCommand(sql, conn);
             await cmd.ExecuteNonQueryAsync();
         }
+    }
+
+    private static string FindSqlScriptsPath()
+    {
+        var startDirectory = AppContext.BaseDirectory;
+        var current = new DirectoryInfo(startDirectory);
+
+        while (current != null)
+        {
+            // Look for the project structure relative to solution root
+            var candidate = Path.Combine(current.FullName, "TTA.DataAccess", "SQLScripts");
+
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            $"Could not find SQLScripts folder walking up from {startDirectory}. " +
+            "Ensure TTA.DataAccess/SQLScripts exists in the solution.");
     }
 
     // Pass a connection instead of a string
