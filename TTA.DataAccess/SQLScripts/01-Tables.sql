@@ -4,254 +4,269 @@
 -- 1. GEOGRAPHY & USERS
 -- ==========================================
 
--- table to support multiple countries
-CREATE TABLE Countries (
-    Id SERIAL PRIMARY KEY,
-    Name VARCHAR(100) NOT NULL UNIQUE,
-    Code VARCHAR(3) NOT NULL UNIQUE, -- ISO 3166-1 alpha-3 code (e.g., UKR, USA)
-    CreatedAt TIMESTAMP NOT NULL DEFAULT NOW()
+CREATE TABLE countries (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    code VARCHAR(3) NOT NULL UNIQUE,
+    createdat TIMESTAMPTZ NOT NULL DEFAULT NOW() -- FIXED
 );
 
-CREATE TABLE Regions (
-    Id SERIAL PRIMARY KEY,
-    CountryId INT NOT NULL REFERENCES Countries(Id) ON DELETE RESTRICT,
-    Name VARCHAR(100) NOT NULL,
-    UNIQUE(CountryId, Name)
+CREATE TABLE regions (
+    id SERIAL PRIMARY KEY,
+    countryid INT NOT NULL REFERENCES countries(id) ON DELETE RESTRICT,
+    name VARCHAR(100) NOT NULL,
+    UNIQUE(countryid, name)
 );
 
-CREATE INDEX IX_Regions_CountryId ON Regions (CountryId);
+CREATE INDEX ix_regions_countryid ON regions (countryid);
 
-CREATE TABLE Cities (
-    Id UUID PRIMARY KEY,
-    RegionId INT NOT NULL REFERENCES Regions(Id),
-    Name VARCHAR(100) NOT NULL,
-    UNIQUE(RegionId, Name)
+CREATE TABLE cities (
+    id UUID PRIMARY KEY,
+    regionid INT NOT NULL REFERENCES regions(id),
+    name VARCHAR(100) NOT NULL,
+    UNIQUE(regionid, name)
 );
 
-CREATE TABLE Users (
-    Id VARCHAR(64) PRIMARY KEY, -- Auth0 Identity ID
-    Email VARCHAR(255) NOT NULL UNIQUE,
-    DisplayName VARCHAR(20) NOT NULL CHECK (char_length(DisplayName) >= 3),
-    CreatedAt TIMESTAMP NOT NULL
+CREATE TABLE users (
+    id VARCHAR(64) PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    displayname VARCHAR(20) NOT NULL CHECK (char_length(displayname) >= 3),
+    createdat TIMESTAMPTZ NOT NULL -- FIXED
 );
 
 -- ==========================================
 -- 2. SPORT DEFINITIONS
 -- ==========================================
 
-CREATE TABLE Sports (
-    Id UUID PRIMARY KEY,
-    Name VARCHAR(50) NOT NULL UNIQUE,
-    DefaultConfigId UUID NULL 
-    -- We will add the Composite FK after SportConfigurations is defined
+CREATE TABLE sports (
+    id UUID PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE,
+    defaultconfigid UUID NULL 
 );
 
-CREATE TABLE PlayerPositionDefinitions (
-    Id UUID PRIMARY KEY,
-    SportId UUID NOT NULL REFERENCES Sports(Id) ON DELETE CASCADE,
-    Name VARCHAR(50) NOT NULL,
-    ShortName VARCHAR(5) NOT NULL
+CREATE TABLE playerpositiondefinitions (
+    id UUID PRIMARY KEY,
+    sportid UUID NOT NULL REFERENCES sports(id) ON DELETE CASCADE,
+    name VARCHAR(50) NOT NULL,
+    shortname VARCHAR(5) NOT NULL
 );
 
-CREATE TABLE SportConfigurations (
-    Id UUID PRIMARY KEY,
-    SportId UUID NOT NULL REFERENCES Sports(Id) ON DELETE CASCADE,
-    UsesCleanTime BOOLEAN NOT NULL,
-    PeriodsCount INT NOT NULL,
-    PeriodDurationMinutes INT NOT NULL,
-    FieldSize VARCHAR(50) NOT NULL,
-    RosterLimit INT NOT NULL,
-    LineupLimit INT NOT NULL,
-    -- Requirement: Unique constraint to allow composite FKs
-    UNIQUE (SportId, Id)
+CREATE TABLE sportconfigurations (
+    id UUID PRIMARY KEY,
+    sportid UUID NOT NULL REFERENCES sports(id) ON DELETE CASCADE,
+    usescleantime BOOLEAN NOT NULL,
+    periodscount INT NOT NULL,
+    perioddurationminutes INT NOT NULL,
+    fieldsize VARCHAR(50) NOT NULL,
+    rosterlimit INT NOT NULL,
+    lineuplimit INT NOT NULL,
+    UNIQUE (sportid, id)
 );
 
--- Requirement: Enforce that DefaultConfigId belongs to the same Sport
-ALTER TABLE Sports 
+ALTER TABLE sports 
 ADD CONSTRAINT fk_sports_default_config 
-FOREIGN KEY (Id, DefaultConfigId) 
-REFERENCES SportConfigurations (SportId, Id);
+FOREIGN KEY (id, defaultconfigid) 
+REFERENCES sportconfigurations (sportid, id);
 
 -- ==========================================
 -- 3. ORGANIZATIONS & TEAMS
 -- ==========================================
 
-CREATE TABLE Clubs (
-    Id UUID PRIMARY KEY,
-    CityId UUID NOT NULL REFERENCES Cities(Id),
-    Name VARCHAR(100) NOT NULL,
-    CreatedAt TIMESTAMP NOT NULL
+CREATE TABLE clubs (
+    id UUID PRIMARY KEY,
+    cityid UUID NOT NULL REFERENCES public.cities(id),
+    name VARCHAR(100) NOT NULL,
+    createdat TIMESTAMPTZ NOT NULL -- VERIFIED
 );
+CREATE INDEX ix_clubs_cityid ON clubs (cityid);
 
-CREATE TABLE Teams (
-    Id UUID PRIMARY KEY,
-    ClubId UUID NOT NULL REFERENCES Clubs(Id) ON DELETE CASCADE,
-    SportId UUID NOT NULL REFERENCES Sports(Id), -- Link to a specific sport (Multi-sport club support)
-    Name VARCHAR(100) NOT NULL,
-    -- Earliest birth year allowed (e.g., 2011). NULL means no age limit (Senior/Pro).
-    MinBirthYear INT NULL, 
-    -- Team gender (e.g., Male, Female). Note: Girls can play in Male teams until age 15.
-    Gender VARCHAR(20) NOT NULL, 
-    CreatedAt TIMESTAMP NOT NULL,
-    -- Requirement: Ensure DB values match C# Gender Enum
-    CONSTRAINT CHK_Teams_Gender CHECK (Gender IN ('Male', 'Female'))
+CREATE TABLE teams (
+    id UUID PRIMARY KEY,
+    clubid UUID NOT NULL REFERENCES clubs(id) ON DELETE CASCADE,
+    sportid UUID NOT NULL REFERENCES sports(id),
+    name VARCHAR(100) NOT NULL,
+    minbirthyear INT NULL, 
+    gender VARCHAR(20) NOT NULL, 
+    createdat TIMESTAMPTZ NOT NULL, -- FIXED
+    CONSTRAINT chk_teams_gender CHECK (gender IN ('Male', 'Female'))
 );
+-- Indexes for teams table
+CREATE INDEX ix_teams_clubid ON teams (clubid);
+CREATE INDEX ix_teams_sportid ON teams (sportid);
+CREATE INDEX ix_teams_gender ON teams (gender);
+-- Composite index for frequent filters by club and sport
+CREATE INDEX ix_teams_club_sport ON teams (clubid, sportid);
 
-CREATE TABLE TeamMemberships (
-    Id UUID PRIMARY KEY,
-    UserId VARCHAR(64) NOT NULL REFERENCES Users(Id) ON DELETE CASCADE,
-    TeamId UUID NOT NULL REFERENCES Teams(Id) ON DELETE CASCADE,
-    RoleInTeam VARCHAR(50) NOT NULL, -- Enum: HeadCoach, Player, etc.
-    JoinedAt TIMESTAMP NOT NULL,
-    LeftAt TIMESTAMP NULL,
-    IsPrimary BOOLEAN NOT NULL
+CREATE TABLE teammemberships (
+    id UUID PRIMARY KEY,
+    userid VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    teamid UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    roleinteam VARCHAR(50) NOT NULL,
+    joinedat TIMESTAMPTZ NOT NULL,
+    leftat TIMESTAMPTZ NULL,
+    isprimary BOOLEAN NOT NULL,
+    -- Ensure leftat is after or equal to joinedat
+    CONSTRAINT chk_teammemberships_left_after_joined 
+        CHECK (leftat IS NULL OR leftat >= joinedat)
 );
 
 -- ==========================================
 -- 4. TOURNAMENTS & MATCHES
 -- ==========================================
 
-CREATE TABLE Tournaments (
-    Id UUID PRIMARY KEY,
-    SportId UUID NOT NULL REFERENCES Sports(Id),
-    ConfigurationId UUID NOT NULL, -- Will be part of composite FK
-    Name VARCHAR(200) NOT NULL,
-    StartDate TIMESTAMP NOT NULL,
-    EndDate TIMESTAMP NULL,
-    CreatedAt TIMESTAMP NOT NULL,
-    -- Requirement: Enforce that Tournament Configuration belongs to the correct Sport
+CREATE TABLE tournaments (
+    id UUID PRIMARY KEY,
+    sportid UUID NOT NULL REFERENCES sports(id),
+    configurationid UUID NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    startdate TIMESTAMPTZ NOT NULL,
+    enddate TIMESTAMPTZ NULL,
+    createdat TIMESTAMPTZ NOT NULL,
     CONSTRAINT fk_tournaments_sport_config
-    FOREIGN KEY (SportId, ConfigurationId) 
-    REFERENCES SportConfigurations (SportId, Id)
+        FOREIGN KEY (sportid, configurationid) 
+        REFERENCES sportconfigurations (sportid, id),
+    -- Ensure enddate is after or equal to startdate
+    CONSTRAINT chk_tournaments_end_after_start 
+        CHECK (enddate IS NULL OR enddate >= startdate)
 );
 
-CREATE TABLE Matches (
-    Id UUID PRIMARY KEY,
-    TournamentId UUID NOT NULL REFERENCES Tournaments(Id) ON DELETE CASCADE,
-    HomeTeamId UUID NOT NULL REFERENCES Teams(Id),
-    GuestTeamId UUID NOT NULL REFERENCES Teams(Id),
-    ScheduledAt TIMESTAMP NOT NULL,
-    MatchNumber VARCHAR(50) NULL,
-    Venue VARCHAR(200) NULL,
-    Temperature FLOAT NULL,
-    HomeScore INT NULL,
-    GuestScore INT NULL,
-    CreatedAt TIMESTAMP NOT NULL
+CREATE TABLE matches (
+    id UUID PRIMARY KEY,
+    tournamentid UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+    hometeamid UUID NOT NULL REFERENCES teams(id),
+    guestteamid UUID NOT NULL REFERENCES teams(id),
+    scheduledat TIMESTAMPTZ NOT NULL, -- FIXED
+    matchnumber VARCHAR(50) NULL,
+    venue VARCHAR(200) NULL,
+    temperature FLOAT NULL,
+    homescore INT NULL,
+    guestscore INT NULL,
+    createdat TIMESTAMPTZ NOT NULL -- FIXED
 );
 
 -- ==========================================
 -- 5. PLAYERS & ROSTERS
 -- ==========================================
 
-CREATE TABLE Players (
-    Id UUID PRIMARY KEY,
-    HomeClubId UUID NOT NULL REFERENCES Clubs(Id),
-    FirstName VARCHAR(100) NOT NULL,
-    LastName VARCHAR(100) NOT NULL,
-    BirthDate DATE NOT NULL,
-    Gender VARCHAR(20) NOT NULL, 
-    CreatedAt TIMESTAMP NOT NULL
+CREATE TABLE players (
+    id UUID PRIMARY KEY,
+    homeclubid UUID NOT NULL REFERENCES clubs(id),
+    firstname VARCHAR(100) NOT NULL,
+    lastname VARCHAR(100) NOT NULL,
+    birthdate DATE NOT NULL, -- Keep as DATE (no time involved)
+    gender VARCHAR(20) NOT NULL, 
+    createdat TIMESTAMPTZ NOT NULL -- FIXED
 );
 
-CREATE TABLE PlayerMetrics (
-    Id UUID PRIMARY KEY,
-    PlayerId UUID NOT NULL REFERENCES Players(Id) ON DELETE CASCADE,
-    Weight FLOAT NULL,
-    Height FLOAT NULL,
-    MeasuredAt TIMESTAMP NOT NULL
+CREATE TABLE playermetrics (
+    id UUID PRIMARY KEY,
+    playerid UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    weight FLOAT NULL,
+    height FLOAT NULL,
+    measuredat TIMESTAMPTZ NOT NULL -- FIXED
 );
 
-CREATE TABLE PlayerRosters (
-    Id UUID PRIMARY KEY,
-    PlayerId UUID NOT NULL REFERENCES Players(Id),
-    TournamentId UUID NOT NULL REFERENCES Tournaments(Id) ON DELETE CASCADE,
-    TeamId UUID NOT NULL REFERENCES Teams(Id),
-    Number INT NOT NULL,
-    PositionId UUID NOT NULL REFERENCES PlayerPositionDefinitions(Id)
+CREATE TABLE playerrosters (
+    id UUID PRIMARY KEY,
+    playerid UUID NOT NULL REFERENCES players(id),
+    tournamentid UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+    teamid UUID NOT NULL REFERENCES teams(id),
+    number INT NOT NULL,
+    positionid UUID NOT NULL REFERENCES playerpositiondefinitions(id)
 );
 
-CREATE TABLE MatchLineups (
-    Id UUID PRIMARY KEY,
-    MatchId UUID NOT NULL REFERENCES Matches(Id) ON DELETE CASCADE,
-    PlayerId UUID NOT NULL REFERENCES Players(Id),
-    Number INT NOT NULL,
-    IsInStartingLineup BOOLEAN NOT NULL,
-    PositionId UUID NOT NULL REFERENCES PlayerPositionDefinitions(Id)
+CREATE TABLE matchlineups (
+    id UUID PRIMARY KEY,
+    matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    playerid UUID NOT NULL REFERENCES players(id),
+    number INT NOT NULL,
+    isinstartinglineup BOOLEAN NOT NULL,
+    positionid UUID NOT NULL REFERENCES playerpositiondefinitions(id)
 );
 
 -- ==========================================
 -- 6. TTA ENGINE (EVENTS & TIME)
 -- ==========================================
 
-CREATE TABLE EventDefinitions (
-    Id UUID PRIMARY KEY,
-    SportId UUID NOT NULL REFERENCES Sports(Id) ON DELETE CASCADE,
-    Name VARCHAR(50) NOT NULL,
-    ShortName VARCHAR(10) NOT NULL, -- Used for mobile UI buttons
-    IsPositive BOOLEAN NOT NULL,
-    CreatedAt TIMESTAMP NOT NULL
+CREATE TABLE eventdefinitions (
+    id UUID PRIMARY KEY,
+    sportid UUID NOT NULL REFERENCES sports(id) ON DELETE CASCADE,
+    name VARCHAR(50) NOT NULL,
+    shortname VARCHAR(10) NOT NULL,
+    ispositive BOOLEAN NOT NULL,
+    createdat TIMESTAMPTZ NOT NULL -- FIXED
 );
 
-CREATE TABLE TimeAnchors (
-    Id UUID PRIMARY KEY,
-    MatchId UUID NOT NULL REFERENCES Matches(Id) ON DELETE CASCADE,
-    PeriodNumber INT NOT NULL,
-    Type VARCHAR(50) NOT NULL, 
-    Timestamp TIMESTAMP NOT NULL
+CREATE TABLE timeanchors (
+    id UUID PRIMARY KEY,
+    matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    periodnumber INT NOT NULL,
+    type VARCHAR(50) NOT NULL, 
+    timestamp TIMESTAMPTZ NOT NULL -- FIXED
 );
 
-CREATE TABLE GameEvents (
-    Id UUID PRIMARY KEY,
-    MatchId UUID NOT NULL REFERENCES Matches(Id) ON DELETE CASCADE,
-    PlayerId UUID NULL REFERENCES Players(Id),
-    EventDefinitionId UUID NOT NULL REFERENCES EventDefinitions(Id),
-    PeriodNumber INT NOT NULL,
-    EventTimestamp TIMESTAMP NOT NULL, 
-    NormalizedMatchTime INTERVAL NULL,
-    -- Indicates if the action led to a goal
-    IsLeadToGoal BOOLEAN NOT NULL DEFAULT FALSE, 
-    CreatedAt TIMESTAMP NOT NULL
+CREATE TABLE gameevents (
+    id UUID PRIMARY KEY,
+    matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    playerid UUID NULL REFERENCES players(id),
+    eventdefinitionid UUID NOT NULL REFERENCES eventdefinitions(id),
+    periodnumber INT NOT NULL,
+    eventtimestamp TIMESTAMPTZ NOT NULL, -- FIXED
+    normalizedmatchtime INTERVAL NULL,
+    isleadtogoal BOOLEAN NOT NULL DEFAULT FALSE, 
+    createdat TIMESTAMPTZ NOT NULL -- FIXED
 );
 
--- Indexing for optimized lookups by match and player
-CREATE INDEX IX_GameEvents_MatchId ON GameEvents(MatchId);
-CREATE INDEX IX_GameEvents_PlayerId ON GameEvents(PlayerId);
+CREATE INDEX ix_gameevents_matchid ON gameevents(matchid);
+CREATE INDEX ix_gameevents_playerid ON gameevents(playerid);
 
-CREATE TABLE PlayerPresences (
-    Id UUID PRIMARY KEY,
-    MatchId UUID NOT NULL REFERENCES Matches(Id) ON DELETE CASCADE,
-    PlayerId UUID NOT NULL REFERENCES Players(Id),
-    PeriodNumber INT NOT NULL,
-    TimeIn TIMESTAMP NOT NULL,
-    TimeOut TIMESTAMP NULL
+CREATE TABLE playerpresences (
+    id UUID PRIMARY KEY,
+    matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    playerid UUID NOT NULL REFERENCES players(id),
+    periodnumber INT NOT NULL,
+    timein TIMESTAMPTZ NOT NULL,
+    timeout TIMESTAMPTZ NULL,
+    -- Ensure timeout is after or equal to timein
+    CONSTRAINT chk_playerpresences_timeout_after_timein 
+        CHECK (timeout IS NULL OR timeout >= timein)
 );
 
 -- ==========================================
 -- 7. ACCESS CONTROL & PERMISSIONS
 -- ==========================================
 
-CREATE TABLE auth.AccessPolicies (
-    Id UUID PRIMARY KEY,
-    UserId VARCHAR(64) NOT NULL REFERENCES Users(Id) ON DELETE CASCADE,
-    Role VARCHAR(20) NOT NULL, 
-    TargetType VARCHAR(20) NOT NULL, 
-    TargetId UUID NULL,              
-    CreatedAt TIMESTAMP NOT NULL,
-    ExpiresAt TIMESTAMP NULL,
-
-    -- Role and TargetType validation
-    CONSTRAINT CHK_AccessPolicy_Role CHECK (Role IN ('FullControl', 'Editor', 'Viewer')),
-    CONSTRAINT CHK_AccessPolicy_TargetType CHECK (TargetType IN ('Global', 'Club', 'Team')),
-
-    -- TargetId nullability logic based on TargetType
-    CONSTRAINT CHK_AccessPolicy_TargetId_Scope_Logic CHECK (
-        (TargetType = 'Global' AND TargetId IS NULL) OR 
-        (TargetType IN ('Club', 'Team') AND TargetId IS NOT NULL)
+CREATE TABLE auth.accesspolicies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
+    userid VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL, 
+    targettype VARCHAR(20) NOT NULL, 
+    targetid UUID NULL,                
+    createdat TIMESTAMPTZ NOT NULL,
+    expiresat TIMESTAMPTZ NULL,
+    -- Constraints for data integrity
+    CONSTRAINT chk_accesspolicy_role 
+        CHECK (role IN ('FullControl', 'Editor', 'Viewer')),
+    CONSTRAINT chk_accesspolicy_targettype 
+        CHECK (targettype IN ('Global', 'Club', 'Team')),
+    -- Logic: Global must have NULL targetid, others must have a value
+    CONSTRAINT chk_accesspolicy_targetid_scope_logic CHECK (
+        (targettype = 'Global' AND targetid IS NULL) OR 
+        (targettype IN ('Club', 'Team') AND targetid IS NOT NULL)
     ),
-
-    -- Date integrity: ExpiresAt must be in the future relative to CreatedAt
-    CONSTRAINT CHK_AccessPolicy_Dates CHECK (ExpiresAt IS NULL OR ExpiresAt > CreatedAt)
+    -- Explicitly named constraint with NULL-safe chronological check
+    CONSTRAINT chk_accesspolicies_expires_after_created 
+        CHECK (expiresat IS NULL OR expiresat >= createdat)
 );
 
-CREATE INDEX IX_AccessPolicies_UserId ON auth.AccessPolicies(UserId);
-CREATE INDEX IX_AccessPolicies_Scope ON auth.AccessPolicies(TargetType, TargetId);
+-- Basic indexing for performance
+CREATE INDEX ix_accesspolicies_userid ON auth.accesspolicies(userid);
+CREATE INDEX ix_accesspolicies_scope ON auth.accesspolicies(targettype, targetid);
+
+-- Partial Unique Index to enforce "One active Club Owner per User" rule
+-- Aligned with Finding #10: we only care about non-expired ownership
+CREATE UNIQUE INDEX uix_accesspolicies_club_owner 
+ON auth.accesspolicies (userid) 
+WHERE targettype = 'Club' 
+  AND role = 'FullControl' 
+  AND expiresat IS NULL;

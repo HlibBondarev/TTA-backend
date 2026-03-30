@@ -1,0 +1,63 @@
+﻿using MediatR;
+using Microsoft.Extensions.Logging;
+using TTA.BusinessLogic.Features.Clubs.Commands;
+using TTA.Common.Exceptions;
+using TTA.DataAccess.Models;
+using TTA.DataAccess.Repository.Api;
+
+namespace TTA.BusinessLogic.Features.Clubs.Handlers;
+
+/// <summary>
+/// Orchestrates the creation of a club, enforcing the 'one club per user' rule.
+/// </summary>
+public class CreateClubCommandHandler(
+    IClubRepository repository,
+    ILogger<CreateClubCommandHandler> logger) : IRequestHandler<CreateClubCommand, Guid>
+{
+    private readonly IClubRepository _repository = repository;
+    private readonly ILogger<CreateClubCommandHandler> _logger = logger;
+
+    /// <summary>
+    /// Handles the club creation process, validating business rules and performing atomic database insertion.
+    /// </summary>
+    /// <param name="command">The command containing club details and creator identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The unique identifier of the newly created club.</returns>
+    /// <exception cref="ConflictException">Thrown when the user already owns a club.</exception>
+    public async Task<Guid> Handle(CreateClubCommand command, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Attempting to create club '{ClubName}' for user {UserId}",
+            command.Name, command.CreatorUserId);
+
+        // 1. Business Rule Enforcement
+        // Re-verified: HasExistingClubOwnershipAsync now uses a dedicated SQL EXISTS check
+        bool alreadyOwnsClub = await _repository.HasExistingClubOwnershipAsync(command.CreatorUserId, cancellationToken);
+
+        if (alreadyOwnsClub)
+        {
+            // Logging detailed info for diagnostics (server-side only)
+            _logger.LogWarning("Conflict: User {UserId} attempted to create a second club.", command.CreatorUserId);
+
+            // Generic message to prevent PII/ID leakage to the client
+            throw new ConflictException("User already owns a club.");
+        }
+
+        // 2. Prepare Entity
+        // Note: Mapping matches the requirements for strict verification in tests
+        var club = new Club
+        {
+            Id = Guid.NewGuid(),
+            Name = command.Name,
+            CityId = command.CityId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // 3. Atomic Execution via Repository
+        // Using CreateWithOwnershipAsync ensures both Club and AccessPolicy are created in one transaction
+        var resultId = await _repository.CreateWithOwnershipAsync(club, command.CreatorUserId, cancellationToken);
+
+        _logger.LogInformation("Club '{ClubName}' created successfully with ID {ClubId}", command.Name, resultId);
+
+        return resultId;
+    }
+}

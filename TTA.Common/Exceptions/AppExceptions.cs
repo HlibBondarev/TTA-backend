@@ -36,3 +36,9 @@ public class ForbiddenException(string message = "Access forbidden")
 /// </summary>
 public class NotFoundException(string message = "The requested resource was not found")
     : BaseException(message, 404);
+
+/// <summary>
+/// Exception thrown when a business rule conflict occurs (HTTP 409).
+/// </summary>
+public class ConflictException(string message = "A conflict occurred with the current state of the resource")
+    : BaseException(message, 409);

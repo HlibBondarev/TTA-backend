@@ -1,46 +1,99 @@
-﻿-- ======================================================
--- AUTHENTICATION & AUTHORIZATION STORED FUNCTIONS
--- ======================================================
+﻿-- =============================================================
+-- AUTHENTICATION & AUTHORIZATION STORED FUNCTIONS & PROCEDURES
+-- =============================================================
 
--- Retrieves the effective user role for a specific target or global scope.
--- Optimized to handle role precedence and explicit schema qualification.
+-- 1) Retrieves the effective user role for a specific target or global scope.
+-- Returns an INTEGER that maps directly to the C# AppRole enum (0, 1, 2).
 CREATE OR REPLACE FUNCTION auth.get_user_permission(
     p_user_id VARCHAR(64),
     p_target_type VARCHAR(20),
     p_target_id UUID DEFAULT NULL
 )
-RETURNS VARCHAR(20) AS $$
+RETURNS INT AS $$
 DECLARE
     v_role VARCHAR(20);
 BEGIN
-    SELECT "Role" INTO v_role
-    -- Explicitly using auth schema to remove search_path dependency
-    FROM auth.AccessPolicies 
-    WHERE "UserId" = p_user_id
+    -- Fetch the role name from access policies
+    SELECT role INTO v_role
+    FROM auth.accesspolicies 
+    WHERE userid = p_user_id 
       AND (
-          -- Check for global administrator privileges
-          ("TargetType" = 'Global') 
+          (targettype = 'Global') 
           OR 
-          -- Check for specific resource access (Club or Team)
-          -- TargetId matches the naming convention in 01-Tables.sql
-          ("TargetType" = p_target_type AND "TargetId" = p_target_id)
+          (targettype = p_target_type AND targetid = p_target_id)
       )
-      AND ("ExpiresAt" IS NULL OR "ExpiresAt" > CURRENT_TIMESTAMP)
+      AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
     ORDER BY 
-        -- 1. Role strength precedence (FullControl > Editor > Viewer)
         (CASE 
-            WHEN "Role" = 'FullControl' THEN 0 
-            WHEN "Role" = 'Editor' THEN 1 
-            WHEN "Role" = 'Viewer' THEN 2 
+            WHEN role = 'FullControl' THEN 0 
+            WHEN role = 'Editor' THEN 1 
+            WHEN role = 'Viewer' THEN 2 
             ELSE 3 
          END) ASC,
-        -- 2. Tie-break: prefer scoped access over Global if roles are identical
         (CASE 
-            WHEN "TargetType" = 'Global' THEN 1 
+            WHEN targettype = 'Global' THEN 1 
             ELSE 0 
          END) ASC
     LIMIT 1;
 
-    RETURN v_role;
-END;
-$$ LANGUAGE plpgsql;
+    -- Map string role to integer for C# enum compatibility
+    RETURN CASE 
+        WHEN v_role = 'FullControl' THEN 0 
+        WHEN v_role = 'Editor' THEN 1 
+        WHEN v_role = 'Viewer' THEN 2 
+        ELSE NULL 
+    END;
+END;$$ LANGUAGE plpgsql;
+
+-- ====================================================
+-- ORGANIZATIONS & TEAMS STORED FUNCTIONS & PROCEDURES
+-- ====================================================
+
+-- 1) Creates a club and its associated FullControl policy in a single transaction.
+-- The ID for the access policy is generated automatically by the table default.
+CREATE OR REPLACE FUNCTION auth.create_club_with_ownership(
+    p_id UUID,
+    p_cityid UUID,
+    p_name TEXT,
+    p_ownerid TEXT,
+    p_createdat TIMESTAMPTZ
+) RETURNS UUID AS $$
+DECLARE
+    v_constraint_name TEXT;
+BEGIN
+    -- 1. Insert the club record
+    INSERT INTO public.clubs (id, cityid, name, createdat)
+    VALUES (p_id, p_cityid, p_name, p_createdat);
+
+    -- 2. Insert the ownership policy
+    INSERT INTO auth.accesspolicies (userid, targettype, targetid, role, createdat)
+    VALUES (p_ownerid, 'Club', p_id, 'FullControl', p_createdat);
+
+    RETURN p_id;
+
+EXCEPTION 
+    WHEN unique_violation THEN
+        GET STACKED DIAGNOSTICS v_constraint_name = CONSTRAINT_NAME;
+        IF v_constraint_name = 'uix_accesspolicies_club_owner' THEN
+            RAISE EXCEPTION 'User already owns a club.' USING ERRCODE = '23505';
+        ELSE
+            RAISE;
+        END IF;
+END;$$ LANGUAGE plpgsql;
+
+-- 2) Checks if a user already owns any club to enforce "one club per user" rule.
+-- Updated to only consider active (non-expired) ownership policies.
+CREATE OR REPLACE FUNCTION auth.check_user_owns_any_club(
+    p_user_id TEXT
+)
+RETURNS BOOLEAN AS $$BEGIN
+    RETURN EXISTS (
+        SELECT 1 
+        FROM auth.accesspolicies 
+        WHERE userid = p_user_id 
+          AND targettype = 'Club' 
+          AND role = 'FullControl'
+          -- FIX (Finding #10): Only count active ownerships matching the unique index logic
+          AND expiresat IS NULL
+    );
+END;$$ LANGUAGE plpgsql;
