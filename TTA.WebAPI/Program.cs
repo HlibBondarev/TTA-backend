@@ -41,3 +41,5 @@ finally
     // Changed to CloseAndFlushAsync to ensure all logs are flushed properly
     await Log.CloseAndFlushAsync();
 }
+
+public partial class Program { }
