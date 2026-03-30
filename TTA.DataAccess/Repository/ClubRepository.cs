@@ -52,8 +52,7 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
     /// <inheritdoc />
     public async Task<Guid> CreateWithOwnershipAsync(Club club, string userId, CancellationToken ct)
     {
-        if (club == null)
-            throw new ArgumentNullException(nameof(club));
+        ArgumentNullException.ThrowIfNull(club);
 
         if (string.IsNullOrWhiteSpace(userId))
             throw new ArgumentException("User ID cannot be null or empty.", nameof(userId));

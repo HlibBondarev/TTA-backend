@@ -37,7 +37,7 @@ public class DatabaseFixture : IAsyncLifetime
         });
     }
 
-    private async Task ApplyMigrationsAsync(string connectionString)
+    private static async Task ApplyMigrationsAsync(string connectionString)
     {
         // Finding scripts path by walking up from the executable directory
         var scriptsPath = FindSqlScriptsPath();
