@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,22 +12,22 @@ using TTA.DataAccess.Repository.Base;
 
 namespace TTA.Tests.Integration.Infrastructure;
 
-public abstract class BaseApiTest(DatabaseFixture fixture) : BaseIntegrationTest(fixture)
+public abstract class BaseApiTest : BaseIntegrationTest
 {
-    protected readonly HttpClient Client = CreateClient(fixture);
+    protected readonly HttpClient Client;
     protected const string TestUserId = "auth0|test-user-id";
 
-    private static HttpClient CreateClient(DatabaseFixture fixture)
+    protected BaseApiTest(DatabaseFixture fixture) : base(fixture)
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.UseEnvironment("Testing");
+
             builder.ConfigureTestServices(services =>
             {
-                // Replace real DB with Testcontainer DB
                 services.RemoveAll<IDbConnectionFactory>();
-                services.AddSingleton<IDbConnectionFactory>(fixture.ConnectionFactory);
+                services.AddSingleton(Fixture.ConnectionFactory);
 
-                // Setup Mock Authentication
                 services.AddAuthentication(options =>
                 {
                     options.DefaultAuthenticateScheme = "TestScheme";
@@ -35,27 +36,29 @@ public abstract class BaseApiTest(DatabaseFixture fixture) : BaseIntegrationTest
             });
         });
 
-        return factory.CreateClient();
+        Client = factory.CreateClient();
     }
+}
 
-    public class TestAuthHandler(
-        IOptionsMonitor<AuthenticationSchemeOptions> options,
-        ILoggerFactory logger,
-        UrlEncoder encoder)
-        : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+// Move this class OUTSIDE of BaseApiTest to resolve CS0115 and CS0246
+public class TestAuthHandler(
+    IOptionsMonitor<AuthenticationSchemeOptions> options,
+    ILoggerFactory logger,
+    UrlEncoder encoder)
+    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+{
+    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        protected override Task<AuthenticateResult> HandleAuthenticateAsync()
-        {
-            var claims = new[]
-            {
-                new Claim(ClaimTypes.NameIdentifier, TestUserId),
-                new Claim("sub", TestUserId)
-            };
-            var identity = new ClaimsIdentity(claims, "TestScheme");
-            var principal = new ClaimsPrincipal(identity);
-            var ticket = new AuthenticationTicket(principal, "TestScheme");
+        // Explicit type to avoid collection expression issues
+        Claim[] claims = [
+            new Claim(ClaimTypes.NameIdentifier, "auth0|test-user-id"),
+            new Claim("sub", "auth0|test-user-id")
+        ];
 
-            return Task.FromResult(AuthenticateResult.Success(ticket));
-        }
+        var identity = new ClaimsIdentity(claims, "TestScheme");
+        var principal = new ClaimsPrincipal(identity);
+        var ticket = new AuthenticationTicket(principal, "TestScheme");
+
+        return Task.FromResult(AuthenticateResult.Success(ticket));
     }
 }
