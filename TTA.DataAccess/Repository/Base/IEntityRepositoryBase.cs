@@ -1,5 +1,4 @@
 ﻿using Dapper;
-using System.Data;
 using TTA.DataAccess.Models.Base;
 
 namespace TTA.DataAccess.Repository.Base;
@@ -19,68 +18,68 @@ public interface IEntityRepositoryBase<TKey, TEntity>
     /// Runs within a database transaction.
     /// </summary>
     /// <param name="entity">The entity containing data to be saved.</param>
-    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="additionalParams">Optional extra parameters to pass to the function.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The entity as returned by the database function after the operation.</returns>
-    Task<TEntity> CreateOrUpdate(TEntity entity, string procName, DynamicParameters? additionalParams = null, CancellationToken ct = default);
+    Task<TEntity> CreateOrUpdate(TEntity entity, string sqlText, DynamicParameters? additionalParams = null, CancellationToken ct = default);
 
     /// <summary>
     /// Retrieves a single entity by its unique identifier using a database function.
     /// </summary>
     /// <param name="id">The unique identifier of the entity.</param>
-    /// <param name="procName">The name of the PostgreSQL function (expects a parameter named after <c>KeyParamName</c>).</param>
+    /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task<TEntity?> GetById(TKey id, string procName, CancellationToken ct = default);
+    Task<TEntity?> GetById(TKey id, string sqlText, CancellationToken ct = default);
 
     /// <summary>
     /// Retrieves all entities of type <typeparamref name="TEntity"/> from the specified function.
     /// </summary>
-    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task<IEnumerable<TEntity>> GetAll(string procName, CancellationToken ct = default);
+    Task<IEnumerable<TEntity>> GetAll(string sqlText, CancellationToken ct = default);
 
     /// <summary>
     /// Retrieves entities based on specific property values.
     /// </summary>
-    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="parameters">Dynamic parameters for the search criteria.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task<IEnumerable<TEntity>> GetByPropValues(string procName, DynamicParameters parameters, CancellationToken ct = default);
+    Task<IEnumerable<TEntity>> GetByPropValues(string sqlText, DynamicParameters parameters, CancellationToken ct = default);
 
     /// <summary>
     /// Executes a function and returns the result as a JSON string.
     /// Useful for complex reports or tree structures.
     /// </summary>
-    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="parameters">Dynamic parameters for the function.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task<string?> GetDataInJson(string procName, DynamicParameters parameters, CancellationToken ct = default);
+    Task<string?> GetDataInJson(string sqlText, DynamicParameters parameters, CancellationToken ct = default);
 
     /// <summary>
     /// Checks if an entity exists by its unique identifier.
     /// </summary>
     /// <param name="id">The unique identifier of the entity.</param>
-    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task<bool> Exists(TKey id, string procName, CancellationToken ct = default);
+    Task<bool> Exists(TKey id, string sqlText, CancellationToken ct = default);
 
     /// <summary>
     /// Checks if an entity exists based on custom criteria.
     /// </summary>
-    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="parameters">Dynamic parameters for the search criteria.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task<bool> Exists(string procName, DynamicParameters parameters, CancellationToken ct = default);
+    Task<bool> Exists(string sqlText, DynamicParameters parameters, CancellationToken ct = default);
 
     /// <summary>
     /// Deletes an entity by its identifier within a transaction.
     /// </summary>
     /// <param name="id">The unique identifier of the entity to delete.</param>
-    /// <param name="procName">The name of the PostgreSQL function.</param>
+    /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if the entity was successfully deleted; otherwise, <c>false</c>.</returns>
-    Task<bool> Delete(TKey id, string procName, CancellationToken ct = default);
+    Task<bool> Delete(TKey id, string sqlText, CancellationToken ct = default);
 
     /// <summary>
     /// Executes a non-query command (like an update or complex action) within a transaction.
@@ -94,13 +93,12 @@ public interface IEntityRepositoryBase<TKey, TEntity>
     /// Executes a query that returns a scalar result of type <typeparamref name="T"/> within a transaction.
     /// </summary>
     /// <typeparam name="T">The type of the result (e.g., long, int, string).</typeparam>
-    /// <param name="commandTextOrProcName">The name of the PostgreSQL function.</param>
+    /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="parameters">Dynamic parameters for the query.</param>
     /// <param name="commandType">Type of Command for the query.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<T> ExecuteQueryInTransaction<T>(
-        string commandTextOrProcName,
+        string sqlText,
         DynamicParameters parameters,
-        CommandType commandType = CommandType.StoredProcedure,
         CancellationToken ct = default);
 }

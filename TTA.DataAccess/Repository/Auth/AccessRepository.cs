@@ -1,5 +1,4 @@
 ﻿using Dapper;
-using System.Data;
 using TTA.Common.Enums;
 using TTA.DataAccess.Models.Auth;
 using TTA.DataAccess.Repository.Base;
@@ -27,7 +26,6 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
         var result = await ExecuteQueryInTransaction<int?>(
             SqlStatements.ForAccessPolicies.GetUserPermission,
             parameters,
-            commandType: CommandType.Text,
             ct: ct
         );
 

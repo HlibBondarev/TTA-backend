@@ -1,5 +1,4 @@
 ﻿using Dapper;
-using System.Data;
 using TTA.Common.Enums;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
@@ -23,7 +22,6 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
         return await ExecuteQueryInTransaction<bool>(
             SqlStatements.ForClubs.CheckUserOwnsAnyClub,
             parameters,
-            commandType: CommandType.Text,
             ct: ct
         );
     }
@@ -40,7 +38,6 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
         var result = await ExecuteQueryInTransaction<int?>(
             SqlStatements.ForAccessPolicies.GetUserPermission,
             parameters,
-            commandType: CommandType.Text,
             ct: ct
         );
 
@@ -68,7 +65,6 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
         return await ExecuteQueryInTransaction<Guid>(
             SqlStatements.ForClubs.CreateClubWithOwnership,
             parameters,
-            commandType: CommandType.Text,
             ct: ct
         );
     }

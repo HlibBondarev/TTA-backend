@@ -1,12 +1,20 @@
-﻿using Npgsql;
+﻿using Dapper;
+using Npgsql;
 using Respawn;
 using Testcontainers.PostgreSql;
+using TTA.DataAccess.Infrastructure;
 using TTA.DataAccess.Repository.Base;
 
 namespace TTA.Tests.Integration.Infrastructure;
 
 public class DatabaseFixture : IAsyncLifetime
 {
+    static DatabaseFixture()
+    {
+        // This ensures that Dapper understands DateOnly in all tests
+        SqlMapper.AddTypeHandler(new DateOnlyTypeHandler());
+    }
+
     // Pass the image name directly into the constructor
     private readonly PostgreSqlContainer _dbContainer = new PostgreSqlBuilder("postgres:16-alpine")
         .WithDatabase("tta_test_db")
