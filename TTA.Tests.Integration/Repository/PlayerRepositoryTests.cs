@@ -11,6 +11,7 @@ namespace TTA.Tests.Integration.Repository;
 /// <summary>
 /// Integration tests for <see cref="PlayerRepository"/> using a real database container.
 /// </summary>
+[Collection("DatabaseCollection")]
 public class PlayerRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(fixture)
 {
     private readonly PlayerRepository _repository = new(fixture.ConnectionFactory);
