@@ -85,6 +85,7 @@ END;$$ LANGUAGE plpgsql;
 
 -- 2) Checks if a user already owns any club to enforce "one club per user" rule.
 -- Updated to only consider active (non-expired) ownership policies.
+
 CREATE OR REPLACE FUNCTION auth.check_user_owns_any_club(
     p_user_id TEXT
 )
@@ -105,6 +106,7 @@ END;$$ LANGUAGE plpgsql;
 -- ====================================================
 
 -- 1) Retrieve a single player by ID
+
 CREATE OR REPLACE FUNCTION get_player_by_id(p_id UUID)
 RETURNS SETOF players AS $$BEGIN
     RETURN QUERY
@@ -112,6 +114,7 @@ RETURNS SETOF players AS $$BEGIN
 END;$$ LANGUAGE plpgsql;
 
 -- 2) Upsert function for players: inserts a new player or updates existing one based on ID.
+
 CREATE OR REPLACE FUNCTION upsert_player(
     p_id UUID,
     p_homeclubid UUID,
@@ -151,4 +154,15 @@ RETURNS SETOF players AS $$BEGIN
     RETURN QUERY
     SELECT * FROM players 
     WHERE homeclubid = p_club_id;
+END;$$ LANGUAGE plpgsql;
+
+-- 4) Deletes a player by their UUID and returns true if deleted.
+
+CREATE OR REPLACE FUNCTION delete_player(p_id UUID)
+RETURNS BOOLEAN AS $$DECLARE
+    v_deleted BOOLEAN;
+BEGIN
+    DELETE FROM players WHERE id = p_id;
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    RETURN v_deleted;
 END;$$ LANGUAGE plpgsql;
