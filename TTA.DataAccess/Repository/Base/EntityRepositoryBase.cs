@@ -162,7 +162,7 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
 
     /// <inheritdoc />
     public async Task<T> ExecuteQueryInTransaction<T>(
-    string commandTextOrProcName,
+    string sqlText,
     DynamicParameters parameters,
     CancellationToken ct = default)
     {
@@ -175,7 +175,7 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
         try
         {
             // Use the passed commandType instead of the hardcoded one
-            var command = new CommandDefinition(commandTextOrProcName, parameters, transaction, commandType: CommandType.Text, cancellationToken: ct);
+            var command = new CommandDefinition(sqlText, parameters, transaction, commandType: CommandType.Text, cancellationToken: ct);
             var result = await connection.QuerySingleAsync<T>(command);
             transaction.Commit();
             return result;

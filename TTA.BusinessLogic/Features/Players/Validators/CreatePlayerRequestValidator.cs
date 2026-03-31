@@ -31,7 +31,7 @@ public class CreatePlayerRequestValidator : AbstractValidator<CreatePlayerReques
             .IsInEnum().WithMessage("Invalid gender value. Use 0 for Male or 1 for Female.");
     }
 
-    private bool BeReasonableAge(DateOnly birthDate)
+    private static bool BeReasonableAge(DateOnly birthDate)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var age = today.Year - birthDate.Year;

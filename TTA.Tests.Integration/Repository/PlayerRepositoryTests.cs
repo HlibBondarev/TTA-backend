@@ -87,7 +87,7 @@ public class PlayerRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
 
     #region Helpers for Seeding
 
-    private Player CreateTestPlayer(Guid id, Guid clubId, string first, string last) => new()
+    private static Player CreateTestPlayer(Guid id, Guid clubId, string first, string last) => new()
     {
         Id = id,
         HomeClubId = clubId,
