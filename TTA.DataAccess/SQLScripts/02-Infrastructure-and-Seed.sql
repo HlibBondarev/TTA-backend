@@ -137,35 +137,46 @@ DO $$
 DECLARE 
     v_user_id VARCHAR := 'auth0|698b956080889e5401cef7c5'; 
     v_team_id UUID := '22222222-2222-2222-2222-222222222201'; 
+    v_new_club_id UUID := '11111111-1111-1111-1111-111111111110';
 BEGIN
-    INSERT INTO users (id, email, displayname, createdat)
+    -- 1. Ensure user exists
+    INSERT INTO public.users (id, email, displayname, createdat)
     VALUES (v_user_id, 'user1@example.com', 'UserOne', NOW())
     ON CONFLICT (id) DO NOTHING;
 
-    INSERT INTO teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary)
+    -- 2. Existing Team Membership (for old tests)
+    INSERT INTO public.teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary)
     SELECT '99999999-9999-9999-9999-999999999901', v_user_id, v_team_id, 'HeadCoach', NOW(), true
     WHERE NOT EXISTS (
-        SELECT 1 FROM teammemberships 
+        SELECT 1 FROM public.teammemberships 
         WHERE userid = v_user_id AND teamid = v_team_id
     );
 
+    -- 3. Policy for the OLD Team
+    INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
+    SELECT '99999999-9999-9999-9999-999999999902', v_user_id, 'Editor', 'Team', v_team_id, NOW()
+    WHERE NOT EXISTS (
+        SELECT 1 FROM auth.accesspolicies 
+        WHERE userid = v_user_id AND targettype = 'Team' AND targetid = v_team_id
+    );
+
+    -- 4. NEW: Policy for "My super club" (FullControl so you can add players)
     INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
     SELECT 
-        '99999999-9999-9999-9999-999999999902', 
+        '99999999-9999-9999-9999-999999999910', 
         v_user_id, 
-        'Editor', 
-        'Team', 
-        v_team_id, 
+        'FullControl', 
+        'Club', 
+        v_new_club_id, 
         NOW()
     WHERE NOT EXISTS (
         SELECT 1 FROM auth.accesspolicies 
         WHERE userid = v_user_id 
-          AND role = 'Editor' 
-          AND targettype = 'Team' 
-          AND targetid = v_team_id
+          AND targettype = 'Club' 
+          AND targetid = v_new_club_id
     );
 
-    RAISE NOTICE 'Seed completed: User % linked to Team %', v_user_id, v_team_id;
+    RAISE NOTICE 'Seed completed: User % granted FullControl over Club %', v_user_id, v_new_club_id;
 END $$;
 
 -- ==========================================
