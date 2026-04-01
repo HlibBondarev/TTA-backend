@@ -465,7 +465,7 @@ public class PlayerTests
     [Fact]
     public void Player_BirthDate_CanBeSetAndRetrieved()
     {
-        var birthDate = new DateTime(1990, 5, 15);
+        var birthDate = new DateOnly(1990, 5, 15);
         var player = new Player { BirthDate = birthDate };
         Assert.Equal(birthDate, player.BirthDate);
     }

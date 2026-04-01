@@ -8,17 +8,17 @@ using TTA.DataAccess.Repository.Api;
 
 namespace TTA.BusinessLogic.Tests.Features.Clubs.Handlers;
 
-public class CreateClubCommandHandlerTests
+public class CreateClubHandlerTests
 {
     private readonly Mock<IClubRepository> _repositoryMock;
-    private readonly Mock<ILogger<CreateClubCommandHandler>> _loggerMock;
-    private readonly CreateClubCommandHandler _handler;
+    private readonly Mock<ILogger<CreateClubHandler>> _loggerMock;
+    private readonly CreateClubHandler _handler;
 
-    public CreateClubCommandHandlerTests()
+    public CreateClubHandlerTests()
     {
         _repositoryMock = new Mock<IClubRepository>();
-        _loggerMock = new Mock<ILogger<CreateClubCommandHandler>>();
-        _handler = new CreateClubCommandHandler(_repositoryMock.Object, _loggerMock.Object);
+        _loggerMock = new Mock<ILogger<CreateClubHandler>>();
+        _handler = new CreateClubHandler(_repositoryMock.Object, _loggerMock.Object);
     }
 
     [Fact]

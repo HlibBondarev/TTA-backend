@@ -28,7 +28,7 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
     protected IDbConnection GetConnection() => connectionFactory.CreateConnection();
 
     /// <inheritdoc />
-    public async Task<TEntity> CreateOrUpdate(TEntity entity, string procName, DynamicParameters? additionalParams = null, CancellationToken ct = default)
+    public async Task<TEntity> CreateOrUpdate(TEntity entity, string sqlText, DynamicParameters? additionalParams = null, CancellationToken ct = default)
     {
         using var connection = GetConnection();
         if (connection is NpgsqlConnection npgsqlConn) await npgsqlConn.OpenAsync(ct);
@@ -44,7 +44,7 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
                 parameters.AddDynamicParams(additionalParams);
             }
 
-            var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+            var command = new CommandDefinition(sqlText, parameters, transaction, commandType: CommandType.Text, cancellationToken: ct);
             var result = await connection.QuerySingleAsync<TEntity>(command);
 
             transaction.Commit();
@@ -58,61 +58,61 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
     }
 
     /// <inheritdoc />
-    public async Task<TEntity?> GetById(TKey id, string procName, CancellationToken ct = default)
+    public async Task<TEntity?> GetById(TKey id, string sqlText, CancellationToken ct = default)
     {
         using var connection = GetConnection();
         var parameters = new DynamicParameters();
         parameters.Add(KeyParamName, id);
 
-        var command = new CommandDefinition(procName, parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        var command = new CommandDefinition(sqlText, parameters, commandType: CommandType.Text, cancellationToken: ct);
         return await connection.QueryFirstOrDefaultAsync<TEntity>(command);
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<TEntity>> GetAll(string procName, CancellationToken ct = default)
+    public async Task<IEnumerable<TEntity>> GetAll(string sqlText, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        var command = new CommandDefinition(procName, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        var command = new CommandDefinition(sqlText, commandType: CommandType.Text, cancellationToken: ct);
         return await connection.QueryAsync<TEntity>(command);
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<TEntity>> GetByPropValues(string procName, DynamicParameters parameters, CancellationToken ct = default)
+    public async Task<IEnumerable<TEntity>> GetByPropValues(string sqlText, DynamicParameters parameters, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        var command = new CommandDefinition(procName, parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        var command = new CommandDefinition(sqlText, parameters, commandType: CommandType.Text, cancellationToken: ct);
         return await connection.QueryAsync<TEntity>(command);
     }
 
     /// <inheritdoc />
-    public async Task<string?> GetDataInJson(string procName, DynamicParameters parameters, CancellationToken ct = default)
+    public async Task<string?> GetDataInJson(string sqlText, DynamicParameters parameters, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        var command = new CommandDefinition(procName, parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        var command = new CommandDefinition(sqlText, parameters, commandType: CommandType.Text, cancellationToken: ct);
         return await connection.ExecuteScalarAsync<string>(command);
     }
 
     /// <inheritdoc />
-    public async Task<bool> Exists(TKey id, string procName, CancellationToken ct = default)
+    public async Task<bool> Exists(TKey id, string sqlText, CancellationToken ct = default)
     {
         using var connection = GetConnection();
         var parameters = new DynamicParameters();
         parameters.Add(KeyParamName, id);
 
-        var command = new CommandDefinition(procName, parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        var command = new CommandDefinition(sqlText, parameters, commandType: CommandType.Text, cancellationToken: ct);
         return await connection.ExecuteScalarAsync<bool>(command);
     }
 
     /// <inheritdoc />
-    public async Task<bool> Exists(string procName, DynamicParameters parameters, CancellationToken ct = default)
+    public async Task<bool> Exists(string sqlText, DynamicParameters parameters, CancellationToken ct = default)
     {
         using var connection = GetConnection();
-        var command = new CommandDefinition(procName, parameters, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+        var command = new CommandDefinition(sqlText, parameters, commandType: CommandType.Text, cancellationToken: ct);
         return await connection.ExecuteScalarAsync<bool>(command);
     }
 
     /// <inheritdoc />
-    public async Task<bool> Delete(TKey id, string procName, CancellationToken ct = default)
+    public async Task<bool> Delete(TKey id, string sqlText, CancellationToken ct = default)
     {
         using var connection = GetConnection();
         if (connection is NpgsqlConnection npgsqlConn) await npgsqlConn.OpenAsync(ct);
@@ -125,7 +125,7 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
             var parameters = new DynamicParameters();
             parameters.Add(KeyParamName, id);
 
-            var command = new CommandDefinition(procName, parameters, transaction, commandType: CommandType.StoredProcedure, cancellationToken: ct);
+            var command = new CommandDefinition(sqlText, parameters, transaction, commandType: CommandType.Text, cancellationToken: ct);
             var affectedRows = await connection.ExecuteAsync(command);
 
             transaction.Commit();
@@ -162,9 +162,8 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
 
     /// <inheritdoc />
     public async Task<T> ExecuteQueryInTransaction<T>(
-    string commandTextOrProcName,
+    string sqlText,
     DynamicParameters parameters,
-    CommandType commandType = CommandType.StoredProcedure, // Added parameter with default value
     CancellationToken ct = default)
     {
         using var connection = GetConnection();
@@ -176,7 +175,7 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
         try
         {
             // Use the passed commandType instead of the hardcoded one
-            var command = new CommandDefinition(commandTextOrProcName, parameters, transaction, commandType: commandType, cancellationToken: ct);
+            var command = new CommandDefinition(sqlText, parameters, transaction, commandType: CommandType.Text, cancellationToken: ct);
             var result = await connection.QuerySingleAsync<T>(command);
             transaction.Commit();
             return result;

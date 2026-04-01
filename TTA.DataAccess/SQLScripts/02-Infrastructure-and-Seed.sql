@@ -107,7 +107,10 @@ INSERT INTO clubs (id, cityid, name, createdat) VALUES
      WHERE c.name = 'Kyiv' AND r.name = 'Kyiv City' AND co.code = 'UKR' LIMIT 1), 'Kyiv City Team', NOW()),
 ('11111111-1111-1111-1111-111111111109', 
     (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
-     WHERE c.name = 'Lviv' AND r.name = 'Lviv Oblast' AND co.code = 'UKR' LIMIT 1), 'Dynamo-Amazonky Lviv', NOW())
+     WHERE c.name = 'Lviv' AND r.name = 'Lviv Oblast' AND co.code = 'UKR' LIMIT 1), 'Dynamo-Amazonky Lviv', NOW()),
+('11111111-1111-1111-1111-111111111110', 
+    (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
+     WHERE c.name = 'Dnipro' AND r.name = 'Dnipropetrovsk Oblast' AND co.code = 'UKR' LIMIT 1), 'My super club', NOW())
 ON CONFLICT (id) DO NOTHING;
 
 DO $$ 
@@ -121,7 +124,8 @@ BEGIN
     ('22222222-2222-2222-2222-222222222213', '11111111-1111-1111-1111-111111111101', v_wp_id, 'Dynamo Lviv U-13 (2013)', 2013, 'Male', NOW()),
     ('22222222-2222-2222-2222-222222222209', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv U-15 (2011)', 2011, 'Male', NOW()),
     ('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111109', v_wp_id, 'Dynamo-Amazonky (Women)', NULL, 'Female', NOW()),
-    ('22222222-2222-2222-2222-222222222211', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv City Selection (Women)', NULL, 'Female', NOW())
+    ('22222222-2222-2222-2222-222222222211', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv City Selection (Women)', NULL, 'Female', NOW()),
+    ('22222222-2222-2222-2222-222222222215', '11111111-1111-1111-1111-111111111110', v_wp_id, 'My super team U-15 (2011)', 2011, 'Male', NOW())
     ON CONFLICT (id) DO NOTHING;
 END $$;
 
@@ -133,33 +137,63 @@ DO $$
 DECLARE 
     v_user_id VARCHAR := 'auth0|698b956080889e5401cef7c5'; 
     v_team_id UUID := '22222222-2222-2222-2222-222222222201'; 
+    v_new_club_id UUID := '11111111-1111-1111-1111-111111111110';
 BEGIN
-    INSERT INTO users (id, email, displayname, createdat)
+    -- 1. Ensure user exists
+    INSERT INTO public.users (id, email, displayname, createdat)
     VALUES (v_user_id, 'user1@example.com', 'UserOne', NOW())
     ON CONFLICT (id) DO NOTHING;
 
-    INSERT INTO teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary)
+    -- 2. Existing Team Membership (for old tests)
+    INSERT INTO public.teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary)
     SELECT '99999999-9999-9999-9999-999999999901', v_user_id, v_team_id, 'HeadCoach', NOW(), true
     WHERE NOT EXISTS (
-        SELECT 1 FROM teammemberships 
+        SELECT 1 FROM public.teammemberships 
         WHERE userid = v_user_id AND teamid = v_team_id
     );
 
+    -- 3. Policy for the OLD Team
+    INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
+    SELECT '99999999-9999-9999-9999-999999999902', v_user_id, 'Editor', 'Team', v_team_id, NOW()
+    WHERE NOT EXISTS (
+        SELECT 1 FROM auth.accesspolicies 
+        WHERE userid = v_user_id AND targettype = 'Team' AND targetid = v_team_id
+    );
+
+    -- 4. NEW: Policy for "My super club" (FullControl so you can add players)
     INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
     SELECT 
-        '99999999-9999-9999-9999-999999999902', 
+        '99999999-9999-9999-9999-999999999910', 
         v_user_id, 
-        'Editor', 
-        'Team', 
-        v_team_id, 
+        'FullControl', 
+        'Club', 
+        v_new_club_id, 
         NOW()
     WHERE NOT EXISTS (
         SELECT 1 FROM auth.accesspolicies 
         WHERE userid = v_user_id 
-          AND role = 'Editor' 
-          AND targettype = 'Team' 
-          AND targetid = v_team_id
+          AND targettype = 'Club' 
+          AND targetid = v_new_club_id
     );
 
-    RAISE NOTICE 'Seed completed: User % linked to Team %', v_user_id, v_team_id;
+    RAISE NOTICE 'Seed completed: User % granted FullControl over Club %', v_user_id, v_new_club_id;
+END $$;
+
+-- ==========================================
+-- 6. PLAYERS (Seed for My super club)
+-- ==========================================
+
+DO $$ 
+DECLARE 
+    v_club_id uuid := '11111111-1111-1111-1111-111111111110';
+BEGIN
+    INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES 
+    ('33333333-3333-3333-3333-333333333001', v_club_id, 'Олександр', 'Коваленко', '2011-05-15', 'Male', NOW()),
+    ('33333333-3333-3333-3333-333333333002', v_club_id, 'Максим', 'Бондар', '2011-08-22', 'Male', NOW()),
+    ('33333333-3333-3333-3333-333333333003', v_club_id, 'Артем', 'Шевченко', '2012-01-10', 'Male', NOW()),
+    ('33333333-3333-3333-3333-333333333004', v_club_id, 'Дмитро', 'Марченко', '2011-11-30', 'Male', NOW()),
+    ('33333333-3333-3333-3333-333333333005', v_club_id, 'Іван', 'Сидоренко', '2011-03-05', 'Male', NOW())
+    ON CONFLICT (id) DO NOTHING;
+
+    RAISE NOTICE 'Seed for 5 players in "My super club" completed successfully.';
 END $$;

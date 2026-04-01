@@ -9,7 +9,7 @@ public class Player : IKeyedEntity<Guid>
     public Guid HomeClubId { get; set; }
     public string FirstName { get; set; } = null!;
     public string LastName { get; set; } = null!;
-    public DateTime BirthDate { get; set; }
+    public DateOnly BirthDate { get; set; }
     public Gender Gender { get; set; }
     public DateTime CreatedAt { get; set; }
 }

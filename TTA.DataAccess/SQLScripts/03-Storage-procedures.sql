@@ -4,6 +4,7 @@
 
 -- 1) Retrieves the effective user role for a specific target or global scope.
 -- Returns an INTEGER that maps directly to the C# AppRole enum (0, 1, 2).
+
 CREATE OR REPLACE FUNCTION auth.get_user_permission(
     p_user_id VARCHAR(64),
     p_target_type VARCHAR(20),
@@ -51,6 +52,7 @@ END;$$ LANGUAGE plpgsql;
 
 -- 1) Creates a club and its associated FullControl policy in a single transaction.
 -- The ID for the access policy is generated automatically by the table default.
+
 CREATE OR REPLACE FUNCTION auth.create_club_with_ownership(
     p_id UUID,
     p_cityid UUID,
@@ -61,7 +63,7 @@ CREATE OR REPLACE FUNCTION auth.create_club_with_ownership(
 DECLARE
     v_constraint_name TEXT;
 BEGIN
-    -- 1. Insert the club record
+    -- 1. Insert the club record (FIX: added public schema)
     INSERT INTO public.clubs (id, cityid, name, createdat)
     VALUES (p_id, p_cityid, p_name, p_createdat);
 
@@ -83,6 +85,7 @@ END;$$ LANGUAGE plpgsql;
 
 -- 2) Checks if a user already owns any club to enforce "one club per user" rule.
 -- Updated to only consider active (non-expired) ownership policies.
+
 CREATE OR REPLACE FUNCTION auth.check_user_owns_any_club(
     p_user_id TEXT
 )
@@ -96,4 +99,65 @@ RETURNS BOOLEAN AS $$BEGIN
           -- FIX (Finding #10): Only count active ownerships matching the unique index logic
           AND expiresat IS NULL
     );
+END;$$ LANGUAGE plpgsql;
+
+-- ====================================================
+-- PLAYERS STORED FUNCTIONS & PROCEDURES
+-- ====================================================
+
+-- 1) Retrieve a single player by ID (FIX: added public schema)
+
+CREATE OR REPLACE FUNCTION get_player_by_id(p_id UUID)
+RETURNS SETOF public.players AS $$BEGIN
+    RETURN QUERY
+    SELECT * FROM public.players WHERE id = p_id;
+END;$$ LANGUAGE plpgsql;
+
+-- 2) Upsert function for players: inserts a new player or updates existing one based on ID.
+
+CREATE OR REPLACE FUNCTION upsert_player(
+    p_id UUID,
+    p_homeclubid UUID,
+    p_firstname VARCHAR(100),
+    p_lastname VARCHAR(100),
+    p_birthdate DATE,
+    p_gender INT,
+    p_createdat TIMESTAMPTZ
+)
+RETURNS SETOF public.players AS $$DECLARE
+    v_gender_str VARCHAR(20);
+BEGIN
+    -- 1. Validate gender input (Fail Fast as requested by Reviewer)
+    IF p_gender NOT IN (0, 1) THEN
+        RAISE EXCEPTION 'Invalid gender value: %. Expected 0 (Male) or 1 (Female).', p_gender 
+        USING ERRCODE = '22023'; -- SQLSTATE for invalid_parameter_value
+    END IF;
+
+    -- 2. Map integer to string enum (no ELSE default here)
+    v_gender_str := CASE 
+        WHEN p_gender = 0 THEN 'Male'
+        WHEN p_gender = 1 THEN 'Female'
+    END;
+
+    RETURN QUERY
+    -- (FIX: added public schema)
+    INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+    VALUES (p_id, p_homeclubid, p_firstname, p_lastname, p_birthdate, v_gender_str, p_createdat)
+    ON CONFLICT (id) DO UPDATE SET
+        homeclubid = EXCLUDED.homeclubid,
+        firstname = EXCLUDED.firstname,
+        lastname = EXCLUDED.lastname,
+        birthdate = EXCLUDED.birthdate,
+        gender = EXCLUDED.gender
+    RETURNING *;
+END;$$ LANGUAGE plpgsql;
+
+-- 3) Retrieves all players associated with a specific club.
+
+CREATE OR REPLACE FUNCTION get_players_by_club(p_club_id UUID)
+RETURNS SETOF public.players AS $$BEGIN
+    RETURN QUERY
+    -- (FIX: added public schema)
+    SELECT * FROM public.players 
+    WHERE homeclubid = p_club_id;
 END;$$ LANGUAGE plpgsql;

@@ -2,7 +2,6 @@
 using Microsoft.Extensions.Logging;
 using TTA.BusinessLogic.Features.Clubs.Commands;
 using TTA.Common.Exceptions;
-using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 
 namespace TTA.BusinessLogic.Features.Clubs.Handlers;
@@ -10,12 +9,12 @@ namespace TTA.BusinessLogic.Features.Clubs.Handlers;
 /// <summary>
 /// Orchestrates the creation of a club, enforcing the 'one club per user' rule.
 /// </summary>
-public class CreateClubCommandHandler(
+public class CreateClubHandler(
     IClubRepository repository,
-    ILogger<CreateClubCommandHandler> logger) : IRequestHandler<CreateClubCommand, Guid>
+    ILogger<CreateClubHandler> logger) : IRequestHandler<CreateClubCommand, Guid>
 {
     private readonly IClubRepository _repository = repository;
-    private readonly ILogger<CreateClubCommandHandler> _logger = logger;
+    private readonly ILogger<CreateClubHandler> _logger = logger;
 
     /// <summary>
     /// Handles the club creation process, validating business rules and performing atomic database insertion.
@@ -43,14 +42,7 @@ public class CreateClubCommandHandler(
         }
 
         // 2. Prepare Entity
-        // Note: Mapping matches the requirements for strict verification in tests
-        var club = new Club
-        {
-            Id = Guid.NewGuid(),
-            Name = command.Name,
-            CityId = command.CityId,
-            CreatedAt = DateTime.UtcNow
-        };
+        var club = command.ToModel();
 
         // 3. Atomic Execution via Repository
         // Using CreateWithOwnershipAsync ensures both Club and AccessPolicy are created in one transaction

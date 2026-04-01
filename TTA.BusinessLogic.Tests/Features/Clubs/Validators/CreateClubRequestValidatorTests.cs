@@ -6,12 +6,7 @@ namespace TTA.BusinessLogic.Tests.Features.Clubs.Validators;
 
 public class CreateClubRequestValidatorTests
 {
-    private readonly CreateClubRequestValidator validator;
-
-    public CreateClubRequestValidatorTests()
-    {
-        validator = new CreateClubRequestValidator();
-    }
+    private readonly CreateClubRequestValidator validator = new();
 
     [Fact]
     public void Should_Have_Error_When_Name_Is_Empty()

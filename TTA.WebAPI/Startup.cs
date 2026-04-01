@@ -1,4 +1,5 @@
-﻿using DbUp;
+﻿using Dapper;
+using DbUp;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.OpenApi.Models;
@@ -9,6 +10,7 @@ using TTA.BusinessLogic.Services;
 using TTA.BusinessLogic.Services.Api;
 using TTA.Common.Enums;
 using TTA.DataAccess;
+using TTA.DataAccess.Infrastructure;
 using TTA.DataAccess.Repository;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Auth;
@@ -96,10 +98,13 @@ public static class Startup
             client.BaseAddress = new Uri(configuration["Auth0:Authority"]!);
         });
 
+        SqlMapper.AddTypeHandler(new DateOnlyTypeHandler());
+
         services.AddScoped<IAccessRepository, AccessRepository>();
         services.AddScoped<IAccessService, AccessService>();
 
         services.AddScoped<IClubRepository, ClubRepository>();
+        services.AddScoped<IPlayerRepository, PlayerRepository>();
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
