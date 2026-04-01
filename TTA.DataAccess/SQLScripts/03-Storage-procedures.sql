@@ -127,12 +127,16 @@ CREATE OR REPLACE FUNCTION upsert_player(
 RETURNS SETOF public.players AS $$DECLARE
     v_gender_str VARCHAR(20);
 BEGIN
-    -- Match the integer values from your C# Gender enum
-    -- If Male = 0 and Female = 1 in C#:
+    -- 1. Validate gender input (Fail Fast as requested by Reviewer)
+    IF p_gender NOT IN (0, 1) THEN
+        RAISE EXCEPTION 'Invalid gender value: %. Expected 0 (Male) or 1 (Female).', p_gender 
+        USING ERRCODE = '22023'; -- SQLSTATE for invalid_parameter_value
+    END IF;
+
+    -- 2. Map integer to string enum (no ELSE default here)
     v_gender_str := CASE 
         WHEN p_gender = 0 THEN 'Male'
         WHEN p_gender = 1 THEN 'Female'
-        ELSE 'Male' -- Default to a valid enum value to avoid parsing errors
     END;
 
     RETURN QUERY
