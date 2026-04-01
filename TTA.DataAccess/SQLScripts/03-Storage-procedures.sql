@@ -63,8 +63,8 @@ CREATE OR REPLACE FUNCTION auth.create_club_with_ownership(
 DECLARE
     v_constraint_name TEXT;
 BEGIN
-    -- 1. Insert the club record
-    INSERT INTO clubs (id, cityid, name, createdat)
+    -- 1. Insert the club record (FIX: added public schema)
+    INSERT INTO public.clubs (id, cityid, name, createdat)
     VALUES (p_id, p_cityid, p_name, p_createdat);
 
     -- 2. Insert the ownership policy
@@ -105,12 +105,12 @@ END;$$ LANGUAGE plpgsql;
 -- PLAYERS STORED FUNCTIONS & PROCEDURES
 -- ====================================================
 
--- 1) Retrieve a single player by ID
+-- 1) Retrieve a single player by ID (FIX: added public schema)
 
 CREATE OR REPLACE FUNCTION get_player_by_id(p_id UUID)
-RETURNS SETOF players AS $$BEGIN
+RETURNS SETOF public.players AS $$BEGIN
     RETURN QUERY
-    SELECT * FROM players WHERE id = p_id;
+    SELECT * FROM public.players WHERE id = p_id;
 END;$$ LANGUAGE plpgsql;
 
 -- 2) Upsert function for players: inserts a new player or updates existing one based on ID.
@@ -124,7 +124,7 @@ CREATE OR REPLACE FUNCTION upsert_player(
     p_gender INT,
     p_createdat TIMESTAMPTZ
 )
-RETURNS SETOF players AS $$DECLARE
+RETURNS SETOF public.players AS $$DECLARE
     v_gender_str VARCHAR(20);
 BEGIN
     -- Match the integer values from your C# Gender enum
@@ -136,7 +136,8 @@ BEGIN
     END;
 
     RETURN QUERY
-    INSERT INTO players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+    -- (FIX: added public schema)
+    INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
     VALUES (p_id, p_homeclubid, p_firstname, p_lastname, p_birthdate, v_gender_str, p_createdat)
     ON CONFLICT (id) DO UPDATE SET
         homeclubid = EXCLUDED.homeclubid,
@@ -150,9 +151,10 @@ END;$$ LANGUAGE plpgsql;
 -- 3) Retrieves all players associated with a specific club.
 
 CREATE OR REPLACE FUNCTION get_players_by_club(p_club_id UUID)
-RETURNS SETOF players AS $$BEGIN
+RETURNS SETOF public.players AS $$BEGIN
     RETURN QUERY
-    SELECT * FROM players 
+    -- (FIX: added public schema)
+    SELECT * FROM public.players 
     WHERE homeclubid = p_club_id;
 END;$$ LANGUAGE plpgsql;
 
@@ -162,7 +164,8 @@ CREATE OR REPLACE FUNCTION delete_player(p_id UUID)
 RETURNS BOOLEAN AS $$DECLARE
     v_deleted BOOLEAN;
 BEGIN
-    DELETE FROM players WHERE id = p_id;
+    -- (FIX: added public schema)
+    DELETE FROM public.players WHERE id = p_id;
     GET DIAGNOSTICS v_deleted = ROW_COUNT;
     RETURN v_deleted;
 END;$$ LANGUAGE plpgsql;
