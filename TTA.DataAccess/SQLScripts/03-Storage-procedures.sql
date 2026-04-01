@@ -161,15 +161,3 @@ RETURNS SETOF public.players AS $$BEGIN
     SELECT * FROM public.players 
     WHERE homeclubid = p_club_id;
 END;$$ LANGUAGE plpgsql;
-
--- 4) Deletes a player by their UUID and returns true if deleted.
-
-CREATE OR REPLACE FUNCTION delete_player(p_id UUID)
-RETURNS BOOLEAN AS $$DECLARE
-    v_deleted BOOLEAN;
-BEGIN
-    -- (FIX: added public schema)
-    DELETE FROM public.players WHERE id = p_id;
-    GET DIAGNOSTICS v_deleted = ROW_COUNT;
-    RETURN v_deleted;
-END;$$ LANGUAGE plpgsql;

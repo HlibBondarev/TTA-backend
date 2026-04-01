@@ -56,6 +56,6 @@ public static class SqlStatements
         /// SQL to delete a player.
         /// </summary>
         public const string DeletePlayer =
-            "SELECT delete_player(@p_id)";
+            "DELETE FROM public.players WHERE id = @p_id";
     }
 }
