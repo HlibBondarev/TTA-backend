@@ -29,6 +29,9 @@ public class PlayerRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         // Seed dependencies: Country -> Region -> City -> Club
         await SeedClubDependenciesAsync(clubId);
 
+        // Capture time window before operation
+        var beforeInsert = DateTime.UtcNow;
+
         var player = new Player
         {
             Id = playerId,
@@ -43,7 +46,10 @@ public class PlayerRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         // Act
         var createdPlayer = await _repository.CreatePlayerAsync(player, CancellationToken.None);
 
-        // Retrieve by ClubId (as the method name suggests)
+        // Capture time window after operation
+        var afterInsert = DateTime.UtcNow;
+
+        // Retrieve by ClubId
         var playersInClub = (await _repository.GetByClubIdAsync(clubId, CancellationToken.None)).ToList();
 
         // Assert
@@ -55,8 +61,9 @@ public class PlayerRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         retrieved.LastName.Should().Be(player.LastName);
         retrieved.HomeClubId.Should().Be(clubId);
         retrieved.BirthDate.Should().Be(player.BirthDate);
-        // Using precision for Postgres timestamp compatibility
-        retrieved.CreatedAt.Should().BeCloseTo(player.CreatedAt, TimeSpan.FromMilliseconds(100));
+
+        // Verify CreatedAt is within the operation time window
+        retrieved.CreatedAt.Should().BeOnOrAfter(beforeInsert).And.BeOnOrBefore(afterInsert);
     }
 
     /// <summary>
@@ -80,8 +87,6 @@ public class PlayerRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
 
         // Assert
         players.Should().HaveCount(2);
-
-        // Corrected checks to match how names are stored (FirstName vs LastName)
         players.Should().Contain(p => p.FirstName == "Player" && p.LastName == "One");
         players.Should().Contain(p => p.FirstName == "Player" && p.LastName == "Two");
     }
@@ -99,46 +104,55 @@ public class PlayerRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         CreatedAt = DateTime.UtcNow
     };
 
+    /// <summary>
+    /// Seeds all necessary club dependencies using a single connection and transaction.
+    /// </summary>
     private async Task SeedClubDependenciesAsync(Guid clubId)
-    {
-        var cityId = Guid.NewGuid();
-        const int countryId = 380;
-        const int regionId = 1;
-
-        await SeedCountryAsync(countryId, "Ukraine", "UA");
-        await SeedRegionAsync(regionId, "Kyiv Oblast", countryId);
-        await SeedCityAsync(cityId, "Kyiv", regionId);
-        await SeedClubAsync(clubId, "Dynamo Kyiv", cityId);
-    }
-
-    private async Task SeedCountryAsync(int id, string name, string code)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
+        using var transaction = await conn.BeginTransactionAsync();
+
+        try
+        {
+            var cityId = Guid.NewGuid();
+            const int countryId = 380;
+            const int regionId = 1;
+
+            await SeedCountryAsync(conn, countryId, "Ukraine", "UA");
+            await SeedRegionAsync(conn, regionId, "Kyiv Oblast", countryId);
+            await SeedCityAsync(conn, cityId, "Kyiv", regionId);
+            await SeedClubAsync(conn, clubId, "Dynamo Kyiv", cityId);
+
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
+
+    private static async Task SeedCountryAsync(NpgsqlConnection conn, int id, string name, string code)
+    {
         var sql = "INSERT INTO public.countries (id, name, code) VALUES (@id, @name, @code) ON CONFLICT DO NOTHING";
         await conn.ExecuteAsync(sql, new { id, name, code });
     }
 
-    private async Task SeedRegionAsync(int id, string name, int countryId)
+    private static async Task SeedRegionAsync(NpgsqlConnection conn, int id, string name, int countryId)
     {
-        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
-        await conn.OpenAsync();
         var sql = "INSERT INTO public.regions (id, name, countryid) VALUES (@id, @name, @countryId) ON CONFLICT DO NOTHING";
         await conn.ExecuteAsync(sql, new { id, name, countryId });
     }
 
-    private async Task SeedCityAsync(Guid id, string name, int regionId)
+    private static async Task SeedCityAsync(NpgsqlConnection conn, Guid id, string name, int regionId)
     {
-        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
-        await conn.OpenAsync();
         var sql = "INSERT INTO public.cities (id, name, regionid) VALUES (@id, @name, @regionId) ON CONFLICT DO NOTHING";
         await conn.ExecuteAsync(sql, new { id, name, regionId });
     }
 
-    private async Task SeedClubAsync(Guid id, string name, Guid cityId)
+    private static async Task SeedClubAsync(NpgsqlConnection conn, Guid id, string name, Guid cityId)
     {
-        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
-        await conn.OpenAsync();
         var sql = "INSERT INTO public.clubs (id, name, cityid, createdat) VALUES (@id, @name, @cityId, @now) ON CONFLICT (id) DO NOTHING";
         await conn.ExecuteAsync(sql, new { id, name, cityId, now = DateTime.UtcNow });
     }
