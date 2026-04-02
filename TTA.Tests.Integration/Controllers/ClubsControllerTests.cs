@@ -47,7 +47,7 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
     }
 
     [Fact]
-    public async Task Create_ShouldReturnUnauthorized_WhenUserIdClaimIsMissing()
+    public async Task Create_ShouldReturnUnauthorized_WhenAuthenticationIsDisabled()
     {
         // Arrange
         var request = new { Name = "No Auth Club", CityId = Guid.NewGuid() };
