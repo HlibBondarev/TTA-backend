@@ -14,5 +14,5 @@ public abstract class BaseIntegrationTest(DatabaseFixture fixture) : IAsyncLifet
 }
 
 // Definition of the shared fixture
-[CollectionDefinition("DatabaseCollection")]
+[CollectionDefinition("DatabaseCollection", DisableParallelization = true)]
 public class DatabaseCollection : ICollectionFixture<DatabaseFixture> { }

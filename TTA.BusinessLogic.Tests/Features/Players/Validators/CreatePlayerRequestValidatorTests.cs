@@ -21,7 +21,6 @@ public class CreatePlayerRequestValidatorTests
     {
         // Arrange
         var request = new CreatePlayerRequest(
-            HomeClubId: Guid.NewGuid(),
             FirstName: "John",
             LastName: "Doe",
             BirthDate: _today.AddYears(-20),
@@ -43,7 +42,6 @@ public class CreatePlayerRequestValidatorTests
     {
         // Arrange
         var request = new CreatePlayerRequest(
-            Guid.NewGuid(),
             invalidName!,
             invalidName!,
             _today.AddYears(-20),
@@ -64,7 +62,6 @@ public class CreatePlayerRequestValidatorTests
         // Arrange
         var longName = new string('A', 101);
         var request = new CreatePlayerRequest(
-            Guid.NewGuid(),
             longName,
             "Doe",
             _today.AddYears(-20),
@@ -86,7 +83,6 @@ public class CreatePlayerRequestValidatorTests
     {
         // Arrange
         var request = new CreatePlayerRequest(
-            Guid.NewGuid(),
             "John",
             "Doe",
             _today.AddYears(-age),
@@ -106,7 +102,6 @@ public class CreatePlayerRequestValidatorTests
     {
         // Arrange
         var request = new CreatePlayerRequest(
-            Guid.NewGuid(),
             "John",
             "Doe",
             _today.AddYears(-20),
@@ -125,7 +120,6 @@ public class CreatePlayerRequestValidatorTests
     {
         // Arrange
         var request = new CreatePlayerRequest(
-            Guid.NewGuid(),
             "John",
             "Doe",
             _today.AddDays(1),
