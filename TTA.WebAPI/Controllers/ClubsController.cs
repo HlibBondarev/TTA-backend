@@ -91,12 +91,14 @@ public class ClubsController(
     /// <response code="400">If the request data is invalid or validation fails.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user does not have administrative rights over this club.</response>
+    /// <response code="409">If a player creation conflict occurs.</response>
     [HttpPost("{clubId:guid}/players")]
     [Authorize(Policy = "ClubAdmin")]
     [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> CreatePlayer(
         [FromRoute] Guid clubId,
         [FromBody] CreatePlayerRequest request,
