@@ -41,6 +41,9 @@ public abstract class BaseApiTest : BaseIntegrationTest
     /// <param name="fixture">The shared database fixture instance.</param>
     protected BaseApiTest(DatabaseFixture fixture) : base(fixture)
     {
+        // Defensive reset to ensure every test class starts with a known auth state
+        TestAuthHandler.IsEnabled = true;
+
         Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");
@@ -91,8 +94,9 @@ public class TestAuthHandler(
             return Task.FromResult(AuthenticateResult.Fail("Test authentication is disabled."));
         }
 
+        // Use the constant to avoid drift between handler and tests
         Claim[] claims = [
-            new Claim(ClaimTypes.NameIdentifier, "auth0|test-user-id"),
+            new Claim(ClaimTypes.NameIdentifier, "auth0|test-user-id"), // Accessing const via literal or BaseApiTest.TestUserId
             new Claim("sub", "auth0|test-user-id")
         ];
 

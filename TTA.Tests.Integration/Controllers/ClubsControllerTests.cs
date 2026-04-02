@@ -177,8 +177,10 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
+        // Use ON CONFLICT to prevent tests from failing if the same policy is seeded twice
         var sql = @"INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat) 
-                    VALUES (@id, @userId, 'FullControl', 'Club', @clubId, @now)";
+                VALUES (@id, @userId, 'FullControl', 'Club', @clubId, @now)
+                ON CONFLICT DO NOTHING";
 
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", Guid.NewGuid());
