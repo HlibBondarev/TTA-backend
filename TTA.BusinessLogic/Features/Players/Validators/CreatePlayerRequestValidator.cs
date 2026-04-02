@@ -10,9 +10,6 @@ public class CreatePlayerRequestValidator : AbstractValidator<CreatePlayerReques
 {
     public CreatePlayerRequestValidator()
     {
-        RuleFor(x => x.HomeClubId)
-            .NotEmpty().WithMessage("Home Club ID is required.");
-
         RuleFor(x => x.FirstName)
             .NotEmpty().WithMessage("First name is required.")
             .MaximumLength(100).WithMessage("First name cannot exceed 100 characters.");
