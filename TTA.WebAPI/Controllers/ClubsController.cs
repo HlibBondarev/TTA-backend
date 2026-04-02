@@ -102,8 +102,7 @@ public class ClubsController(
         [FromBody] CreatePlayerRequest request,
         [FromServices] IValidator<CreatePlayerRequest> validator)
     {
-        _logger.LogInformation("Executing CreatePlayer action for {FirstName} {LastName} in Club {ClubId}.",
-            request.FirstName, request.LastName, clubId);
+        _logger.LogInformation("Executing CreatePlayer action for a new player in Club {ClubId}.", clubId);
 
         var validationResult = await validator.ValidateAsync(request);
         if (!validationResult.IsValid)
