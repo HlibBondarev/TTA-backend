@@ -45,6 +45,30 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
+
+    [Fact]
+    public async Task Create_ShouldReturnUnauthorized_WhenUserIdClaimIsMissing()
+    {
+        // Arrange
+        var request = new { Name = "No Auth Club", CityId = Guid.NewGuid() };
+
+        try
+        {
+            // Disable our mock auth handler to simulate a request without a valid token
+            TestAuthHandler.IsEnabled = false;
+
+            // Act
+            var response = await Client.PostAsJsonAsync("/api/clubs", request);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+        finally
+        {
+            // Re-enable to ensure other tests are not affected
+            TestAuthHandler.IsEnabled = true;
+        }
+    }
     #endregion
 
     #region CreatePlayer
@@ -92,6 +116,30 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task CreatePlayer_ShouldReturnBadRequest_WhenValidationFails()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        await SeedRequiredClubDataAsync(clubId);
+        await SeedUserAsync(TestUserId);
+        await SeedClubAdminPolicyAsync(TestUserId, clubId);
+
+        var invalidRequest = new
+        {
+            FirstName = "",
+            LastName = "Doe",
+            BirthDate = new DateOnly(2000, 1, 1),
+            Gender = 0
+        };
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/players", invalidRequest);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
     #endregion
 
