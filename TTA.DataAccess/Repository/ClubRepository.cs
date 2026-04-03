@@ -53,6 +53,9 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
 
         if (string.IsNullOrWhiteSpace(userId))
             throw new ArgumentException("User ID cannot be null or empty.", nameof(userId));
+        if (string.IsNullOrWhiteSpace(userEmail)) throw new ArgumentException("Email cannot be empty", nameof(userEmail));
+        if (string.IsNullOrWhiteSpace(userName) || userName.Length < 3)
+            throw new ArgumentException("User name must be at least 3 characters long", nameof(userName));
 
         var parameters = new DynamicParameters();
         parameters.Add("Id", club.Id);

@@ -31,8 +31,8 @@ public interface IClubRepository : IEntityRepositoryBase<Guid, Club>
     /// </summary>
     /// <param name="club">The club entity to create.</param>
     /// <param name="userId">The unique identifier of the user who will own the club.</param>
-    /// <param name="userEmail">The email of the user  who will own the club.</param>
-    /// <param name="userName">The name of the user  who will own the club.</param>
+    /// <param name="userEmail">The email of the user who will own the club.</param>
+    /// <param name="userName">The name of the user who will own the club.</param>
     /// <param name="ct">The cancellation token.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains the created club's identifier.</returns>
     Task<Guid> CreateWithOwnershipAsync(Club club, string userId, string userEmail, string userName, CancellationToken ct);
