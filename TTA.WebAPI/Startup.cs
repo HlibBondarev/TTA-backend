@@ -47,7 +47,11 @@ public static class Startup
         EnsureDatabaseUpsert(connectionString);
 
         // Retrieve and validate settings at startup
-        var auth0Settings = Auth0ConfigHelper.GetRequiredAuth0Settings(builder.Configuration);
+        var auth0Settings = Auth0ConfigHelper.GetRequiredAuth0Settings(configuration);
+
+        // Register Auth0Settings as a Singleton in the DI container
+        // This allows injecting it directly into Controllers or Services
+        services.AddSingleton(auth0Settings);
 
         // Authentication (Auth0)
         _ = services.AddAuthentication(options =>
@@ -56,8 +60,8 @@ public static class Startup
             options.DefaultChallengeScheme = "JwtBearer";
         }).AddJwtBearer("JwtBearer", options =>
         {
-            options.Authority = auth0Settings.Authority; // Using validated value
-            options.Audience = auth0Settings.Audience;   // Using validated value
+            options.Authority = auth0Settings.Authority;
+            options.Audience = auth0Settings.Audience;
         });
 
         // Registering the handler with Scoped lifetime (to resolve IAccessService correctly)
@@ -95,7 +99,7 @@ public static class Startup
         // Registering HttpClient for CurrentUserService
         services.AddHttpClient<ICurrentUserService, CurrentUserService>(client =>
         {
-            client.BaseAddress = new Uri(configuration["Auth0:Authority"]!);
+            client.BaseAddress = new Uri(auth0Settings.Authority);
         });
 
         SqlMapper.AddTypeHandler(new DateOnlyTypeHandler());
@@ -127,11 +131,11 @@ public static class Startup
                         AuthorizationUrl = new Uri(auth0Settings.AuthorizationUrl),
                         TokenUrl = new Uri(auth0Settings.TokenUrl),
                         Scopes = new Dictionary<string, string>
-                {
-                    { "openid", "OpenID" },
-                    { "profile", "Profile" },
-                    { "email", "Email" }
-                }
+                        {
+                            { "openid", "OpenID" },
+                            { "profile", "Profile" },
+                            { "email", "Email" }
+                        }
                     }
                 }
             });

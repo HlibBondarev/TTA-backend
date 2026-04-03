@@ -1,8 +1,9 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using System.Security.Authentication;
+using System.Security.Claims;
 using TTA.BusinessLogic.Services;
-using TTA.BusinessLogic.Services.Api;
 using TTA.BusinessLogic.Services.DTOs;
+using TTA.WebAPI.Authorization;
 
 namespace TTA.WebAPI.Extensions;
 
@@ -12,20 +13,19 @@ public static class ControllerBaseExtensions
     /// Retrieves the unique identifier (Sub) of the current user.
     /// </summary>
     /// <param name="controllerBase">The controller instance.</param>
-    /// <param name="currentUserService">The service used to retrieve user properties from claims.</param>
-    /// <param name="ct">A token to monitor for cancellation requests.</param>
     /// <returns>A string representing the user's unique identifier.</returns>
     /// <exception cref="AuthenticationException">Thrown when the 'sub' claim is missing from the context.</exception>
-    public static async Task<string> GetUserId(
-        this ControllerBase controllerBase,
-        ICurrentUserService currentUserService,
-        CancellationToken ct = default)
+    public static string GetUserId(this ControllerBase controllerBase, Auth0Settings auth0Settings)
     {
-        var userFromClaims = await GetUserClaims(controllerBase, currentUserService, ct);
+        var userFromClaims = GetUserClaims(controllerBase, auth0Settings);
 
-        // Use the actual constant value to ensure the error message reflects the exact claim type "sub".
-        return userFromClaims.Id ?? throw new AuthenticationException(
-            $"Can not get user's claim {IdentityResourceClaimsTypes.Sub} from Context.");
+        if (userFromClaims.Id == string.Empty)
+        {
+            // Use the actual constant value to ensure the error message reflects the exact claim type "sub".
+            throw new AuthenticationException($"Can not get user's claim {IdentityResourceClaimsTypes.Sub} from Context.");
+        }
+
+        return userFromClaims.Id;
     }
 
     /// <summary>
@@ -33,27 +33,19 @@ public static class ControllerBaseExtensions
     /// </summary>
     /// <param name="controllerBase">The controller instance.</param>
     /// <param name="currentUserService">The service used to retrieve user properties from claims.</param>
-    /// <param name="ct">A token to monitor for cancellation requests.</param>
     /// <returns>A <see cref="UserFromClaimsDto"/> containing the user's information.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the Authorization header is missing or invalid.</exception>
-    /// <exception cref="AuthenticationException">Thrown when user claims cannot be retrieved from the context.</exception>
-    public static async Task<UserFromClaimsDto> GetUserClaims(
-        this ControllerBase controllerBase,
-        ICurrentUserService currentUserService,
-        CancellationToken ct = default)
+    public static UserFromClaimsDto GetUserClaims(
+        this ControllerBase controllerBase, Auth0Settings auth0Settings)
     {
-        var authorizationHeader = controllerBase.Request.Headers.Authorization.FirstOrDefault();
+        // Use the namespace from the injected settings
+        var ns = auth0Settings.Namespace;
+        var user = controllerBase.User;
 
-        // Validate that the header exists and is not just whitespace
-        if (string.IsNullOrWhiteSpace(authorizationHeader))
-        {
-            throw new InvalidOperationException("The request headers don't have a valid Authorization header.");
-        }
-
-        // Pass the CancellationToken down to the service call
-        var userFromClaims = await currentUserService.GetUserPropertiesFromClaims(authorizationHeader, ct) ??
-            throw new AuthenticationException("Can not get user's claims from Context.");
-
-        return userFromClaims;
+        return new UserFromClaimsDto
+        (
+            user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? user.FindFirst(IdentityResourceClaimsTypes.Sub)?.Value ?? string.Empty,
+            user.FindFirst($"{ns}{IdentityResourceClaimsTypes.Email}")?.Value ?? user.FindFirst(ClaimTypes.Email)?.Value ?? string.Empty,
+            user.FindFirst($"{ns}display_name")?.Value ?? user.FindFirst(ClaimTypes.Name)?.Value ?? string.Empty
+        );
     }
 }

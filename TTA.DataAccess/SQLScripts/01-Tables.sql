@@ -30,7 +30,7 @@ CREATE TABLE cities (
 CREATE TABLE users (
     id VARCHAR(64) PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
-    displayname VARCHAR(20) NOT NULL CHECK (char_length(displayname) >= 3),
+    displayname VARCHAR(50) NOT NULL CHECK (char_length(displayname) >= 3),
     createdat TIMESTAMPTZ NOT NULL -- FIXED
 );
 

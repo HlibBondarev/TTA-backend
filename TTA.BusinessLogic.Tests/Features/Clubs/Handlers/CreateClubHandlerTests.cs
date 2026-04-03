@@ -8,6 +8,9 @@ using TTA.DataAccess.Repository.Api;
 
 namespace TTA.BusinessLogic.Tests.Features.Clubs.Handlers;
 
+/// <summary>
+/// Unit tests for the CreateClubHandler to ensure correct business logic execution.
+/// </summary>
 public class CreateClubHandlerTests
 {
     private readonly Mock<IClubRepository> _repositoryMock;
@@ -25,12 +28,22 @@ public class CreateClubHandlerTests
     public async Task Handle_UserAlreadyHasClub_ThrowsConflictException()
     {
         // Arrange
-        var command = new CreateClubCommand("Test Club", Guid.NewGuid(), "auth0|123");
-        _repositoryMock.Setup(r => r.HasExistingClubOwnershipAsync(command.CreatorUserId, It.IsAny<CancellationToken>()))
+        // Updated command with all required identity parameters
+        var command = new CreateClubCommand(
+            "Test Club",
+            Guid.NewGuid(),
+            "auth0|123",
+            "test@example.com",
+            "Test User");
+
+        _repositoryMock.Setup(r => r.HasExistingClubOwnershipAsync(
+                command.CreatorUserId,
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         // Act & Assert
-        await Assert.ThrowsAsync<ConflictException>(() => _handler.Handle(command, CancellationToken.None));
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _handler.Handle(command, CancellationToken.None));
     }
 
     [Fact]
@@ -38,12 +51,26 @@ public class CreateClubHandlerTests
     {
         // Arrange
         var expectedId = Guid.NewGuid();
-        var command = new CreateClubCommand("New Club", Guid.NewGuid(), "auth0|456");
+        // Updated command construction according to the new signature
+        var command = new CreateClubCommand(
+            "New Club",
+            Guid.NewGuid(),
+            "auth0|456",
+            "new_user@example.com",
+            "New Club Owner");
 
-        _repositoryMock.Setup(r => r.HasExistingClubOwnershipAsync(command.CreatorUserId, It.IsAny<CancellationToken>()))
+        _repositoryMock.Setup(r => r.HasExistingClubOwnershipAsync(
+                command.CreatorUserId,
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
-        _repositoryMock.Setup(r => r.CreateWithOwnershipAsync(It.IsAny<Club>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        // Setup the mock to match the new repository method signature
+        _repositoryMock.Setup(r => r.CreateWithOwnershipAsync(
+                It.IsAny<Club>(),
+                command.CreatorUserId,
+                command.CreatorEmail,
+                command.CreatorDisplayName,
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedId);
 
         // Act
@@ -51,6 +78,13 @@ public class CreateClubHandlerTests
 
         // Assert
         Assert.Equal(expectedId, result);
-        _repositoryMock.Verify(r => r.CreateWithOwnershipAsync(It.IsAny<Club>(), command.CreatorUserId, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Verify that the repository was called exactly once with correct parameters
+        _repositoryMock.Verify(r => r.CreateWithOwnershipAsync(
+            It.Is<Club>(c => c.Name == command.Name && c.CityId == command.CityId),
+            command.CreatorUserId,
+            command.CreatorEmail,
+            command.CreatorDisplayName,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 }

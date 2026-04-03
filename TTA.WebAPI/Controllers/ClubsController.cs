@@ -2,11 +2,12 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 using TTA.BusinessLogic.Features.Clubs.Commands;
 using TTA.BusinessLogic.Features.Clubs.DTOs;
 using TTA.BusinessLogic.Features.Players.Commands;
 using TTA.BusinessLogic.Features.Players.DTOs;
+using TTA.WebAPI.Authorization;
+using TTA.WebAPI.Extensions;
 
 namespace TTA.WebAPI.Controllers;
 
@@ -18,15 +19,19 @@ namespace TTA.WebAPI.Controllers;
 /// </remarks>
 /// <param name="mediator">The mediator instance for dispatching commands.</param>
 /// <param name="logger">The logger instance for diagnostic information.</param>
+/// <param name="auth0Settings">The validated Auth0 configuration settings.</param>
+/// <param name="currentUserService">The service used to retrieve user properties from claims.</param>
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class ClubsController(
     IMediator mediator,
-    ILogger<ClubsController> logger) : ControllerBase
+    ILogger<ClubsController> logger,
+    Auth0Settings auth0Settings) : ControllerBase
 {
     private readonly IMediator _mediator = mediator;
     private readonly ILogger<ClubsController> _logger = logger;
+    private readonly Auth0Settings _auth0Settings = auth0Settings;
 
     /// <summary>
     /// Creates a new club and assigns the current user as the owner.
@@ -59,16 +64,33 @@ public class ClubsController(
             return BadRequest(validationResult.Errors);
         }
 
-        // Extract the Auth0 unique identifier (sub claim)
-        var userId = GetUserId();
+        var userClaims = this.GetUserClaims(_auth0Settings);
+
+        // Extracting all necessary user info for JIT user creation
+        // 1. Get User Id from custom claim
+        var userId = userClaims.Id;
         if (string.IsNullOrEmpty(userId))
         {
             _logger.LogError("Failed to extract User ID from claims for an authorized request.");
             return Unauthorized("User identifier missing from token.");
         }
+        // 2. Get Email from custom claim
+        var userEmail = userClaims.Email;
+        if (string.IsNullOrEmpty(userEmail))
+        {
+            _logger.LogError("Failed to extract User email from claims for an authorized request.");
+            return Unauthorized("User email missing from token.");
+        }
+        // 3. Get Full Name from our new custom claim
+        var userName = userClaims.Name != string.Empty ? userClaims.Name : userEmail;
 
         // Map DTO to Command and dispatch via MediatR
-        var command = new CreateClubCommand(request.Name, request.CityId, userId);
+        var command = new CreateClubCommand(
+        request.Name,
+        request.CityId,
+        userId,
+        userEmail,
+        userName);
 
         _logger.LogInformation("Dispatching CreateClubCommand for User: {UserId}.", userId);
         var result = await _mediator.Send(command);
@@ -126,16 +148,5 @@ public class ClubsController(
         var result = await _mediator.Send(command);
 
         return Ok(result);
-    }
-
-    /// <summary>
-    /// Extracts the user's unique identifier from the current security context.
-    /// </summary>
-    /// <returns>The Auth0 'sub' claim or NameIdentifier; otherwise, an empty string.</returns>
-    private string GetUserId()
-    {
-        return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-               ?? User.FindFirst("sub")?.Value
-               ?? string.Empty;
     }
 }
