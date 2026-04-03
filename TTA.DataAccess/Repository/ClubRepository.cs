@@ -47,7 +47,7 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
-    public async Task<Guid> CreateWithOwnershipAsync(Club club, string userId, CancellationToken ct)
+    public async Task<Guid> CreateWithOwnershipAsync(Club club, string userId, string userEmail, string userName, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(club);
 
@@ -59,6 +59,8 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
         parameters.Add("CityId", club.CityId);
         parameters.Add("Name", club.Name);
         parameters.Add("OwnerId", userId);
+        parameters.Add("OwnerEmail", userEmail);
+        parameters.Add("OwnerName", userName);
         parameters.Add("CreatedAt", club.CreatedAt);
 
         // Executes the atomic creation function (Clubs + AccessPolicies)

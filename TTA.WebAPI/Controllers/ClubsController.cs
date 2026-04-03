@@ -18,15 +18,18 @@ namespace TTA.WebAPI.Controllers;
 /// </remarks>
 /// <param name="mediator">The mediator instance for dispatching commands.</param>
 /// <param name="logger">The logger instance for diagnostic information.</param>
+/// <param name="auth0Settings">The validated Auth0 configuration settings.</param>
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class ClubsController(
     IMediator mediator,
-    ILogger<ClubsController> logger) : ControllerBase
+    ILogger<ClubsController> logger,
+    Auth0Settings auth0Settings) : ControllerBase
 {
     private readonly IMediator _mediator = mediator;
     private readonly ILogger<ClubsController> _logger = logger;
+    private readonly Auth0Settings _auth0Settings = auth0Settings;
 
     /// <summary>
     /// Creates a new club and assigns the current user as the owner.
@@ -59,7 +62,7 @@ public class ClubsController(
             return BadRequest(validationResult.Errors);
         }
 
-        // Extract the Auth0 unique identifier (sub claim)
+        // Extracting all necessary user info for JIT user creation
         var userId = GetUserId();
         if (string.IsNullOrEmpty(userId))
         {
@@ -67,8 +70,25 @@ public class ClubsController(
             return Unauthorized("User identifier missing from token.");
         }
 
+        // Use the namespace from the injected settings instead of a magic constant
+        var ns = _auth0Settings.Namespace;
+
+        // 1. Get Email from custom claim
+        var userEmail = User.FindFirst($"{ns}email")?.Value
+                        ?? User.FindFirst(ClaimTypes.Email)?.Value
+                        ?? string.Empty;
+        // 2. Get Full Name from our new custom claim
+        var userName = User.FindFirst($"{ns}display_name")?.Value
+                       ?? User.FindFirst(ClaimTypes.Name)?.Value
+                       ?? "User_" + userId.Split('|').Last();
+
         // Map DTO to Command and dispatch via MediatR
-        var command = new CreateClubCommand(request.Name, request.CityId, userId);
+        var command = new CreateClubCommand(
+        request.Name,
+        request.CityId,
+        userId,
+        userEmail,
+        userName);
 
         _logger.LogInformation("Dispatching CreateClubCommand for User: {UserId}.", userId);
         var result = await _mediator.Send(command);

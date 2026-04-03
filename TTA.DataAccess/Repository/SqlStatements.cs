@@ -11,7 +11,7 @@ public static class SqlStatements
         /// Name of the PostgreSQL function to get a user permission.
         /// </summary>
         public const string GetUserPermission =
-            "SELECT auth.get_user_permission(@userid, @targettype, @targetid)";
+            "SELECT auth.get_user_permission(@UserId, @TargetType, @TargetId)";
     }
 
     /// <summary>
@@ -23,13 +23,13 @@ public static class SqlStatements
         /// Name of the PostgreSQL function to create a club with ownership.
         /// </summary>
         public const string CreateClubWithOwnership =
-            "SELECT auth.create_club_with_ownership(@id, @cityid, @name, @ownerid, @createdat)";
+           "SELECT auth.create_club_with_ownership(@Id, @CityId, @Name, @OwnerId, @OwnerEmail, @OwnerName, @CreatedAt)";
 
         /// <summary>
         /// Name of the PostgreSQL function to check if a specific user owns any club.
         /// </summary>
         public const string CheckUserOwnsAnyClub =
-            "SELECT auth.check_user_owns_any_club(@userId)";
+            "SELECT auth.check_user_owns_any_club(@UserId)";
     }
 
     public static class ForPlayers

@@ -6,24 +6,31 @@ using TTA.Tests.Integration.Infrastructure;
 
 namespace TTA.Tests.Integration.Repository;
 
+/// <summary>
+/// Integration tests for ClubRepository focusing on club creation and ownership logic.
+/// </summary>
 public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(fixture)
 {
     private readonly ClubRepository _repository = new(fixture.ConnectionFactory);
 
     [Fact]
-    public async Task CreateWithOwnershipAsync_ShouldInsertClubAndPolicy_WhenUserExists()
+    public async Task CreateWithOwnershipAsync_ShouldInsertClubAndPolicy_WhenUserIsProvided()
     {
         // Arrange
-        var userId = $"auth0|test-user-{Guid.NewGuid()}";
+        // Current userId "auth0|test-user-GUID" is too long for VARCHAR(20)
+        // Shortening it to stay within 20 characters limit
+        var userId = $"auth0|{Guid.NewGuid().ToString("N")[..10]}"; // Result: auth0|1234567890 (16 chars)
+        var userEmail = "test@example.com";
+        var userName = "Test User";
+
         var clubId = Guid.NewGuid();
         var cityId = Guid.Parse("c0000000-0000-0000-0000-000000000001");
 
         const int countryId = 1;
         const int regionId = 99;
 
-        // Seed dependency chain
-        await SeedUserAsync(userId);
-        await SeedCountryAsync(countryId, "Ukraine", "UA"); // Додано код країни
+        // Seed basic geography dependencies
+        await SeedCountryAsync(countryId, "Ukraine", "UA");
         await SeedRegionAsync(regionId, "Test Region", countryId);
         await SeedCityAsync(cityId, "Test City", regionId);
 
@@ -36,7 +43,12 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         };
 
         // Act
-        var resultId = await _repository.CreateWithOwnershipAsync(club, userId, CancellationToken.None);
+        var resultId = await _repository.CreateWithOwnershipAsync(
+            club,
+            userId,
+            userEmail,
+            userName,
+            CancellationToken.None);
 
         // Assert
         resultId.Should().Be(clubId);
@@ -50,7 +62,12 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
     {
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            _repository.CreateWithOwnershipAsync(null!, "any-user", CancellationToken.None));
+            _repository.CreateWithOwnershipAsync(
+                null!,
+                "any-user",
+                "test@test.com",
+                "Test Name",
+                CancellationToken.None));
     }
 
     [Theory]
@@ -64,7 +81,12 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
 
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            _repository.CreateWithOwnershipAsync(club, invalidUserId!, CancellationToken.None));
+            _repository.CreateWithOwnershipAsync(
+                club,
+                invalidUserId!,
+                "test@test.com",
+                "Test Name",
+                CancellationToken.None));
     }
 
     [Fact]
@@ -73,6 +95,8 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         // Arrange
         var userId = $"user-{Guid.NewGuid()}";
         var clubId = Guid.NewGuid();
+
+        // We ensure the user exists but has no linked policies for the target club
         await SeedUserAsync(userId);
 
         // Act
@@ -90,6 +114,7 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         var clubId = Guid.NewGuid();
         await SeedUserAsync(userId);
 
+        // Seed a policy with 'Editor' role instead of 'FullControl' (Owner)
         await SeedAccessPolicyAsync(userId, "Club", clubId, "Editor");
 
         // Act
@@ -113,6 +138,8 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         result.Should().BeFalse();
     }
 
+    // --- Helper Methods for Data Seeding ---
+
     private async Task SeedUserAsync(string userId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -130,7 +157,6 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
-        // Додано стовпець code
         var sql = "INSERT INTO public.countries (id, name, code) VALUES (@id, @name, @code) ON CONFLICT (id) DO NOTHING";
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", countryId);

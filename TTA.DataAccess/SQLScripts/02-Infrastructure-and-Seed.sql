@@ -135,13 +135,13 @@ END $$;
 
 DO $$ 
 DECLARE 
-    v_user_id VARCHAR := 'auth0|698b956080889e5401cef7c5'; 
+    v_user_id VARCHAR := 'auth0|69cf7ec5eff8f1358a0b9ae0'; 
     v_team_id UUID := '22222222-2222-2222-2222-222222222201'; 
     v_new_club_id UUID := '11111111-1111-1111-1111-111111111110';
 BEGIN
     -- 1. Ensure user exists
     INSERT INTO public.users (id, email, displayname, createdat)
-    VALUES (v_user_id, 'user1@example.com', 'UserOne', NOW())
+    VALUES (v_user_id, 'hlib.bondarev@gmail.com', 'Hlib Bondarev', NOW())
     ON CONFLICT (id) DO NOTHING;
 
     -- 2. Existing Team Membership (for old tests)

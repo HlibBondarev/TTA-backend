@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -32,7 +33,7 @@ public abstract class BaseApiTest : BaseIntegrationTest
     /// <summary>
     /// Shared test user identifier used across integration tests.
     /// </summary>
-    protected const string TestUserId = "auth0|test-user-id";
+    public const string TestUserId = "auth0|test-user";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="BaseApiTest"/> class.
@@ -44,9 +45,23 @@ public abstract class BaseApiTest : BaseIntegrationTest
         // Defensive reset to ensure every test class starts with a known auth state
         TestAuthHandler.IsEnabled = true;
 
+        // Build configuration before the host starts to satisfy Auth0ConfigHelper requirements
+        var testConfig = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Auth0:Authority"] = "https://test.auth0.com/",
+                ["Auth0:ClientId"] = "test-client",
+                ["Auth0:Audience"] = "test-api",
+                ["Auth0:Namespace"] = "https://tta-api.com/"
+            })
+            .Build();
+
         Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");
+
+            // Inject the configuration early into the host builder
+            builder.UseConfiguration(testConfig);
 
             builder.ConfigureTestServices(services =>
             {
@@ -96,8 +111,10 @@ public class TestAuthHandler(
 
         // Use the constant to avoid drift between handler and tests
         Claim[] claims = [
-            new Claim(ClaimTypes.NameIdentifier, "auth0|test-user-id"), // Accessing const via literal or BaseApiTest.TestUserId
-            new Claim("sub", "auth0|test-user-id")
+            new Claim(ClaimTypes.NameIdentifier, BaseApiTest.TestUserId),
+            new Claim("sub", BaseApiTest.TestUserId),
+            new Claim("https://tta-api.com/email", "test@example.com"),
+            new Claim("https://tta-api.com/nickname", "TestUser")
         ];
 
         var identity = new ClaimsIdentity(claims, "TestScheme");

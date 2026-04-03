@@ -36,7 +36,6 @@ public class CreateClubHandler(
         {
             // Logging detailed info for diagnostics (server-side only)
             _logger.LogWarning("Conflict: User {UserId} attempted to create a second club.", command.CreatorUserId);
-
             // Generic message to prevent PII/ID leakage to the client
             throw new ConflictException("User already owns a club.");
         }
@@ -46,7 +45,12 @@ public class CreateClubHandler(
 
         // 3. Atomic Execution via Repository
         // Using CreateWithOwnershipAsync ensures both Club and AccessPolicy are created in one transaction
-        var resultId = await _repository.CreateWithOwnershipAsync(club, command.CreatorUserId, cancellationToken);
+        var resultId = await _repository.CreateWithOwnershipAsync(
+            club,
+            command.CreatorUserId,
+            command.CreatorEmail,
+            command.CreatorDisplayName,
+            cancellationToken);
 
         _logger.LogInformation("Club '{ClubName}' created successfully with ID {ClubId}", command.Name, resultId);
 
