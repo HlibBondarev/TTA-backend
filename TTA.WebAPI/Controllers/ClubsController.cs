@@ -7,6 +7,7 @@ using TTA.BusinessLogic.Features.Clubs.Commands;
 using TTA.BusinessLogic.Features.Clubs.DTOs;
 using TTA.BusinessLogic.Features.Players.Commands;
 using TTA.BusinessLogic.Features.Players.DTOs;
+using TTA.WebAPI.Authorization;
 
 namespace TTA.WebAPI.Controllers;
 
@@ -80,7 +81,8 @@ public class ClubsController(
         // 2. Get Full Name from our new custom claim
         var userName = User.FindFirst($"{ns}display_name")?.Value
                        ?? User.FindFirst(ClaimTypes.Name)?.Value
-                       ?? userEmail;
+                       ?? userEmail
+                       ?? "User_" + userId.Split('|').Last() ?? string.Empty;
 
         // Map DTO to Command and dispatch via MediatR
         var command = new CreateClubCommand(
