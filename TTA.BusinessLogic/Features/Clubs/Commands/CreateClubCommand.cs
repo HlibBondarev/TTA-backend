@@ -17,7 +17,7 @@ public record CreateClubCommand(
     string Name,
     Guid CityId,
     string CreatorUserId,
-    string? CreatorEmail,
+    string CreatorEmail,
     string CreatorDisplayName) : IRequest<Guid>;
 
 /// <summary>

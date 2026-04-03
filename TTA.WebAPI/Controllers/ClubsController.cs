@@ -2,12 +2,12 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 using TTA.BusinessLogic.Features.Clubs.Commands;
 using TTA.BusinessLogic.Features.Clubs.DTOs;
 using TTA.BusinessLogic.Features.Players.Commands;
 using TTA.BusinessLogic.Features.Players.DTOs;
 using TTA.WebAPI.Authorization;
+using TTA.WebAPI.Extensions;
 
 namespace TTA.WebAPI.Controllers;
 
@@ -20,6 +20,7 @@ namespace TTA.WebAPI.Controllers;
 /// <param name="mediator">The mediator instance for dispatching commands.</param>
 /// <param name="logger">The logger instance for diagnostic information.</param>
 /// <param name="auth0Settings">The validated Auth0 configuration settings.</param>
+/// <param name="currentUserService">The service used to retrieve user properties from claims.</param>
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
@@ -63,26 +64,25 @@ public class ClubsController(
             return BadRequest(validationResult.Errors);
         }
 
+        var userClaims = this.GetUserClaims(_auth0Settings);
+
         // Extracting all necessary user info for JIT user creation
-        var userId = GetUserId();
+        // 1. Get User Id from custom claim
+        var userId = userClaims.Id;
         if (string.IsNullOrEmpty(userId))
         {
             _logger.LogError("Failed to extract User ID from claims for an authorized request.");
             return Unauthorized("User identifier missing from token.");
         }
-
-        // Use the namespace from the injected settings instead of a magic constant
-        var ns = _auth0Settings.Namespace;
-
-        // 1. Get Email from custom claim
-        var userEmail = User.FindFirst($"{ns}email")?.Value
-                        ?? User.FindFirst(ClaimTypes.Email)?.Value
-                        ?? string.Empty;
-        // 2. Get Full Name from our new custom claim
-        var userName = User.FindFirst($"{ns}display_name")?.Value
-                       ?? User.FindFirst(ClaimTypes.Name)?.Value
-                       ?? userEmail
-                       ?? "User_" + userId.Split('|').Last() ?? string.Empty;
+        // 2. Get Email from custom claim
+        var userEmail = userClaims.Email;
+        if (string.IsNullOrEmpty(userEmail))
+        {
+            _logger.LogError("Failed to extract User email from claims for an authorized request.");
+            return Unauthorized("User email missing from token.");
+        }
+        // 3. Get Full Name from our new custom claim
+        var userName = userClaims.Name != string.Empty ? userClaims.Name : userEmail;
 
         // Map DTO to Command and dispatch via MediatR
         var command = new CreateClubCommand(
@@ -148,16 +148,5 @@ public class ClubsController(
         var result = await _mediator.Send(command);
 
         return Ok(result);
-    }
-
-    /// <summary>
-    /// Extracts the user's unique identifier from the current security context.
-    /// </summary>
-    /// <returns>The Auth0 'sub' claim or NameIdentifier; otherwise, an empty string.</returns>
-    private string GetUserId()
-    {
-        return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-               ?? User.FindFirst("sub")?.Value
-               ?? string.Empty;
     }
 }
