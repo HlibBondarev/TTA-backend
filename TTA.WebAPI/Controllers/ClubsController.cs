@@ -80,7 +80,7 @@ public class ClubsController(
         // 2. Get Full Name from our new custom claim
         var userName = User.FindFirst($"{ns}display_name")?.Value
                        ?? User.FindFirst(ClaimTypes.Name)?.Value
-                       ?? "User_" + userId.Split('|').Last();
+                       ?? userEmail;
 
         // Map DTO to Command and dispatch via MediatR
         var command = new CreateClubCommand(
