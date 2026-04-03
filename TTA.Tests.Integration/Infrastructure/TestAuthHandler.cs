@@ -38,7 +38,7 @@ public class TestAuthHandler(
             new Claim(ClaimTypes.NameIdentifier, BaseApiTest.TestUserId),
             new Claim("sub", BaseApiTest.TestUserId),
             new Claim("https://tta-api.com/email", "test@example.com"),
-            new Claim("https://tta-api.com/nickname", "TestUser")
+            new Claim("https://tta-api.com/display_name", "TestUser")
         ];
 
         var identity = new ClaimsIdentity(claims, "TestScheme");
