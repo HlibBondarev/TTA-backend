@@ -1,4 +1,6 @@
-﻿/// <summary>
+﻿namespace TTA.WebAPI.Authorization;
+
+/// <summary>
 /// Represents Auth0 configuration settings required for authentication and custom claim extraction.
 /// </summary>
 /// <param name="Authority">The Auth0 domain URL.</param>
