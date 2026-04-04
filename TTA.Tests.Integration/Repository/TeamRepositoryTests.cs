@@ -49,10 +49,16 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         createdTeam.Should().NotBeNull();
         createdTeam.Name.Should().Be(team.Name);
         createdTeam.Gender.Should().Be(Gender.Male);
+        // Added FK assertions
+        createdTeam.ClubId.Should().Be(clubId);
+        createdTeam.SportId.Should().Be(sportId);
 
         clubTeams.Should().ContainSingle();
         clubTeams[0].Id.Should().Be(teamId);
         clubTeams[0].MinBirthYear.Should().Be(2008);
+        // Added FK assertions for retrieved collection
+        clubTeams[0].ClubId.Should().Be(clubId);
+        clubTeams[0].SportId.Should().Be(sportId);
     }
 
     /// <summary>
@@ -77,8 +83,8 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
 
         // Assert
         result.Should().HaveCount(2);
-        result.Should().Contain(t => t.Name == "Alpha Team");
-        result.Should().Contain(t => t.Name == "Beta Team");
+        result.Should().Contain(t => t.Name == "Alpha Team" && t.ClubId == clubId && t.SportId == sportId);
+        result.Should().Contain(t => t.Name == "Beta Team" && t.ClubId == clubId && t.SportId == sportId);
     }
 
     #region Helper Methods
@@ -88,14 +94,14 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
     /// </summary>
     private async Task SeedTeamDependenciesAsync(Guid clubId, Guid sportId)
     {
-        using var conn = new NpgsqlConnection(Fixture.ConnectionFactory.CreateConnection().ConnectionString);
+        // UPDATED: Cast directly to NpgsqlConnection instead of using ConnectionString
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
         using var transaction = await conn.BeginTransactionAsync();
 
         try
         {
-            // Define cityId before using it
             var cityId = Guid.NewGuid();
 
             // 1. Seed Location & Club hierarchy
