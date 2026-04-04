@@ -95,15 +95,17 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
 
         try
         {
-            // 1. Seed Geography & Club (reusing the same logic as in PlayerRepositoryTests)
+            // Define cityId before using it
             var cityId = Guid.NewGuid();
-            await SeedCountryAsync(conn, 1, "Ukraine", "UKR");
-            await SeedRegionAsync(conn, 1, "Kyiv Region", 1);
-            await SeedCityAsync(conn, cityId, "Kyiv", 1);
-            await SeedClubAsync(conn, clubId, "Test Athletic Club", cityId);
 
-            // 2. Seed Sport (required for Team)
-            await SeedSportAsync(conn, sportId, "Football");
+            // 1. Seed Location & Club hierarchy
+            await SeedCountryAsync(conn, transaction, 1, "Ukraine", "UKR");
+            await SeedRegionAsync(conn, transaction, 1, "Kyiv Region", 1);
+            await SeedCityAsync(conn, transaction, cityId, "Kyiv", 1);
+            await SeedClubAsync(conn, transaction, clubId, "Test Athletic Club", cityId);
+
+            // 2. Seed Sport
+            await SeedSportAsync(conn, transaction, sportId, "Football");
 
             await transaction.CommitAsync();
         }
@@ -114,34 +116,34 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         }
     }
 
-    private static async Task SeedCountryAsync(NpgsqlConnection conn, int id, string name, string code)
+    private static async Task SeedCountryAsync(NpgsqlConnection conn, NpgsqlTransaction tx, int id, string name, string code)
     {
         var sql = "INSERT INTO public.countries (id, name, code) VALUES (@id, @name, @code) ON CONFLICT DO NOTHING";
-        await conn.ExecuteAsync(sql, new { id, name, code });
+        await conn.ExecuteAsync(sql, new { id, name, code }, tx);
     }
 
-    private static async Task SeedRegionAsync(NpgsqlConnection conn, int id, string name, int countryId)
+    private static async Task SeedRegionAsync(NpgsqlConnection conn, NpgsqlTransaction tx, int id, string name, int countryId)
     {
         var sql = "INSERT INTO public.regions (id, name, countryid) VALUES (@id, @name, @countryId) ON CONFLICT DO NOTHING";
-        await conn.ExecuteAsync(sql, new { id, name, countryId });
+        await conn.ExecuteAsync(sql, new { id, name, countryId }, tx);
     }
 
-    private static async Task SeedCityAsync(NpgsqlConnection conn, Guid id, string name, int regionId)
+    private static async Task SeedCityAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid id, string name, int regionId)
     {
         var sql = "INSERT INTO public.cities (id, name, regionid) VALUES (@id, @name, @regionId) ON CONFLICT DO NOTHING";
-        await conn.ExecuteAsync(sql, new { id, name, regionId });
+        await conn.ExecuteAsync(sql, new { id, name, regionId }, tx);
     }
 
-    private static async Task SeedClubAsync(NpgsqlConnection conn, Guid id, string name, Guid cityId)
+    private static async Task SeedClubAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid id, string name, Guid cityId)
     {
         var sql = "INSERT INTO public.clubs (id, name, cityid, createdat) VALUES (@id, @name, @cityId, NOW()) ON CONFLICT DO NOTHING";
-        await conn.ExecuteAsync(sql, new { id, name, cityId });
+        await conn.ExecuteAsync(sql, new { id, name, cityId }, tx);
     }
 
-    private static async Task SeedSportAsync(NpgsqlConnection conn, Guid id, string name)
+    private static async Task SeedSportAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid id, string name)
     {
         var sql = "INSERT INTO public.sports (id, name) VALUES (@id, @name) ON CONFLICT DO NOTHING";
-        await conn.ExecuteAsync(sql, new { id, name });
+        await conn.ExecuteAsync(sql, new { id, name }, tx);
     }
 
     private static Team CreateTeamModel(Guid clubId, Guid sportId, string name) => new()
