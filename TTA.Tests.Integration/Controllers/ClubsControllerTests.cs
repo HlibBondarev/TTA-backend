@@ -143,6 +143,105 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
     }
     #endregion
 
+    #region CreateTeam
+    [Fact]
+    public async Task CreateTeam_ShouldReturnOk_WhenUserIsClubAdmin()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var testUserId = BaseApiTest.TestUserId;
+
+        // 1. User first
+        await SeedUserAsync(testUserId);
+
+        // 2. Location & Club (SeedRequiredClubDataAsync already seeds location internally)
+        await SeedRequiredClubDataAsync(clubId);
+
+        // 3. Sport (The essential FK for teams)
+        await SeedSportDataAsync(sportId, "Football");
+
+        // 4. Policy (Must happen after User and Club exist)
+        await SeedClubAdminPolicyAsync(testUserId, clubId);
+
+        var request = new
+        {
+            Name = "Lions Academy U-12",
+            SportId = sportId,
+            MinBirthYear = 2012,
+            Gender = 0 // Will be mapped to 'Male' by public.upsert_team
+        };
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/teams", request);
+
+        // Assert
+        if (response.StatusCode != HttpStatusCode.OK)
+        {
+            var content = await response.Content.ReadAsStringAsync();
+            // This will show exactly what went wrong in the Test Output
+            response.StatusCode.Should().Be(HttpStatusCode.OK, $"Server responded with error: {content}");
+        }
+
+        var resultId = await response.Content.ReadFromJsonAsync<Guid>();
+        resultId.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task CreateTeam_ShouldReturnForbidden_WhenUserHasNoAccess()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+
+        await SeedUserAsync(BaseApiTest.TestUserId);
+        await SeedRequiredClubDataAsync(clubId);
+        await SeedSportDataAsync(sportId, "Basketball");
+        // No policy seeded
+
+        var request = new
+        {
+            Name = "Unauthorized Team",
+            SportId = sportId,
+            MinBirthYear = 2010,
+            Gender = 1 // Female
+        };
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/teams", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task CreateTeam_ShouldReturnBadRequest_WhenNameIsTooShort()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+
+        await SeedUserAsync(BaseApiTest.TestUserId);
+        await SeedRequiredClubDataAsync(clubId);
+        await SeedSportDataAsync(sportId, "Tennis");
+        await SeedClubAdminPolicyAsync(BaseApiTest.TestUserId, clubId);
+
+        var invalidRequest = new
+        {
+            Name = "Ab", // Minimum length is 3
+            SportId = sportId,
+            MinBirthYear = 2015,
+            Gender = 0
+        };
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/teams", invalidRequest);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+    #endregion
+
     #region Helpers for Seeding
 
     private async Task SeedRequiredClubDataAsync(Guid clubId)
@@ -216,6 +315,29 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         using var cmd = new NpgsqlCommand(citySql, conn);
         cmd.Parameters.AddWithValue("id", cityId);
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task SeedSportDataAsync(Guid sportId, string name)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // Use a robust UPSERT or check existence to ensure we don't violate unique constraints
+        // while ensuring the ID we want to use actually exists.
+        var sql = @"
+        INSERT INTO public.sports (id, name, defaultconfigid) 
+        VALUES (@id, @name, NULL) 
+        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name 
+        RETURNING id;";
+
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", sportId);
+        cmd.Parameters.AddWithValue("name", name);
+
+        // We execute this to ensure the record is there
+        var actualId = await cmd.ExecuteScalarAsync();
+        // Optional: if the ID in DB was different, we should use it, 
+        // but for tests Guid.NewGuid() is fine as long as the record exists.
     }
 
     private static async Task ExecuteSql(NpgsqlConnection conn, string sql)

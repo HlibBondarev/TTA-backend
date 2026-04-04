@@ -32,6 +32,27 @@ public static class SqlStatements
             "SELECT auth.check_user_owns_any_club(@UserId)";
     }
 
+    /// <summary>
+    /// SQL constants for Team-related database operations.
+    /// </summary>
+    public static class ForTeams
+    {
+        /// <summary>
+        /// SQL to call the upsert function and return the resulting team record.
+        /// </summary>
+        public const string UpsertTeam =
+            "SELECT * FROM public.upsert_team(@Id, @ClubId, @SportId, @Name, @MinBirthYear, @Gender, @CreatedAt)";
+
+        /// <summary>
+        /// SQL to retrieve all teams for a specific club.
+        /// </summary>
+        public const string GetTeamsByClub =
+            "SELECT * FROM public.get_teams_by_club(@p_club_id)";
+    }
+
+    /// <summary>
+    /// SQL constants for Player-related database operations.
+    /// </summary>
     public static class ForPlayers
     {
         /// <summary>

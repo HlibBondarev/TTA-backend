@@ -47,7 +47,7 @@ BEGIN
 END;$$ LANGUAGE plpgsql;
 
 -- ====================================================
--- ORGANIZATIONS & TEAMS STORED FUNCTIONS & PROCEDURES
+-- ORGANIZATIONS (CLUBS) STORED FUNCTIONS & PROCEDURES
 -- ====================================================
 
 -- 1) Atomic function to ensure user existence and create a club with ownership.
@@ -112,6 +112,59 @@ RETURNS BOOLEAN AS $$BEGIN
           AND expiresat IS NULL
     );
 END;$$ LANGUAGE plpgsql;
+
+-- ====================================================
+-- TEAM MANAGEMENT STORED FUNCTIONS & PROCEDURES
+-- ====================================================
+-- 1) Upserts a team record and returns the updated entity.
+CREATE OR REPLACE FUNCTION public.upsert_team(
+    p_id UUID,
+    p_clubid UUID,
+    p_sportid UUID,
+    p_name VARCHAR(100),
+    p_minbirthyear INT,
+    p_gender INT, -- 0 for Male, 1 for Female
+    p_createdat TIMESTAMPTZ
+)
+RETURNS SETOF public.teams AS $$
+DECLARE
+    v_gender_str VARCHAR(20);
+BEGIN
+    -- 1. Validate gender input
+    IF p_gender NOT IN (0, 1) THEN
+        RAISE EXCEPTION 'Invalid gender value: %. Expected 0 (Male) or 1 (Female).', p_gender 
+        USING ERRCODE = '22023';
+    END IF;
+
+    -- 2. Map integer to string enum
+    v_gender_str := CASE 
+        WHEN p_gender = 0 THEN 'Male'
+        WHEN p_gender = 1 THEN 'Female'
+    END;
+
+    RETURN QUERY
+    INSERT INTO public.teams (id, clubid, sportid, name, minbirthyear, gender, createdat)
+    VALUES (p_id, p_clubid, p_sportid, p_name, p_minbirthyear, v_gender_str, p_createdat)
+    ON CONFLICT (id) DO UPDATE SET
+        clubid = EXCLUDED.clubid,
+        sportid = EXCLUDED.sportid,
+        name = EXCLUDED.name,
+        minbirthyear = EXCLUDED.minbirthyear,
+        gender = EXCLUDED.gender
+    RETURNING *;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2) Retrieves all teams associated with a specific club.
+CREATE OR REPLACE FUNCTION public.get_teams_by_club(p_club_id UUID)
+RETURNS SETOF public.teams AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM public.teams 
+    WHERE clubid = p_club_id
+    ORDER BY name ASC;
+END;
+$$ LANGUAGE plpgsql;
 
 -- ====================================================
 -- PLAYERS STORED FUNCTIONS & PROCEDURES
