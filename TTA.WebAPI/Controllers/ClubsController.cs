@@ -6,6 +6,8 @@ using TTA.BusinessLogic.Features.Clubs.Commands;
 using TTA.BusinessLogic.Features.Clubs.DTOs;
 using TTA.BusinessLogic.Features.Players.Commands;
 using TTA.BusinessLogic.Features.Players.DTOs;
+using TTA.BusinessLogic.Features.Teams.Commands;
+using TTA.BusinessLogic.Features.Teams.DTOs;
 using TTA.WebAPI.Authorization;
 using TTA.WebAPI.Extensions;
 
@@ -93,6 +95,54 @@ public class ClubsController(
         userName);
 
         _logger.LogInformation("Dispatching CreateClubCommand for User: {UserId}.", userId);
+        var result = await _mediator.Send(command);
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Creates a new team within a specific club.
+    /// </summary>
+    /// <param name="clubId">The unique identifier of the club where the team is being created.</param>
+    /// <param name="request">The team creation request data.</param>
+    /// <param name="validator">The validator for the team creation request.</param>
+    /// <returns>The unique identifier of the newly created team.</returns>
+    /// <remarks>
+    /// Access is restricted to users with administrative rights ("ClubAdmin" policy) over the specified club.
+    /// </remarks>
+    /// <response code="200">Returns the unique identifier of the created team.</response>
+    /// <response code="400">If the request data is invalid.</response>
+    /// <response code="401">If the user is not authenticated.</response>
+    /// <response code="403">If the user does not have permission to manage this club.</response>
+    [HttpPost("{clubId:guid}/teams")]
+    [Authorize(Policy = "ClubAdmin")]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> CreateTeam(
+        [FromRoute] Guid clubId,
+        [FromBody] CreateTeamRequest request,
+        [FromServices] IValidator<CreateTeamRequest> validator)
+    {
+        _logger.LogInformation("Executing CreateTeam action for Club {ClubId}.", clubId);
+
+        var validationResult = await validator.ValidateAsync(request);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation failed for CreateTeamRequest in Club {ClubId}: {Errors}.",
+                clubId, validationResult.Errors);
+            return BadRequest(validationResult.Errors);
+        }
+
+        var command = new CreateTeamCommand(
+            clubId,
+            request.Name,
+            request.SportId,
+            request.MinBirthYear,
+            request.Gender);
+
+        _logger.LogInformation("Dispatching CreateTeamCommand for Club: {ClubId}.", clubId);
         var result = await _mediator.Send(command);
 
         return Ok(result);

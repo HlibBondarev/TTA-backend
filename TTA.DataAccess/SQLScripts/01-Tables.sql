@@ -69,7 +69,7 @@ FOREIGN KEY (id, defaultconfigid)
 REFERENCES sportconfigurations (sportid, id);
 
 -- ==========================================
--- 3. ORGANIZATIONS & TEAMS
+-- 3. ORGANIZATIONS (CLUBS) & TEAMS
 -- ==========================================
 
 CREATE TABLE clubs (

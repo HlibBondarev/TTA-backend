@@ -143,8 +143,97 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
     }
     #endregion
 
-    #region Helpers for Seeding
+    #region CreateTeam
+    [Fact]
+    public async Task CreateTeam_ShouldReturnOk_WhenUserIsClubAdmin()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
 
+        await SeedUserAsync(BaseApiTest.TestUserId);
+        await SeedRequiredClubDataAsync(clubId);
+
+        // Capture the canonical ID from the DB
+        sportId = await SeedSportDataAsync(sportId, "Football");
+
+        await SeedClubAdminPolicyAsync(BaseApiTest.TestUserId, clubId);
+
+        var request = new
+        {
+            Name = "Lions Academy U-12",
+            SportId = sportId, // Now this ID is guaranteed to exist in the DB
+            MinBirthYear = 2012,
+            Gender = 0
+        };
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/teams", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task CreateTeam_ShouldReturnForbidden_WhenUserHasNoAccess()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+
+        await SeedUserAsync(BaseApiTest.TestUserId);
+        await SeedRequiredClubDataAsync(clubId);
+
+        // Capture the canonical ID
+        sportId = await SeedSportDataAsync(sportId, "Basketball");
+
+        var request = new
+        {
+            Name = "Unauthorized Team",
+            SportId = sportId,
+            MinBirthYear = 2010,
+            Gender = 1
+        };
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/teams", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task CreateTeam_ShouldReturnBadRequest_WhenNameIsTooShort()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+
+        await SeedUserAsync(BaseApiTest.TestUserId);
+        await SeedRequiredClubDataAsync(clubId);
+
+        // Capture the canonical ID
+        sportId = await SeedSportDataAsync(sportId, "Tennis");
+
+        await SeedClubAdminPolicyAsync(BaseApiTest.TestUserId, clubId);
+
+        var invalidRequest = new
+        {
+            Name = "Ab",
+            SportId = sportId,
+            MinBirthYear = 2015,
+            Gender = 0
+        };
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/teams", invalidRequest);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+    #endregion
+
+    #region Helpers for Seeding
     private async Task SeedRequiredClubDataAsync(Guid clubId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -218,11 +307,40 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         await cmd.ExecuteNonQueryAsync();
     }
 
+    /// <summary>
+    /// Seeds a sport record into the database and returns its canonical ID.
+    /// This ensures tests use the correct ID even if the sport name already exists.
+    /// </summary>
+    private async Task<Guid> SeedSportDataAsync(Guid sportId, string name)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // SQL returns the ID of the inserted or existing row
+        var sql = @"
+        INSERT INTO public.sports (id, name, defaultconfigid) 
+        VALUES (@id, @name, NULL) 
+        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name 
+        RETURNING id;";
+
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", sportId);
+        cmd.Parameters.AddWithValue("name", name);
+
+        var result = await cmd.ExecuteScalarAsync();
+
+        if (result is not Guid actualId)
+        {
+            throw new InvalidOperationException($"Failed to seed sport '{name}'. Database did not return a valid Guid.");
+        }
+
+        return actualId;
+    }
+
     private static async Task ExecuteSql(NpgsqlConnection conn, string sql)
     {
         using var cmd = new NpgsqlCommand(sql, conn);
         await cmd.ExecuteNonQueryAsync();
     }
-
     #endregion
 }
