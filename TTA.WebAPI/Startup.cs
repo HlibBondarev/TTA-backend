@@ -170,8 +170,8 @@ public static class Startup
                 // Public Client ID is safe for the browser
                 options.OAuthClientId(app.Configuration["Auth0:ClientId"]);
 
-                // REMOVED: OAuthClientSecret(app.Configuration["Auth0:ClientSecret"]) 
-                // Confidential secrets must never be exposed to the browser UI.
+                // Pre-select checkboxes for the specified scopes in the authorization modal
+                options.OAuthScopes("openid", "profile", "email");
 
                 // PKCE must remain enabled to handle secure code exchange without a secret
                 options.OAuthUsePkce();
