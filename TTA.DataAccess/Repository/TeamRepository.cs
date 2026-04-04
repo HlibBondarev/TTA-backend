@@ -20,7 +20,7 @@ public class TeamRepository(IDbConnectionFactory connectionFactory)
     /// <param name="team">The team entity to persist.</param>
     /// <param name="ct">The cancellation token.</param>
     /// <returns>The persisted <see cref="Team"/> entity.</returns>
-    public async Task<Team> CreateTeamAsync(Team team, CancellationToken ct)
+    public async Task<Team> CreateTeamAsync(Team team, CancellationToken ct = default)
     {
         // Use the entity itself as the base for parameters
         var parameters = new DynamicParameters(team);

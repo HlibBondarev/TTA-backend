@@ -23,5 +23,5 @@ public interface ITeamRepository : IEntityRepositoryBase<Guid, Team>
     /// <param name="team">The team entity to persist.</param>
     /// <param name="ct">The cancellation token.</param>
     /// <returns>The persisted <see cref="Team"/> entity.</returns>
-    Task<Team> CreateTeamAsync(Team team, CancellationToken ct);
+    Task<Team> CreateTeamAsync(Team team, CancellationToken ct = default);
 }

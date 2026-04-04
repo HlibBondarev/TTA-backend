@@ -44,4 +44,44 @@ public class CreateTeamRequestValidatorTests
         var result = _validator.TestValidate(request);
         result.ShouldNotHaveAnyValidationErrors();
     }
+
+    [Fact]
+    public void ShouldHaveError_WhenNameIsLongerThan100Chars()
+    {
+        var request = new CreateTeamRequest(new string('A', 101), Guid.NewGuid(), 2010, Gender.Male);
+        var result = _validator.TestValidate(request);
+        result.ShouldHaveValidationErrorFor(x => x.Name);
+    }
+
+    [Fact]
+    public void ShouldHaveError_WhenSportIdIsEmpty()
+    {
+        var request = new CreateTeamRequest("Valid Name", Guid.Empty, 2010, Gender.Male);
+        var result = _validator.TestValidate(request);
+        result.ShouldHaveValidationErrorFor(x => x.SportId);
+    }
+
+    [Fact]
+    public void ShouldHaveError_WhenGenderIsInvalid()
+    {
+        var request = new CreateTeamRequest("Valid Name", Guid.NewGuid(), 2010, (Gender)99);
+        var result = _validator.TestValidate(request);
+        result.ShouldHaveValidationErrorFor(x => x.Gender);
+    }
+
+    [Fact]
+    public void ShouldHaveError_WhenMinBirthYearIsTooSmall()
+    {
+        var request = new CreateTeamRequest("Valid Name", Guid.NewGuid(), 1899, Gender.Male);
+        var result = _validator.TestValidate(request);
+        result.ShouldHaveValidationErrorFor(x => x.MinBirthYear);
+    }
+
+    [Fact]
+    public void ShouldNotHaveError_WhenMinBirthYearIsNull()
+    {
+        var request = new CreateTeamRequest("Valid Name", Guid.NewGuid(), null, Gender.Male);
+        var result = _validator.TestValidate(request);
+        result.ShouldNotHaveAnyValidationErrors();
+    }
 }
