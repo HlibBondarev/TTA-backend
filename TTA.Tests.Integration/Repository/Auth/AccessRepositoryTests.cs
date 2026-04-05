@@ -20,7 +20,7 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         var expectedRole = AppRole.FullControl;
 
         await SeedUserAsync(userId);
-        await SeedAccessPolicyAsync(userId, scope.ToString(), targetId, expectedRole.ToString());
+        await SeedAccessPolicyAsync(userId, scope, targetId, expectedRole);
 
         // Act
         var result = await _repository.GetUserRoleForScope(userId, scope, targetId, CancellationToken.None);
@@ -56,7 +56,7 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         var expectedRole = AppRole.FullControl; // Use FullControl from your AppRole enum
 
         await SeedUserAsync(userId);
-        await SeedAccessPolicyAsync(userId, scope.ToString(), null, expectedRole.ToString());
+        await SeedAccessPolicyAsync(userId, scope, null, expectedRole);
 
         // Act
         var result = await _repository.GetUserRoleForScope(userId, scope, null, CancellationToken.None);
@@ -78,7 +78,7 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private async Task SeedAccessPolicyAsync(string userId, string targetType, Guid? targetId, string roleName)
+    private async Task SeedAccessPolicyAsync(string userId, TargetScope targetType, Guid? targetId, AppRole role)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
@@ -89,9 +89,11 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", Guid.NewGuid());
         cmd.Parameters.AddWithValue("uid", userId);
-        cmd.Parameters.AddWithValue("tt", targetType);
+
+        // Npgsql automatically handles Enums as integers if the column is INT
+        cmd.Parameters.AddWithValue("tt", (int)targetType);
         cmd.Parameters.AddWithValue("tid", (object?)targetId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("r", roleName);
+        cmd.Parameters.AddWithValue("r", (int)role);
         cmd.Parameters.AddWithValue("dt", DateTime.UtcNow);
 
         await cmd.ExecuteNonQueryAsync();

@@ -31,18 +31,18 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
     {
         var parameters = new DynamicParameters();
         parameters.Add("UserId", userId);
-        parameters.Add("TargetType", TargetScope.Club.ToString());
+        parameters.Add("TargetType", TargetScope.Club);
         parameters.Add("TargetId", clubId);
 
-        // FIX: Change <string> to <int?> because auth.get_user_permission now RETURNS INT
+        // result is now <int?> because the SQL function returns INT (0, 1, or 2)
         var result = await ExecuteQueryInTransaction<int?>(
             SqlStatements.ForAccessPolicies.GetUserPermission,
             parameters,
             ct: ct
         );
 
-        // FIX: Compare with the enum value directly. 
         // FullControl (0) means the user owns the club.
+        // Compare with the enum value directly. 
         return result.HasValue && (AppRole)result.Value == AppRole.FullControl;
     }
 
@@ -67,6 +67,7 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
         parameters.Add("CreatedAt", club.CreatedAt);
 
         // Executes the atomic creation function (Clubs + AccessPolicies)
+        // Internal SQL logic now uses INT constants (targettype = 1, role = 0)
         return await ExecuteQueryInTransaction<Guid>(
             SqlStatements.ForClubs.CreateClubWithOwnership,
             parameters,

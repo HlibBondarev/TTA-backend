@@ -118,14 +118,14 @@ DECLARE
     v_wp_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f';
 BEGIN
     INSERT INTO teams (id, clubid, sportid, name, minbirthyear, gender, createdat) VALUES 
-    ('22222222-2222-2222-2222-222222222201', '11111111-1111-1111-1111-111111111101', v_wp_id, 'Dynamo Lviv (Men)', NULL, 'Male', NOW()),
-    ('22222222-2222-2222-2222-222222222202', '11111111-1111-1111-1111-111111111102', v_wp_id, 'SHVSM Mariupol (Men)', NULL, 'Male', NOW()),
-    ('22222222-2222-2222-2222-222222222203', '11111111-1111-1111-1111-111111111103', v_wp_id, 'NTU-KhPI - SHVSM (Men)', NULL, 'Male', NOW()),
-    ('22222222-2222-2222-2222-222222222213', '11111111-1111-1111-1111-111111111101', v_wp_id, 'Dynamo Lviv U-13 (2013)', 2013, 'Male', NOW()),
-    ('22222222-2222-2222-2222-222222222209', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv U-15 (2011)', 2011, 'Male', NOW()),
-    ('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111109', v_wp_id, 'Dynamo-Amazonky (Women)', NULL, 'Female', NOW()),
-    ('22222222-2222-2222-2222-222222222211', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv City Selection (Women)', NULL, 'Female', NOW()),
-    ('22222222-2222-2222-2222-222222222215', '11111111-1111-1111-1111-111111111110', v_wp_id, 'My super team U-15 (2011)', 2011, 'Male', NOW())
+    ('22222222-2222-2222-2222-222222222201', '11111111-1111-1111-1111-111111111101', v_wp_id, 'Dynamo Lviv (Men)', NULL, 0, NOW()), -- CHANGED: Male -> 0
+    ('22222222-2222-2222-2222-222222222202', '11111111-1111-1111-1111-111111111102', v_wp_id, 'SHVSM Mariupol (Men)', NULL, 0, NOW()), -- CHANGED: Male -> 0
+    ('22222222-2222-2222-2222-222222222203', '11111111-1111-1111-1111-111111111103', v_wp_id, 'NTU-KhPI - SHVSM (Men)', NULL, 0, NOW()), -- CHANGED: Male -> 0
+    ('22222222-2222-2222-2222-222222222213', '11111111-1111-1111-1111-111111111101', v_wp_id, 'Dynamo Lviv U-13 (2013)', 2013, 0, NOW()), -- CHANGED: Male -> 0
+    ('22222222-2222-2222-2222-222222222209', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv U-15 (2011)', 2011, 0, NOW()), -- CHANGED: Male -> 0
+    ('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111109', v_wp_id, 'Dynamo-Amazonky (Women)', NULL, 1, NOW()), -- CHANGED: Female -> 1
+    ('22222222-2222-2222-2222-222222222211', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv City Selection (Women)', NULL, 1, NOW()), -- CHANGED: Female -> 1
+    ('22222222-2222-2222-2222-222222222215', '11111111-1111-1111-1111-111111111110', v_wp_id, 'My super team U-15 (2011)', 2011, 0, NOW()) -- CHANGED: Male -> 0
     ON CONFLICT (id) DO NOTHING;
 END $$;
 
@@ -146,7 +146,7 @@ BEGIN
 
     -- 2. Existing Team Membership (for old tests)
     INSERT INTO public.teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary)
-    SELECT '99999999-9999-9999-9999-999999999901', v_user_id, v_team_id, 'HeadCoach', NOW(), true
+    SELECT '99999999-9999-9999-9999-999999999901', v_user_id, v_team_id, 0, NOW(), true -- CHANGED: HeadCoach -> 0
     WHERE NOT EXISTS (
         SELECT 1 FROM public.teammemberships 
         WHERE userid = v_user_id AND teamid = v_team_id
@@ -154,10 +154,10 @@ BEGIN
 
     -- 3. Policy for the OLD Team
     INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
-    SELECT '99999999-9999-9999-9999-999999999902', v_user_id, 'Editor', 'Team', v_team_id, NOW()
+    SELECT '99999999-9999-9999-9999-999999999902', v_user_id, 1, 2, v_team_id, NOW() -- CHANGED: Editor -> 1, Team -> 2
     WHERE NOT EXISTS (
         SELECT 1 FROM auth.accesspolicies 
-        WHERE userid = v_user_id AND targettype = 'Team' AND targetid = v_team_id
+        WHERE userid = v_user_id AND targettype = 2 AND targetid = v_team_id -- CHANGED: Team -> 2
     );
 
     -- 4. NEW: Policy for "My super club" (FullControl so you can add players)
@@ -165,14 +165,14 @@ BEGIN
     SELECT 
         '99999999-9999-9999-9999-999999999910', 
         v_user_id, 
-        'FullControl', 
-        'Club', 
+        0, -- CHANGED: FullControl -> 0
+        1, -- CHANGED: Club -> 1
         v_new_club_id, 
         NOW()
     WHERE NOT EXISTS (
         SELECT 1 FROM auth.accesspolicies 
         WHERE userid = v_user_id 
-          AND targettype = 'Club' 
+          AND targettype = 1 -- CHANGED: Club -> 1
           AND targetid = v_new_club_id
     );
 
@@ -188,11 +188,11 @@ DECLARE
     v_club_id uuid := '11111111-1111-1111-1111-111111111110';
 BEGIN
     INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES 
-    ('33333333-3333-3333-3333-333333333001', v_club_id, 'Олександр', 'Коваленко', '2011-05-15', 'Male', NOW()),
-    ('33333333-3333-3333-3333-333333333002', v_club_id, 'Максим', 'Бондар', '2011-08-22', 'Male', NOW()),
-    ('33333333-3333-3333-3333-333333333003', v_club_id, 'Артем', 'Шевченко', '2012-01-10', 'Male', NOW()),
-    ('33333333-3333-3333-3333-333333333004', v_club_id, 'Дмитро', 'Марченко', '2011-11-30', 'Male', NOW()),
-    ('33333333-3333-3333-3333-333333333005', v_club_id, 'Іван', 'Сидоренко', '2011-03-05', 'Male', NOW())
+    ('33333333-3333-3333-3333-333333333001', v_club_id, 'Олександр', 'Коваленко', '2011-05-15', 0, NOW()), -- CHANGED: Male -> 0
+    ('33333333-3333-3333-3333-333333333002', v_club_id, 'Максим', 'Бондар', '2011-08-22', 0, NOW()), -- CHANGED: Male -> 0
+    ('33333333-3333-3333-3333-333333333003', v_club_id, 'Артем', 'Шевченко', '2012-01-10', 0, NOW()), -- CHANGED: Male -> 0
+    ('33333333-3333-3333-3333-333333333004', v_club_id, 'Дмитро', 'Марченко', '2011-11-30', 0, NOW()), -- CHANGED: Male -> 0
+    ('33333333-3333-3333-3333-333333333005', v_club_id, 'Іван', 'Сидоренко', '2011-03-05', 0, NOW()) -- CHANGED: Male -> 0
     ON CONFLICT (id) DO NOTHING;
 
     RAISE NOTICE 'Seed for 5 players in "My super club" completed successfully.';
