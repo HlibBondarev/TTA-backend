@@ -14,12 +14,16 @@ public class TeamRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, Team>(connectionFactory), ITeamRepository
 {
     /// <summary>
-    /// Creates a new team or updates an existing one using a stored function.
-    /// Mapping of Gender (Enum) to the database-expected format is handled here.
+    /// Asynchronously creates or updates a team record in the database.
     /// </summary>
     /// <param name="team">The team entity to persist.</param>
-    /// <param name="ct">The cancellation token.</param>
+    /// <param name="ct">Cancellation token.</param>
     /// <returns>The persisted <see cref="Team"/> entity.</returns>
+    /// <remarks>
+    /// Calls the <see cref="SqlStatements.ForTeams.UpsertTeam"/> stored function.
+    /// Relies on Dapper to automatically map <see cref="Team"/> properties (including enums) 
+    /// to the function parameters as integers.
+    /// </remarks>
     public async Task<Team> CreateTeamAsync(Team team, CancellationToken ct = default)
     {
         // No manual parameter mapping needed. 

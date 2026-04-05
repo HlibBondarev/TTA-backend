@@ -14,12 +14,16 @@ public class PlayerRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, Player>(connectionFactory), IPlayerRepository
 {
     /// <summary>
-    /// Creates a new player or updates an existing one using a stored procedure.
-    /// Mapping of Gender (Enum) to String is handled within the database function.
+    /// Asynchronously creates or updates a player record in the database.
     /// </summary>
     /// <param name="player">The player entity to persist.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>The persisted <see cref="Player"/> entity.</returns>
+    /// <returns>The persisted <see cref="Player"/> entity as returned by the database.</returns>
+    /// <remarks>
+    /// This method executes the <see cref="SqlStatements.ForPlayers.UpsertPlayer"/> stored function.
+    /// Dapper automatically serializes the <see cref="Player.Gender"/> enum to its underlying integer value,
+    /// matching the INT column with a CHECK constraint in the database.
+    /// </remarks>
     public async Task<Player> CreatePlayerAsync(Player player, CancellationToken ct)
     {
         // No manual parameter mapping needed for Gender. 
