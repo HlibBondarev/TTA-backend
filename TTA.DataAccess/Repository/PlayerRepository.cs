@@ -22,15 +22,13 @@ public class PlayerRepository(IDbConnectionFactory connectionFactory)
     /// <returns>The persisted <see cref="Player"/> entity.</returns>
     public async Task<Player> CreatePlayerAsync(Player player, CancellationToken ct)
     {
-        // We only need to handle the Enum-to-int conversion here.
-        // DateOnly is handled globally by the DateOnlyTypeHandler we registered.
-        var parameters = new DynamicParameters(player);
-        parameters.Add("Gender", (int)player.Gender);
-
+        // No manual parameter mapping needed for Gender. 
+        // Dapper maps all properties of the 'player' object (including Enum as int)
+        // to the @parameters in SqlStatements.ForPlayers.UpsertPlayer.
         return await CreateOrUpdate(
             player,
             SqlStatements.ForPlayers.UpsertPlayer,
-            parameters,
+            new DynamicParameters(player),
             ct);
     }
 

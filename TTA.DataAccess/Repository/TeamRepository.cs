@@ -22,16 +22,13 @@ public class TeamRepository(IDbConnectionFactory connectionFactory)
     /// <returns>The persisted <see cref="Team"/> entity.</returns>
     public async Task<Team> CreateTeamAsync(Team team, CancellationToken ct = default)
     {
-        // Use the entity itself as the base for parameters
-        var parameters = new DynamicParameters(team);
-
-        // Explicitly map Gender enum to int for the PostgreSQL function parameter
-        parameters.Add("Gender", (int)team.Gender);
-
+        // No manual parameter mapping needed. 
+        // Dapper maps all properties of the 'team' object (including Enum as int)
+        // to the @parameters in SqlStatements.ForTeams.UpsertTeam.
         return await CreateOrUpdate(
             team,
             SqlStatements.ForTeams.UpsertTeam,
-            parameters,
+            new DynamicParameters(team),
             ct);
     }
 

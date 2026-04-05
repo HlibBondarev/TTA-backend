@@ -18,7 +18,7 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
     {
         var parameters = new DynamicParameters();
         parameters.Add("UserId", userId);
-        parameters.Add("TargetType", targetScope.ToString());
+        parameters.Add("TargetType", targetScope);
         parameters.Add("TargetId", targetId);
 
         // We use CommandType.Text because SqlStatements contains an explicit SELECT 

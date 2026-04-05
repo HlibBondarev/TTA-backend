@@ -8,7 +8,7 @@ CREATE TABLE countries (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL UNIQUE,
     code VARCHAR(3) NOT NULL UNIQUE,
-    createdat TIMESTAMPTZ NOT NULL DEFAULT NOW() -- FIXED
+    createdat TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE regions (
@@ -31,7 +31,7 @@ CREATE TABLE users (
     id VARCHAR(64) PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
     displayname VARCHAR(50) NOT NULL CHECK (char_length(displayname) >= 3),
-    createdat TIMESTAMPTZ NOT NULL -- FIXED
+    createdat TIMESTAMPTZ NOT NULL
 );
 
 -- ==========================================
@@ -76,7 +76,7 @@ CREATE TABLE clubs (
     id UUID PRIMARY KEY,
     cityid UUID NOT NULL REFERENCES public.cities(id),
     name VARCHAR(100) NOT NULL,
-    createdat TIMESTAMPTZ NOT NULL -- VERIFIED
+    createdat TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX ix_clubs_cityid ON clubs (cityid);
 
@@ -86,28 +86,28 @@ CREATE TABLE teams (
     sportid UUID NOT NULL REFERENCES sports(id),
     name VARCHAR(100) NOT NULL,
     minbirthyear INT NULL, 
-    gender VARCHAR(20) NOT NULL, 
-    createdat TIMESTAMPTZ NOT NULL, -- FIXED
-    CONSTRAINT chk_teams_gender CHECK (gender IN ('Male', 'Female'))
+    gender INT NOT NULL, -- 0: Male, 1: Female
+    createdat TIMESTAMPTZ NOT NULL,
+    CONSTRAINT chk_teams_gender CHECK (gender IN (0, 1))
 );
--- Indexes for teams table
+
 CREATE INDEX ix_teams_clubid ON teams (clubid);
 CREATE INDEX ix_teams_sportid ON teams (sportid);
 CREATE INDEX ix_teams_gender ON teams (gender);
--- Composite index for frequent filters by club and sport
 CREATE INDEX ix_teams_club_sport ON teams (clubid, sportid);
 
 CREATE TABLE teammemberships (
     id UUID PRIMARY KEY,
     userid VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     teamid UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    roleinteam VARCHAR(50) NOT NULL,
+    roleinteam INT NOT NULL, -- Maps to TeamRole Enum
     joinedat TIMESTAMPTZ NOT NULL,
     leftat TIMESTAMPTZ NULL,
     isprimary BOOLEAN NOT NULL,
-    -- Ensure leftat is after or equal to joinedat
     CONSTRAINT chk_teammemberships_left_after_joined 
-        CHECK (leftat IS NULL OR leftat >= joinedat)
+        CHECK (leftat IS NULL OR leftat >= joinedat),
+    -- 0:HeadCoach, 1:AssistantCoach, 2:ClubDirector, 3:TeamManager, 4:Analyst, 5:Player, 6:Captain
+    CONSTRAINT chk_teammemberships_role CHECK (roleinteam BETWEEN 0 AND 6)
 );
 
 -- ==========================================
@@ -125,7 +125,6 @@ CREATE TABLE tournaments (
     CONSTRAINT fk_tournaments_sport_config
         FOREIGN KEY (sportid, configurationid) 
         REFERENCES sportconfigurations (sportid, id),
-    -- Ensure enddate is after or equal to startdate
     CONSTRAINT chk_tournaments_end_after_start 
         CHECK (enddate IS NULL OR enddate >= startdate)
 );
@@ -135,13 +134,13 @@ CREATE TABLE matches (
     tournamentid UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
     hometeamid UUID NOT NULL REFERENCES teams(id),
     guestteamid UUID NOT NULL REFERENCES teams(id),
-    scheduledat TIMESTAMPTZ NOT NULL, -- FIXED
+    scheduledat TIMESTAMPTZ NOT NULL,
     matchnumber VARCHAR(50) NULL,
     venue VARCHAR(200) NULL,
     temperature FLOAT NULL,
     homescore INT NULL,
     guestscore INT NULL,
-    createdat TIMESTAMPTZ NOT NULL -- FIXED
+    createdat TIMESTAMPTZ NOT NULL
 );
 
 -- ==========================================
@@ -153,9 +152,10 @@ CREATE TABLE players (
     homeclubid UUID NOT NULL REFERENCES clubs(id),
     firstname VARCHAR(100) NOT NULL,
     lastname VARCHAR(100) NOT NULL,
-    birthdate DATE NOT NULL, -- Keep as DATE (no time involved)
-    gender VARCHAR(20) NOT NULL, 
-    createdat TIMESTAMPTZ NOT NULL -- FIXED
+    birthdate DATE NOT NULL,
+    gender INT NOT NULL, -- 0: Male, 1: Female
+    createdat TIMESTAMPTZ NOT NULL,
+    CONSTRAINT chk_players_gender CHECK (gender IN (0, 1))
 );
 
 CREATE TABLE playermetrics (
@@ -163,7 +163,7 @@ CREATE TABLE playermetrics (
     playerid UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
     weight FLOAT NULL,
     height FLOAT NULL,
-    measuredat TIMESTAMPTZ NOT NULL -- FIXED
+    measuredat TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE playerrosters (
@@ -194,15 +194,17 @@ CREATE TABLE eventdefinitions (
     name VARCHAR(50) NOT NULL,
     shortname VARCHAR(10) NOT NULL,
     ispositive BOOLEAN NOT NULL,
-    createdat TIMESTAMPTZ NOT NULL -- FIXED
+    createdat TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE timeanchors (
     id UUID PRIMARY KEY,
     matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
     periodnumber INT NOT NULL,
-    type VARCHAR(50) NOT NULL, 
-    timestamp TIMESTAMPTZ NOT NULL -- FIXED
+    type INT NOT NULL, -- Maps to TimeAnchorType Enum
+    timestamp TIMESTAMPTZ NOT NULL,
+    -- 0:PeriodStart, 1:PeriodEnd, 2:StoppageStart, 3:StoppageEnd
+    CONSTRAINT chk_timeanchors_type CHECK (type BETWEEN 0 AND 3)
 );
 
 CREATE TABLE gameevents (
@@ -211,10 +213,10 @@ CREATE TABLE gameevents (
     playerid UUID NULL REFERENCES players(id),
     eventdefinitionid UUID NOT NULL REFERENCES eventdefinitions(id),
     periodnumber INT NOT NULL,
-    eventtimestamp TIMESTAMPTZ NOT NULL, -- FIXED
+    eventtimestamp TIMESTAMPTZ NOT NULL,
     normalizedmatchtime INTERVAL NULL,
     isleadtogoal BOOLEAN NOT NULL DEFAULT FALSE, 
-    createdat TIMESTAMPTZ NOT NULL -- FIXED
+    createdat TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX ix_gameevents_matchid ON gameevents(matchid);
@@ -227,7 +229,6 @@ CREATE TABLE playerpresences (
     periodnumber INT NOT NULL,
     timein TIMESTAMPTZ NOT NULL,
     timeout TIMESTAMPTZ NULL,
-    -- Ensure timeout is after or equal to timein
     CONSTRAINT chk_playerpresences_timeout_after_timein 
         CHECK (timeout IS NULL OR timeout >= timein)
 );
@@ -239,34 +240,31 @@ CREATE TABLE playerpresences (
 CREATE TABLE auth.accesspolicies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
     userid VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role VARCHAR(20) NOT NULL, 
-    targettype VARCHAR(20) NOT NULL, 
+    role INT NOT NULL, -- 0: FullControl, 1: Editor, 2: Viewer
+    targettype INT NOT NULL, -- 0: Global, 1: Club, 2: Team
     targetid UUID NULL,                
     createdat TIMESTAMPTZ NOT NULL,
     expiresat TIMESTAMPTZ NULL,
     -- Constraints for data integrity
     CONSTRAINT chk_accesspolicy_role 
-        CHECK (role IN ('FullControl', 'Editor', 'Viewer')),
+        CHECK (role IN (0, 1, 2)),
     CONSTRAINT chk_accesspolicy_targettype 
-        CHECK (targettype IN ('Global', 'Club', 'Team')),
-    -- Logic: Global must have NULL targetid, others must have a value
+        CHECK (targettype IN (0, 1, 2)),
+    -- Logic: Global (0) must have NULL targetid, others (1, 2) must have a value
     CONSTRAINT chk_accesspolicy_targetid_scope_logic CHECK (
-        (targettype = 'Global' AND targetid IS NULL) OR 
-        (targettype IN ('Club', 'Team') AND targetid IS NOT NULL)
+        (targettype = 0 AND targetid IS NULL) OR 
+        (targettype IN (1, 2) AND targetid IS NOT NULL)
     ),
-    -- Explicitly named constraint with NULL-safe chronological check
     CONSTRAINT chk_accesspolicies_expires_after_created 
         CHECK (expiresat IS NULL OR expiresat >= createdat)
 );
 
--- Basic indexing for performance
 CREATE INDEX ix_accesspolicies_userid ON auth.accesspolicies(userid);
 CREATE INDEX ix_accesspolicies_scope ON auth.accesspolicies(targettype, targetid);
 
--- Partial Unique Index to enforce "One active Club Owner per User" rule
--- Aligned with Finding #10: we only care about non-expired ownership
+-- Partial Unique Index for active Club Owners
 CREATE UNIQUE INDEX uix_accesspolicies_club_owner 
 ON auth.accesspolicies (userid) 
-WHERE targettype = 'Club' 
-  AND role = 'FullControl' 
+WHERE targettype = 1 -- 1: Club
+  AND role = 0 -- 0: FullControl
   AND expiresat IS NULL;

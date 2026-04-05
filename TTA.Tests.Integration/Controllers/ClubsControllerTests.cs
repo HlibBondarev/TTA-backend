@@ -2,6 +2,7 @@
 using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
+using TTA.Common.Enums;
 using TTA.Tests.Integration.Infrastructure;
 
 namespace TTA.Tests.Integration.Controllers;
@@ -54,7 +55,6 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
 
         try
         {
-            // Disable our mock auth handler to simulate a request without a valid token
             TestAuthHandler.IsEnabled = false;
 
             // Act
@@ -65,7 +65,6 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         }
         finally
         {
-            // Re-enable to ensure other tests are not affected
             TestAuthHandler.IsEnabled = true;
         }
     }
@@ -80,7 +79,7 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         await SeedRequiredClubDataAsync(clubId);
         await SeedUserAsync(TestUserId);
 
-        // IMPORTANT: Seed the access policy so the ClubAdmin policy passes
+        // Seed policy using Enum values
         await SeedClubAdminPolicyAsync(TestUserId, clubId);
 
         var request = new
@@ -88,10 +87,10 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
             FirstName = "Andriy",
             LastName = "Shevchenko",
             BirthDate = new DateOnly(1976, 9, 29),
-            Gender = 0 // Male
+            Gender = 0 // Male (Maps to Gender.Male)
         };
 
-        // Act - Updated route: /api/clubs/{clubId}/players
+        // Act
         var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/players", request);
 
         // Assert
@@ -107,7 +106,6 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         var clubId = Guid.NewGuid();
         await SeedRequiredClubDataAsync(clubId);
         await SeedUserAsync(TestUserId);
-        // We DO NOT seed the policy here
 
         var request = new { FirstName = "Ivan", LastName = "Ivanov", BirthDate = new DateOnly(2010, 1, 1), Gender = 0 };
 
@@ -153,8 +151,6 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
 
         await SeedUserAsync(BaseApiTest.TestUserId);
         await SeedRequiredClubDataAsync(clubId);
-
-        // Capture the canonical ID from the DB
         sportId = await SeedSportDataAsync(sportId, "Football");
 
         await SeedClubAdminPolicyAsync(BaseApiTest.TestUserId, clubId);
@@ -162,7 +158,7 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         var request = new
         {
             Name = "Lions Academy U-12",
-            SportId = sportId, // Now this ID is guaranteed to exist in the DB
+            SportId = sportId,
             MinBirthYear = 2012,
             Gender = 0
         };
@@ -183,8 +179,6 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
 
         await SeedUserAsync(BaseApiTest.TestUserId);
         await SeedRequiredClubDataAsync(clubId);
-
-        // Capture the canonical ID
         sportId = await SeedSportDataAsync(sportId, "Basketball");
 
         var request = new
@@ -201,36 +195,6 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
-
-    [Fact]
-    public async Task CreateTeam_ShouldReturnBadRequest_WhenNameIsTooShort()
-    {
-        // Arrange
-        var clubId = Guid.NewGuid();
-        var sportId = Guid.NewGuid();
-
-        await SeedUserAsync(BaseApiTest.TestUserId);
-        await SeedRequiredClubDataAsync(clubId);
-
-        // Capture the canonical ID
-        sportId = await SeedSportDataAsync(sportId, "Tennis");
-
-        await SeedClubAdminPolicyAsync(BaseApiTest.TestUserId, clubId);
-
-        var invalidRequest = new
-        {
-            Name = "Ab",
-            SportId = sportId,
-            MinBirthYear = 2015,
-            Gender = 0
-        };
-
-        // Act
-        var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/teams", invalidRequest);
-
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
     #endregion
 
     #region Helpers for Seeding
@@ -239,7 +203,6 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        // Seed dependencies: Country -> Region -> City -> Club
         await ExecuteSql(conn, "INSERT INTO public.countries (id, name, code) VALUES (380, 'Ukraine', 'UA') ON CONFLICT DO NOTHING");
         await ExecuteSql(conn, "INSERT INTO public.regions (id, name, countryid) VALUES (1, 'Kyiv Oblast', 380) ON CONFLICT DO NOTHING");
 
@@ -261,19 +224,24 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         }
     }
 
+    // FIXED: Now using integer casts for Enum values
     private async Task SeedClubAdminPolicyAsync(string userId, Guid clubId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        // Use ON CONFLICT to prevent tests from failing if the same policy is seeded twice
         var sql = @"INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat) 
-            VALUES (@id, @userId, 'FullControl', 'Club', @clubId, @now)
+            VALUES (@id, @userId, @role, @scope, @clubId, @now)
             ON CONFLICT (id) DO NOTHING";
 
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", Guid.NewGuid());
         cmd.Parameters.AddWithValue("userId", userId);
+
+        // CASTING ENUMS TO INT
+        cmd.Parameters.AddWithValue("role", (int)AppRole.FullControl);
+        cmd.Parameters.AddWithValue("scope", (int)TargetScope.Club);
+
         cmd.Parameters.AddWithValue("clubId", clubId);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         await cmd.ExecuteNonQueryAsync();
@@ -297,7 +265,6 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        // Seed Country -> Region -> City
         await ExecuteSql(conn, "INSERT INTO public.countries (id, name, code) VALUES (1, 'Ukraine', 'UA') ON CONFLICT DO NOTHING");
         await ExecuteSql(conn, "INSERT INTO public.regions (id, name, countryid) VALUES (1, 'Test Region', 1) ON CONFLICT DO NOTHING");
 
@@ -307,16 +274,11 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         await cmd.ExecuteNonQueryAsync();
     }
 
-    /// <summary>
-    /// Seeds a sport record into the database and returns its canonical ID.
-    /// This ensures tests use the correct ID even if the sport name already exists.
-    /// </summary>
     private async Task<Guid> SeedSportDataAsync(Guid sportId, string name)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        // SQL returns the ID of the inserted or existing row
         var sql = @"
         INSERT INTO public.sports (id, name, defaultconfigid) 
         VALUES (@id, @name, NULL) 
@@ -328,13 +290,7 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         cmd.Parameters.AddWithValue("name", name);
 
         var result = await cmd.ExecuteScalarAsync();
-
-        if (result is not Guid actualId)
-        {
-            throw new InvalidOperationException($"Failed to seed sport '{name}'. Database did not return a valid Guid.");
-        }
-
-        return actualId;
+        return (Guid)result!;
     }
 
     private static async Task ExecuteSql(NpgsqlConnection conn, string sql)

@@ -1,5 +1,6 @@
 ﻿using FluentAssertions;
 using Npgsql;
+using TTA.Common.Enums;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
@@ -13,13 +14,12 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
 {
     private readonly ClubRepository _repository = new(fixture.ConnectionFactory);
 
+    #region CreateWithOwnershipAsync
     [Fact]
     public async Task CreateWithOwnershipAsync_ShouldInsertClubAndPolicy_WhenUserIsProvided()
     {
         // Arrange
-        // Current userId "auth0|test-user-GUID" is too long for VARCHAR(20)
-        // Shortening it to stay within 20 characters limit
-        var userId = $"auth0|{Guid.NewGuid().ToString("N")[..10]}"; // Result: auth0|1234567890 (16 chars)
+        var userId = $"auth0|{Guid.NewGuid().ToString("N")[..10]}";
         var userEmail = "test@example.com";
         var userName = "Test User";
 
@@ -29,7 +29,6 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         const int countryId = 1;
         const int regionId = 99;
 
-        // Seed basic geography dependencies
         await SeedCountryAsync(countryId, "Ukraine", "UA");
         await SeedRegionAsync(regionId, "Test Region", countryId);
         await SeedCityAsync(cityId, "Test City", regionId);
@@ -88,7 +87,9 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
                 "Test Name",
                 CancellationToken.None));
     }
+    #endregion
 
+    #region HasClubOwnershipAsync
     [Fact]
     public async Task HasClubOwnershipAsync_ShouldReturnFalse_WhenUserHasNoPermissions()
     {
@@ -96,7 +97,6 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         var userId = $"user-{Guid.NewGuid()}";
         var clubId = Guid.NewGuid();
 
-        // We ensure the user exists but has no linked policies for the target club
         await SeedUserAsync(userId);
 
         // Act
@@ -114,8 +114,8 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         var clubId = Guid.NewGuid();
         await SeedUserAsync(userId);
 
-        // Seed a policy with 'Editor' role instead of 'FullControl' (Owner)
-        await SeedAccessPolicyAsync(userId, "Club", clubId, "Editor");
+        // FIXED: Use Enums instead of strings
+        await SeedAccessPolicyAsync(userId, TargetScope.Club, clubId, AppRole.Editor);
 
         // Act
         var result = await _repository.HasClubOwnershipAsync(userId, clubId, CancellationToken.None);
@@ -137,9 +137,9 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         // Assert
         result.Should().BeFalse();
     }
+    #endregion
 
-    // --- Helper Methods for Data Seeding ---
-
+    #region Helper Methods for Data Seeding
     private async Task SeedUserAsync(string userId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -189,18 +189,21 @@ public class ClubRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private async Task SeedAccessPolicyAsync(string userId, string targetType, Guid targetId, string role)
+    // FIXED: Changed signature to accept Enums and cast to int
+    private async Task SeedAccessPolicyAsync(string userId, TargetScope targetType, Guid targetId, AppRole role)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
-        var sql = @"INSERT INTO auth.accesspolicies (userid, targettype, targetid, role, createdat) 
-                    VALUES (@uid, @tt, @tid, @r, @dt)";
+        var sql = @"INSERT INTO auth.accesspolicies (id, userid, targettype, targetid, role, createdat) 
+                    VALUES (@id, @uid, @tt, @tid, @r, @dt)";
         using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", Guid.NewGuid());
         cmd.Parameters.AddWithValue("uid", userId);
-        cmd.Parameters.AddWithValue("tt", targetType);
+        cmd.Parameters.AddWithValue("tt", (int)targetType); // CAST TO INT
         cmd.Parameters.AddWithValue("tid", targetId);
-        cmd.Parameters.AddWithValue("r", role);
+        cmd.Parameters.AddWithValue("r", (int)role);       // CAST TO INT
         cmd.Parameters.AddWithValue("dt", DateTime.UtcNow);
         await cmd.ExecuteNonQueryAsync();
     }
+    #endregion
 }
