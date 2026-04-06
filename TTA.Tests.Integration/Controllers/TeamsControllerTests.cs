@@ -98,7 +98,7 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         var response = await Client.DeleteAsync($"/api/teams/{teamId}/members/{membershipId}");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
     }
 
     /// <summary>

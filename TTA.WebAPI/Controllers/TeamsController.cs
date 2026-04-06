@@ -88,7 +88,7 @@ public class TeamsController(
     /// <response code="404">If the membership record was not found.</response>
     [HttpDelete("{teamId:guid}/members/{membershipId:guid}")]
     [Authorize(Policy = "TeamAdmin")]
-    [ProducesResponseType(typeof(bool), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -102,10 +102,11 @@ public class TeamsController(
 
         if (!result)
         {
-            return NotFound();
+            // If the membership wasn't found in THIS team, we return NotFound
+            return NotFound($"Membership {membershipId} not found in team {teamId}.");
         }
 
-        return Ok(result);
+        return NoContent();
     }
 
     /// <summary>
