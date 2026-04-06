@@ -87,6 +87,64 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         result.Should().Contain(t => t.Name == "Beta Team" && t.ClubId == clubId && t.SportId == sportId);
     }
 
+    /// <summary>
+    /// Verifies that <see cref="TeamRepository.GetByIdAsync"/> returns the correct team 
+    /// when a record with the specified ID exists in the database.
+    /// </summary>
+    [Fact]
+    public async Task GetByIdAsync_WhenTeamExists_ShouldReturnTeam()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+
+        // Seed required parent records (Country -> Region -> City -> Club AND Sport)
+        await SeedTeamDependenciesAsync(clubId, sportId);
+
+        var expectedTeam = new Team
+        {
+            Id = teamId,
+            ClubId = clubId,
+            SportId = sportId,
+            Name = "Arsenal London U-21",
+            MinBirthYear = 2003,
+            Gender = Gender.Male,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Persist the team first to ensure it can be retrieved
+        await _repository.CreateTeamAsync(expectedTeam, CancellationToken.None);
+
+        // Act
+        var result = await _repository.GetByIdAsync(teamId, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(expectedTeam.Id);
+        result.Name.Should().Be(expectedTeam.Name);
+        result.ClubId.Should().Be(expectedTeam.ClubId);
+        result.SportId.Should().Be(expectedTeam.SportId);
+        result.MinBirthYear.Should().Be(expectedTeam.MinBirthYear);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TeamRepository.GetByIdAsync"/> returns null 
+    /// when no team record is found for the provided unique identifier.
+    /// </summary>
+    [Fact]
+    public async Task GetByIdAsync_WhenTeamDoesNotExist_ShouldReturnNull()
+    {
+        // Arrange
+        var nonExistentId = Guid.NewGuid();
+
+        // Act
+        var result = await _repository.GetByIdAsync(nonExistentId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
     #region Helper Methods
 
     /// <summary>

@@ -13,17 +13,7 @@ namespace TTA.DataAccess.Repository;
 public class TeamRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, Team>(connectionFactory), ITeamRepository
 {
-    /// <summary>
-    /// Asynchronously creates or updates a team record in the database.
-    /// </summary>
-    /// <param name="team">The team entity to persist.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>The persisted <see cref="Team"/> entity.</returns>
-    /// <remarks>
-    /// Calls the <see cref="SqlStatements.ForTeams.UpsertTeam"/> stored function.
-    /// Relies on Dapper to automatically map <see cref="Team"/> properties (including enums) 
-    /// to the function parameters as integers.
-    /// </remarks>
+    /// <inheritdoc />
     public async Task<Team> CreateTeamAsync(Team team, CancellationToken ct = default)
     {
         // No manual parameter mapping needed. 
@@ -36,12 +26,7 @@ public class TeamRepository(IDbConnectionFactory connectionFactory)
             ct);
     }
 
-    /// <summary>
-    /// Retrieves all teams associated with a specific club using a stored function.
-    /// </summary>
-    /// <param name="clubId">The unique identifier of the club.</param>
-    /// <param name="ct">The cancellation token.</param>
-    /// <returns>A collection of <see cref="Team"/> entities.</returns>
+    /// <inheritdoc />
     public async Task<IEnumerable<Team>> GetByClubIdAsync(Guid clubId, CancellationToken ct = default)
     {
         var parameters = new DynamicParameters();
@@ -52,5 +37,11 @@ public class TeamRepository(IDbConnectionFactory connectionFactory)
             SqlStatements.ForTeams.GetTeamsByClub,
             parameters,
             ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<Team?> GetByIdAsync(Guid id, CancellationToken ct = default)
+    {
+        return await GetById(id, SqlStatements.ForTeams.GetTeamById, ct);
     }
 }

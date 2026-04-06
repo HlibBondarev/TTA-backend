@@ -35,6 +35,18 @@ BEGIN
     RETURN v_role;
 END;$$ LANGUAGE plpgsql;
 
+-- ==========================================
+-- GEOGRAPHY & USERS
+-- ==========================================
+
+-- 1) Retrieve a single user by ID
+
+CREATE OR REPLACE FUNCTION public.get_user_by_id(p_id TEXT)
+RETURNS SETOF public.users AS $$BEGIN
+    RETURN QUERY
+    SELECT * FROM public.users WHERE id = p_id;
+END;$$ LANGUAGE plpgsql;
+
 -- ====================================================
 -- ORGANIZATIONS (CLUBS) STORED FUNCTIONS & PROCEDURES
 -- ====================================================
@@ -102,6 +114,7 @@ END;$$ LANGUAGE plpgsql;
 -- ====================================================
 
 -- 1) Upserts a team record and returns the updated entity.
+
 CREATE OR REPLACE FUNCTION public.upsert_team(
     p_id UUID,
     p_clubid UUID,
@@ -133,6 +146,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 2) Retrieves all teams associated with a specific club.
+
 CREATE OR REPLACE FUNCTION public.get_teams_by_club(p_club_id UUID)
 RETURNS SETOF public.teams AS $$
 BEGIN
@@ -143,13 +157,111 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- 3) Retrieve a single team by ID
+
+CREATE OR REPLACE FUNCTION public.get_team_by_id(p_id UUID)
+RETURNS SETOF public.teams AS $$BEGIN
+    RETURN QUERY
+    SELECT * FROM public.teams WHERE id = p_id;
+END;$$ LANGUAGE plpgsql;
+
+-- ==========================================
+-- TEAM MEMBERSHIP STORED FUNCTIONS
+-- ==========================================
+
+-- 1) Adds or updates a team membership record.
+-- Logic: If p_is_primary is TRUE, it resets any existing primary flags for this user 
+-- across all other teams to ensure only one primary team exists at a time.
+
+CREATE OR REPLACE FUNCTION public.upsert_team_membership(
+    p_id UUID,
+    p_user_id VARCHAR(64),
+    p_team_id UUID,
+    p_role_in_team INT,
+    p_is_primary BOOLEAN
+)
+RETURNS SETOF public.teammemberships AS $$
+BEGIN
+    -- 1. Reset other primary flags if this one is set to primary
+    IF p_is_primary THEN
+        UPDATE public.teammemberships
+        SET isprimary = FALSE
+        WHERE userid = p_user_id AND isprimary = TRUE;
+    END IF;
+
+    -- 2. Perform the Upsert
+    INSERT INTO public.teammemberships (
+        id, userid, teamid, roleinteam, joinedat, leftat, isprimary
+    )
+    VALUES (
+        p_id, p_user_id, p_team_id, p_role_in_team, NOW(), NULL, p_is_primary
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        roleinteam = EXCLUDED.roleinteam,
+        isprimary = EXCLUDED.isprimary,
+        leftat = NULL; -- Reactivate if previously terminated
+
+    -- 3. Return the resulting row
+    -- Using SETOF ensures no ambiguity between table columns and return columns
+    RETURN QUERY 
+    SELECT * FROM public.teammemberships WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2) Retrieves all active members of a specific team in json-format.
+
+CREATE OR REPLACE FUNCTION public.get_team_members_json(p_team_id UUID)
+RETURNS TEXT AS $$
+BEGIN
+    RETURN (
+        SELECT COALESCE(json_agg(t), '[]'::json)::TEXT
+        FROM (
+            SELECT 
+                m.id AS "MembershipId",
+                u.id AS "UserId",
+                u.displayname AS "DisplayName",
+                u.email AS "Email",
+                m.roleinteam AS "RoleInTeam",
+                m.joinedat AS "JoinedAt",
+                m.isprimary AS "IsPrimary"
+            FROM public.teammemberships m
+            JOIN public.users u ON m.userid = u.id
+            WHERE m.teamid = p_team_id AND m.leftat IS NULL
+            ORDER BY m.joinedat DESC
+        ) t
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+-- 3) Updates the 'leftat' timestamp and resets 'isprimary' status 
+-- for a specific membership to ensure data consistency.
+CREATE OR REPLACE FUNCTION public.terminate_team_membership(
+    p_team_id UUID,
+    p_membership_id UUID
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_rows_affected INT;
+BEGIN
+    UPDATE public.teammemberships
+    SET 
+        leftat = CURRENT_TIMESTAMP,
+        isprimary = FALSE  -- Reset primary status upon termination
+    WHERE id = p_membership_id 
+      AND teamid = p_team_id 
+      AND leftat IS NULL;
+
+    GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+    RETURN v_rows_affected > 0;
+END;$$ LANGUAGE plpgsql;
+
 -- ====================================================
 -- PLAYERS STORED FUNCTIONS & PROCEDURES
 -- ====================================================
 
 -- 1) Retrieve a single player by ID
 
-CREATE OR REPLACE FUNCTION get_player_by_id(p_id UUID)
+CREATE OR REPLACE FUNCTION public.get_player_by_id(p_id UUID)
 RETURNS SETOF public.players AS $$BEGIN
     RETURN QUERY
     SELECT * FROM public.players WHERE id = p_id;
@@ -157,7 +269,7 @@ END;$$ LANGUAGE plpgsql;
 
 -- 2) Upsert function for players: inserts a new player or updates existing one based on ID.
 
-CREATE OR REPLACE FUNCTION upsert_player(
+CREATE OR REPLACE FUNCTION public.upsert_player(
     p_id UUID,
     p_homeclubid UUID,
     p_firstname VARCHAR(100),
@@ -188,7 +300,7 @@ END;$$ LANGUAGE plpgsql;
 
 -- 3) Retrieves all players associated with a specific club.
 
-CREATE OR REPLACE FUNCTION get_players_by_club(p_club_id UUID)
+CREATE OR REPLACE FUNCTION public.get_players_by_club(p_club_id UUID)
 RETURNS SETOF public.players AS $$BEGIN
     RETURN QUERY
     SELECT * FROM public.players 

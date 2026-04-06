@@ -109,6 +109,12 @@ CREATE TABLE teammemberships (
     -- 0:HeadCoach, 1:AssistantCoach, 2:ClubDirector, 3:TeamManager, 4:Analyst, 5:Player, 6:Captain
     CONSTRAINT chk_teammemberships_role CHECK (roleinteam BETWEEN 0 AND 6)
 );
+-- Create a partial unique index to ensure a user has ONLY ONE active primary membership.
+-- This prevents race conditions where a user could end up with multiple isprimary=TRUE 
+-- records across different teams.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_teammemberships_active_primary_per_user 
+ON teammemberships (userid) 
+WHERE (isprimary = TRUE AND leftat IS NULL);
 
 -- ==========================================
 -- 4. TOURNAMENTS & MATCHES

@@ -10,6 +10,14 @@ namespace TTA.DataAccess.Repository.Api;
 public interface ITeamRepository : IEntityRepositoryBase<Guid, Team>
 {
     /// <summary>
+    /// Persists a new team or updates an existing one in the database.
+    /// </summary>
+    /// <param name="team">The team entity to persist.</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>The persisted <see cref="Team"/> entity.</returns>
+    Task<Team> CreateTeamAsync(Team team, CancellationToken ct = default);
+
+    /// <summary>
     /// Retrieves all teams associated with a specific club.
     /// </summary>
     /// <param name="clubId">The unique identifier of the club.</param>
@@ -18,10 +26,10 @@ public interface ITeamRepository : IEntityRepositoryBase<Guid, Team>
     Task<IEnumerable<Team>> GetByClubIdAsync(Guid clubId, CancellationToken ct = default);
 
     /// <summary>
-    /// Persists a new team or updates an existing one in the database.
+    /// Retrieves the team associated with a specific id.
     /// </summary>
-    /// <param name="team">The team entity to persist.</param>
+    /// <param name="id">The unique identifier of the team.</param>
     /// <param name="ct">The cancellation token.</param>
-    /// <returns>The persisted <see cref="Team"/> entity.</returns>
-    Task<Team> CreateTeamAsync(Team team, CancellationToken ct = default);
+    /// <returns>The <see cref="Team"/> with a specific id if found; otherwise, null.</returns>
+    Task<Team?> GetByIdAsync(Guid id, CancellationToken ct = default);
 }
