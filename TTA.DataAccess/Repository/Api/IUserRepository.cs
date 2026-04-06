@@ -4,7 +4,7 @@ using TTA.DataAccess.Repository.Base;
 namespace TTA.DataAccess.Repository.Api;
 
 /// <summary>
-/// Defines data access contract for Player entities.
+/// Defines data access contract for User entities.
 /// </summary>
 public interface IUserRepository : IEntityRepositoryBase<string, User>
 {

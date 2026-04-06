@@ -30,6 +30,6 @@ public interface ITeamRepository : IEntityRepositoryBase<Guid, Team>
     /// </summary>
     /// <param name="id">The unique identifier of the team.</param>
     /// <param name="ct">The cancellation token.</param>
-    /// <returns>The <see cref="Team"/>with a specific id if found; otherwise, null.</returns>
+    /// <returns>The <see cref="Team"/> with a specific id if found; otherwise, null.</returns>
     Task<Team?> GetByIdAsync(Guid id, CancellationToken ct = default);
 }
