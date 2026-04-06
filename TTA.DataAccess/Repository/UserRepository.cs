@@ -6,7 +6,7 @@ namespace TTA.DataAccess.Repository;
 
 /// <summary>
 /// Repository for managing User entities in PostgreSQL.
-/// Inherits from <see cref="EntityRepositoryBase{string, Player}"/> for common CRUD operations.
+/// Inherits from <see cref="EntityRepositoryBase{string, User}"/> for common CRUD operations.
 /// </summary>
 /// <param name="connectionFactory">The factory to create database connections.</param>
 public class UserRepository(IDbConnectionFactory connectionFactory)
