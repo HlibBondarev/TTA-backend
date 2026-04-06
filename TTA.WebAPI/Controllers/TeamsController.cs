@@ -35,7 +35,7 @@ public class TeamsController(
     /// <param name="validator">The request validator.</param>
     /// <returns>The unique identifier of the created membership.</returns>
     /// <remarks>
-    /// Access is restricted to users with administrative rights ("ClubAdmin" policy) over the specified club.
+    /// Access is restricted to users with administrative rights ("TeamAdmin" policy) over the specified club.
     /// </remarks>
     /// <response code="200">Returns the unique identifier of the created team.</response>
     /// <response code="400">If the request data is invalid.</response>
@@ -80,7 +80,7 @@ public class TeamsController(
     /// <returns>True if the operation was successful.</returns>
     /// <remarks>
     /// This is a soft-delete operation that sets the 'LeftAt' timestamp.
-    /// Access is restricted to users with administrative rights ("ClubAdmin" policy).
+    /// Access is restricted to users with administrative rights ("TeamAdmin" policy).
     /// </remarks>
     /// <response code="200">If the membership was successfully terminated.</response>
     /// <response code="401">If the user is not authenticated.</response>
