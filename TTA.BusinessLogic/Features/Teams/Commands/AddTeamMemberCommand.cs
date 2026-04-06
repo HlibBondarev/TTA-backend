@@ -29,7 +29,7 @@ public static class AddTeamMemberCommandExtensions
         JoinedAt = DateTime.UtcNow
     };
 
-    // <summary>
+    /// <summary>
     /// Maps a collection of AddTeamMemberCommand to a list of TeamMembership entities.
     /// </summary>
     /// <param name="list">Collection of commands.</param>

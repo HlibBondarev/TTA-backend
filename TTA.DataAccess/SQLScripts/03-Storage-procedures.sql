@@ -233,6 +233,28 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- 3) Updates the 'leftat' timestamp and resets 'isprimary' status 
+-- for a specific membership to ensure data consistency.
+CREATE OR REPLACE FUNCTION public.terminate_team_membership(
+    p_team_id UUID,
+    p_membership_id UUID
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_rows_affected INT;
+BEGIN
+    UPDATE public.teammemberships
+    SET 
+        leftat = CURRENT_TIMESTAMP,
+        isprimary = FALSE  -- Reset primary status upon termination
+    WHERE id = p_membership_id 
+      AND teamid = p_team_id 
+      AND leftat IS NULL;
+
+    GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+    RETURN v_rows_affected > 0;
+END;$$ LANGUAGE plpgsql;
+
 -- ====================================================
 -- PLAYERS STORED FUNCTIONS & PROCEDURES
 -- ====================================================

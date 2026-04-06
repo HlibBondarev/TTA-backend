@@ -21,10 +21,11 @@ public interface ITeamMembershipRepository : IEntityRepositoryBase<Guid, TeamMem
     /// Terminates an active membership by setting the departure date and resetting the primary flag.
     /// Utilizes a soft-delete approach via an UPDATE statement.
     /// </summary>
+    /// <param name="teamId">The unique identifier of the team.</param>
     /// <param name="membershipId">The unique identifier of the membership to terminate.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if the membership was successfully terminated; otherwise, <c>false</c>.</returns>
-    Task<bool> TerminateMembershipAsync(Guid membershipId, CancellationToken ct = default);
+    Task<bool> TerminateMembershipAsync(Guid teamId, Guid membershipId, CancellationToken ct = default);
 
     /// <summary>
     /// Retrieves all active team members as a JSON string for flexible DTO mapping.

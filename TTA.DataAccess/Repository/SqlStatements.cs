@@ -80,11 +80,10 @@ public static class SqlStatements
             "SELECT * FROM public.upsert_team_membership(@Id, @UserId, @TeamId, @RoleInTeam, @IsPrimary)";
 
         /// <summary>
-        /// SQL to soft-delete a membership by setting leftat and isprimary fields.
-        /// Only affects active memberships (where leftat is NULL).
+        /// SQL to call the termination function with team-scoped validation.
         /// </summary>
         public const string TerminateMembership =
-            "UPDATE public.teammemberships SET leftat = NOW(), isprimary = FALSE WHERE id = @p_id AND leftat IS NULL";
+            "SELECT public.terminate_team_membership(@p_team_id, @p_membership_id)";
 
         /// <summary>
         /// SQL to retrieve active team members with user details in JSON format.

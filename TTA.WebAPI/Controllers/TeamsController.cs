@@ -97,7 +97,7 @@ public class TeamsController(
         _logger.LogInformation("Executing TerminateMember action for Membership {MembershipId} in Team {TeamId}.",
             membershipId, teamId);
 
-        var command = new TerminateMembershipCommand(membershipId);
+        var command = new TerminateMembershipCommand(teamId, membershipId);
         var result = await _mediator.Send(command);
 
         if (!result)

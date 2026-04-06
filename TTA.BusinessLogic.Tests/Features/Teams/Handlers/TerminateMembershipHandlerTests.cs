@@ -7,7 +7,7 @@ using TTA.DataAccess.Repository.Api;
 namespace TTA.BusinessLogic.Tests.Features.Teams.Handlers;
 
 /// <summary>
-/// Unit tests for the <see cref="TerminateMembershipHandler"/>.
+/// Unit tests for the <see cref="TerminateMembershipHandler"/>, ensuring scoped termination logic.
 /// </summary>
 public class TerminateMembershipHandlerTests
 {
@@ -24,17 +24,18 @@ public class TerminateMembershipHandlerTests
 
     /// <summary>
     /// Verifies that the handler returns <c>true</c> and logs both the attempt and the success messages 
-    /// when the repository successfully terminates a membership.
+    /// when the repository successfully terminates a membership scoped to a specific team.
     /// </summary>
     [Fact]
     public async Task Handle_MembershipExists_ShouldReturnTrueAndLogInformation()
     {
         // Arrange
+        var teamId = Guid.NewGuid();
         var membershipId = Guid.NewGuid();
-        var command = new TerminateMembershipCommand(membershipId);
+        var command = new TerminateMembershipCommand(teamId, membershipId);
 
         _membershipRepoMock
-            .Setup(x => x.TerminateMembershipAsync(membershipId, It.IsAny<CancellationToken>()))
+            .Setup(x => x.TerminateMembershipAsync(teamId, membershipId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         // Act
@@ -43,10 +44,11 @@ public class TerminateMembershipHandlerTests
         // Assert
         Assert.True(result);
 
-        _membershipRepoMock.Verify(x => x.TerminateMembershipAsync(membershipId, It.IsAny<CancellationToken>()),
+        // Verify repository call with both scoped IDs
+        _membershipRepoMock.Verify(x => x.TerminateMembershipAsync(teamId, membershipId, It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // 1. Verify the "Attempting" log (First log in the handler)
+        // Verify "Attempting" log includes mention of team or membership
         _loggerMock.Verify(
             x => x.Log(
                 LogLevel.Information,
@@ -56,7 +58,7 @@ public class TerminateMembershipHandlerTests
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
 
-        // 2. Verify the "Success" log (Second log in the handler)
+        // Verify "Success" log
         _loggerMock.Verify(
             x => x.Log(
                 LogLevel.Information,
@@ -69,17 +71,18 @@ public class TerminateMembershipHandlerTests
 
     /// <summary>
     /// Verifies that the handler returns <c>false</c> and logs a warning message 
-    /// when the membership ID is not found or is already terminated.
+    /// when the membership ID is not found within the specified team context.
     /// </summary>
     [Fact]
     public async Task Handle_MembershipNotFound_ShouldReturnFalseAndLogWarning()
     {
         // Arrange
+        var teamId = Guid.NewGuid();
         var membershipId = Guid.NewGuid();
-        var command = new TerminateMembershipCommand(membershipId);
+        var command = new TerminateMembershipCommand(teamId, membershipId);
 
         _membershipRepoMock
-            .Setup(x => x.TerminateMembershipAsync(membershipId, It.IsAny<CancellationToken>()))
+            .Setup(x => x.TerminateMembershipAsync(teamId, membershipId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         // Act
@@ -88,6 +91,7 @@ public class TerminateMembershipHandlerTests
         // Assert
         Assert.False(result);
 
+        // Verify warning log message
         _loggerMock.Verify(
             x => x.Log(
                 LogLevel.Warning,

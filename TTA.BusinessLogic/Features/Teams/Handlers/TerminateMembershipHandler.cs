@@ -25,7 +25,7 @@ public class TerminateMembershipHandler(
     {
         _logger.LogInformation("Attempting to terminate membership {MembershipId}", command.MembershipId);
 
-        var deleted = await _repository.TerminateMembershipAsync(command.MembershipId, cancellationToken);
+        var deleted = await _repository.TerminateMembershipAsync(command.TeamId, command.MembershipId, cancellationToken);
 
         if (deleted)
         {

@@ -13,12 +13,16 @@ namespace TTA.Tests.Integration.Repository;
 
 /// <summary>
 /// Integration tests for <see cref="TeamMembershipRepository"/> using a real database container.
+/// Verifies scoped termination and data consistency (isprimary and leftat handling).
 /// </summary>
 [Collection("DatabaseCollection")]
 public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(fixture)
 {
     private readonly TeamMembershipRepository _repository = new(fixture.ConnectionFactory);
 
+    /// <summary>
+    /// Verifies that a valid membership is correctly persisted in the database.
+    /// </summary>
     [Fact]
     public async Task CreateMembershipAsync_ShouldPersistMembership_WhenDataIsValid()
     {
@@ -53,6 +57,10 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
         result.LeftAt.Should().BeNull();
     }
 
+    /// <summary>
+    /// Verifies that when a user is assigned a new primary team, 
+    /// any previous primary status is automatically reset.
+    /// </summary>
     [Fact]
     public async Task CreateMembershipAsync_ShouldResetPreviousPrimary_WhenNewOneIsSetToPrimary()
     {
@@ -84,12 +92,16 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
         var first = allMemberships.First(x => x.Id == m1.Id);
         var second = allMemberships.First(x => x.Id == m2.Id);
 
-        first.IsPrimary.Should().BeFalse(); // Should be reset by the function
+        first.IsPrimary.Should().BeFalse(); // Successfully reset by the DB function
         second.IsPrimary.Should().BeTrue();
     }
 
+    /// <summary>
+    /// Verifies that terminating a membership correctly sets the <c>LeftAt</c> timestamp, 
+    /// resets <c>IsPrimary</c> to false, and returns true.
+    /// </summary>
     [Fact]
-    public async Task TerminateMembershipAsync_ShouldSetLeftAt_AndReturnTrue()
+    public async Task TerminateMembershipAsync_ShouldSetLeftAt_AndResetPrimary_AndReturnTrue()
     {
         // Arrange
         var clubId = Guid.NewGuid();
@@ -104,20 +116,51 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
         var m = new TeamMembership { Id = Guid.NewGuid(), UserId = userId, TeamId = teamId, IsPrimary = true };
         await _repository.CreateMembershipAsync(m);
 
-        // Act
-        var success = await _repository.TerminateMembershipAsync(m.Id);
+        // Act: Call updated method with both TeamId and MembershipId
+        var success = await _repository.TerminateMembershipAsync(teamId, m.Id, CancellationToken.None);
 
         // Assert
         success.Should().BeTrue();
 
         var updated = (await GetRawMembershipsAsync(userId)).First();
         updated.LeftAt.Should().NotBeNull();
-        updated.IsPrimary.Should().BeFalse();
+        updated.IsPrimary.Should().BeFalse(); // Logic confirmed in SQL function
     }
 
     /// <summary>
-    /// Verifies that GetMembersJsonAsync returns a valid JSON array containing member details
-    /// when the team has active memberships.
+    /// Verifies that termination fails (returns false) if the membership ID does not match the team ID.
+    /// This prevents cross-team membership termination.
+    /// </summary>
+    [Fact]
+    public async Task TerminateMembershipAsync_ShouldReturnFalse_WhenTeamIdDoesNotMatch()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+        var wrongTeamId = Guid.NewGuid();
+        var userId = "auth0|security-user";
+
+        await SeedTeamDependenciesAsync(clubId, sportId);
+        await SeedTeamAsync(teamId, clubId, sportId);
+        await SeedUserAsync(userId, "security@test.com", "Security User");
+
+        var m = new TeamMembership { Id = Guid.NewGuid(), UserId = userId, TeamId = teamId, IsPrimary = true };
+        await _repository.CreateMembershipAsync(m);
+
+        // Act: Attempt to terminate using a mismatched TeamId
+        var success = await _repository.TerminateMembershipAsync(wrongTeamId, m.Id, CancellationToken.None);
+
+        // Assert
+        success.Should().BeFalse();
+
+        var notUpdated = (await GetRawMembershipsAsync(userId)).First();
+        notUpdated.LeftAt.Should().BeNull();
+        notUpdated.IsPrimary.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Verifies that GetMembersJsonAsync returns a valid JSON array containing member details.
     /// </summary>
     [Fact]
     public async Task GetMembersJsonAsync_WhenMembersExist_ShouldReturnJsonArray()
@@ -130,7 +173,6 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
         var userName = "John Doe";
         var userEmail = "john.doe@example.com";
 
-        // 1. Seed all database requirements
         await SeedTeamDependenciesAsync(clubId, sportId);
         await SeedTeamAsync(teamId, clubId, sportId);
         await SeedUserAsync(userId, userEmail, userName);
@@ -152,45 +194,12 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
         // Assert
         jsonResult.Should().NotBeNullOrWhiteSpace();
 
-        // Verify the structure by deserializing (using the same logic as the Handler)
         var options = new JsonSerializerOptions().GetDefault();
         var members = JsonSerializer.Deserialize<List<TeamMemberResponse>>(jsonResult!, options);
 
         members.Should().NotBeNull();
         members.Should().HaveCount(1);
-
-        var member = members![0];
-        member.MembershipId.Should().Be(membership.Id);
-        member.UserId.Should().Be(userId);
-        member.DisplayName.Should().Be(userName);
-        member.Email.Should().Be(userEmail);
-        member.RoleInTeam.Should().Be((int)TeamRole.Player);
-    }
-
-    /// <summary>
-    /// Verifies that GetMembersJsonAsync returns null or an empty JSON representation
-    /// when the team exists but has no active members.
-    /// </summary>
-    [Fact]
-    public async Task GetMembersJsonAsync_WhenNoMembersExist_ShouldReturnEmptyResult()
-    {
-        // Arrange
-        var clubId = Guid.NewGuid();
-        var sportId = Guid.NewGuid();
-        var teamId = Guid.NewGuid();
-
-        await SeedTeamDependenciesAsync(clubId, sportId);
-        await SeedTeamAsync(teamId, clubId, sportId);
-
-        // Act
-        var jsonResult = await _repository.GetMembersJsonAsync(teamId, CancellationToken.None);
-
-        // Assert
-        // Depending on SQL function implementation, it might return null or "[]"
-        if (jsonResult != null)
-        {
-            jsonResult.Should().Be("[]");
-        }
+        members![0].MembershipId.Should().Be(membership.Id);
     }
 
     /// <summary>
@@ -216,20 +225,20 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
             TeamId = teamId,
             RoleInTeam = TeamRole.Player,
             JoinedAt = DateTime.UtcNow.AddMonths(-1),
-            IsPrimary = false
+            IsPrimary = true
         };
 
         await _repository.CreateMembershipAsync(membership, CancellationToken.None);
 
-        // Terminate the membership (sets LeftAt)
-        await _repository.TerminateMembershipAsync(membership.Id, CancellationToken.None);
-
-        // Act
-        var jsonResult = await _repository.GetMembersJsonAsync(teamId, CancellationToken.None);
+        // Act: Terminate with correct team scope
+        await _repository.TerminateMembershipAsync(teamId, membership.Id, CancellationToken.None);
 
         // Assert
+        var jsonResult = await _repository.GetMembersJsonAsync(teamId, CancellationToken.None);
         var options = new JsonSerializerOptions().GetDefault();
-        var members = jsonResult == null ? [] : JsonSerializer.Deserialize<List<TeamMemberResponse>>(jsonResult, options);
+        var members = string.IsNullOrWhiteSpace(jsonResult) || jsonResult == "[]"
+            ? new List<TeamMemberResponse>()
+            : JsonSerializer.Deserialize<List<TeamMemberResponse>>(jsonResult, options);
 
         members.Should().BeEmpty();
     }

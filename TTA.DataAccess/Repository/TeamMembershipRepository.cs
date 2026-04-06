@@ -25,13 +25,16 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
-    public async Task<bool> TerminateMembershipAsync(Guid membershipId, CancellationToken ct = default)
+    public async Task<bool> TerminateMembershipAsync(Guid teamId, Guid membershipId, CancellationToken ct = default)
     {
-        // Using the base Delete method to perform a Soft Delete (UPDATE) within a transaction.
-        // It returns true if affectedRows > 0, indicating a successful termination.
-        return await Delete(
-            membershipId,
+        var parameters = new DynamicParameters();
+        parameters.Add("p_team_id", teamId);
+        parameters.Add("p_membership_id", membershipId);
+
+        // Using ExecuteQueryInTransaction to get the boolean result from the function
+        return await ExecuteQueryInTransaction<bool>(
             SqlStatements.ForTeamMemberships.TerminateMembership,
+            parameters,
             ct);
     }
 
