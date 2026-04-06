@@ -24,16 +24,16 @@ public class AddTeamMemberHandler(
     /// Validates dependencies and persists the new team membership.
     /// </summary>
     /// <param name="command">The command containing membership details.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The unique identifier of the created membership.</returns>
     /// <exception cref="NotFoundException">Thrown when the team or user does not exist.</exception>
-    public async Task<Guid> Handle(AddTeamMemberCommand command, CancellationToken ct)
+    public async Task<Guid> Handle(AddTeamMemberCommand command, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Processing AddTeamMemberCommand for User: {UserId}, Team: {TeamId}",
             command.UserId, command.TeamId);
 
         // 1. Validate Team existence
-        var team = await _teamRepository.GetByIdAsync(command.TeamId, ct);
+        var team = await _teamRepository.GetByIdAsync(command.TeamId, cancellationToken);
         if (team == null)
         {
             _logger.LogWarning("AddMember failed: Team {TeamId} not found.", command.TeamId);
@@ -41,7 +41,7 @@ public class AddTeamMemberHandler(
         }
 
         // 2. Validate User existence
-        var user = await _userRepository.GetByIdAsync(command.UserId, ct);
+        var user = await _userRepository.GetByIdAsync(command.UserId, cancellationToken);
         if (user == null)
         {
             _logger.LogWarning("AddMember failed: User {UserId} not found.", command.UserId);
@@ -50,7 +50,7 @@ public class AddTeamMemberHandler(
 
         // 3. Map and Persist
         var membership = command.ToModel();
-        var result = await _membershipRepository.CreateMembershipAsync(membership, ct);
+        var result = await _membershipRepository.CreateMembershipAsync(membership, cancellationToken);
 
         _logger.LogInformation("Successfully persisted membership with ID: {MembershipId}", result.Id);
 

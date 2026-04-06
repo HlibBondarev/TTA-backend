@@ -6,7 +6,6 @@ using TTA.BusinessLogic.Features.Teams.Commands;
 using TTA.BusinessLogic.Features.Teams.DTOs;
 using TTA.BusinessLogic.Features.Teams.Queries;
 using TTA.DataAccess.Models;
-using TTA.WebAPI.Authorization;
 
 namespace TTA.WebAPI.Controllers;
 
@@ -18,18 +17,15 @@ namespace TTA.WebAPI.Controllers;
 /// </remarks>
 /// <param name="mediator">The mediator instance for dispatching commands.</param>
 /// <param name="logger">The logger instance for diagnostic information.</param>
-/// <param name="auth0Settings">The validated Auth0 configuration settings.</param>
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class TeamsController(
     IMediator mediator,
-    ILogger<TeamsController> logger,
-    Auth0Settings auth0Settings) : ControllerBase
+    ILogger<TeamsController> logger) : ControllerBase
 {
     private readonly IMediator _mediator = mediator;
     private readonly ILogger<TeamsController> _logger = logger;
-    private readonly Auth0Settings _auth0Settings = auth0Settings;
 
     /// <summary>
     /// Adds a new member to a specific team.

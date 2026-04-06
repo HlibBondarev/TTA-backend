@@ -25,16 +25,16 @@ public class GetTeamMembersHandler(
     /// Validates team existence and returns a list of members mapped from a JSON string.
     /// </summary>
     /// <param name="request">The query containing TeamId.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A list of <see cref="TeamMemberResponse"/>.</returns>
     /// <exception cref="NotFoundException">Thrown when the team does not exist.</exception>
-    public async Task<IEnumerable<TeamMemberResponse>> Handle(GetTeamMembersQuery request, CancellationToken ct)
+    public async Task<IEnumerable<TeamMemberResponse>> Handle(GetTeamMembersQuery request, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Validating existence of Team {TeamId} before member retrieval.", request.TeamId);
 
         // 1. Validate resource existence
         // Using TeamRepository.GetByIdAsync inherited from EntityRepositoryBase
-        var team = await _teamRepository.GetByIdAsync(request.TeamId, ct);
+        var team = await _teamRepository.GetByIdAsync(request.TeamId, cancellationToken);
         if (team == null)
         {
             _logger.LogWarning("Member retrieval failed: Team {TeamId} not found.", request.TeamId);
@@ -42,7 +42,7 @@ public class GetTeamMembersHandler(
         }
 
         // 2. Fetch raw JSON from repository using the SQL function
-        var json = await _membershipRepository.GetMembersJsonAsync(request.TeamId, ct);
+        var json = await _membershipRepository.GetMembersJsonAsync(request.TeamId, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(json))
         {
