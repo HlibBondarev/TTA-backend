@@ -18,10 +18,9 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
     {
         // Dapper automatically maps TeamMembership properties to @parameters
         return await CreateOrUpdate(
-            membership,
-            SqlStatements.ForTeamMemberships.UpsertMembership,
-            new DynamicParameters(membership),
-            ct);
+            entity: membership,
+            sqlText: SqlStatements.ForTeamMemberships.UpsertMembership,
+            ct: ct);
     }
 
     /// <inheritdoc />
