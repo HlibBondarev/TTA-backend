@@ -243,6 +243,30 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
         members.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// Verifies that GetMembersJsonAsync returns an empty JSON array representation
+    /// when the team exists but has no active members, enforcing the strict API contract.
+    /// </summary>
+    [Fact]
+    public async Task GetMembersJsonAsync_WhenNoMembersExist_ShouldReturnEmptyResult()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+
+        await SeedTeamDependenciesAsync(clubId, sportId);
+        await SeedTeamAsync(teamId, clubId, sportId);
+
+        // Act
+        var jsonResult = await _repository.GetMembersJsonAsync(teamId, CancellationToken.None);
+
+        // Assert
+        // Strictly enforcing the "[]" string as per the Rabbit's requirement.
+        jsonResult.Should().NotBeNull();
+        jsonResult.Should().Be("[]");
+    }
+
     #region Helpers
 
     private async Task SeedUserAsync(string id, string email, string displayName)
