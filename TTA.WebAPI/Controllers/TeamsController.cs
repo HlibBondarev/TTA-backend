@@ -33,7 +33,7 @@ public class TeamsController(
     /// <param name="teamId">The unique identifier of the team.</param>
     /// <param name="request">The membership details.</param>
     /// <param name="validator">The request validator.</param>
-    /// <returns>The created team membership record.</returns>
+    /// <returns>The unique identifier of the created membership.</returns>
     /// <remarks>
     /// Access is restricted to users with administrative rights ("ClubAdmin" policy) over the specified club.
     /// </remarks>
