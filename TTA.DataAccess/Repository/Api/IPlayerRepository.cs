@@ -9,6 +9,14 @@ namespace TTA.DataAccess.Repository.Api;
 public interface IPlayerRepository : IEntityRepositoryBase<Guid, Player>
 {
     /// <summary>
+    /// Creates a new player entry in the database.
+    /// </summary>
+    /// <param name="player">The player entity to create.</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>The created player entity as returned by the database.</returns>
+    Task<Player> CreatePlayerAsync(Player player, CancellationToken ct);
+
+    /// <summary>
     /// Retrieves all players associated with a specific club.
     /// </summary>
     /// <param name="clubId">The unique identifier of the club.</param>
@@ -17,10 +25,10 @@ public interface IPlayerRepository : IEntityRepositoryBase<Guid, Player>
     Task<IEnumerable<Player>> GetByClubIdAsync(Guid clubId, CancellationToken ct);
 
     /// <summary>
-    /// Creates a new player entry in the database.
+    /// Retrieves a player by their unique identifier.
     /// </summary>
-    /// <param name="player">The player entity to create.</param>
+    /// <param name="id">The unique identifier of the player.</param>
     /// <param name="ct">The cancellation token.</param>
-    /// <returns>The created player entity as returned by the database.</returns>
-    Task<Player> CreatePlayerAsync(Player player, CancellationToken ct);
+    /// <returns>The player entity if found; otherwise, null.</returns>
+    Task<Player?> GetByIdAsync(Guid id, CancellationToken ct);
 }

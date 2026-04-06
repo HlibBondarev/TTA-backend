@@ -94,6 +94,11 @@ public static class Startup
             {
                 policy.RequireAuthenticatedUser();
                 policy.Requirements.Add(new ScopePermissionRequirement(AppRole.Editor, TargetScope.Team));
+            })
+            .AddPolicy("TeamAdmin", policy =>
+            {
+                policy.RequireAuthenticatedUser();
+                policy.Requirements.Add(new ScopePermissionRequirement(AppRole.FullControl, TargetScope.Team));
             });
 
         // Registering HttpClient for CurrentUserService
@@ -107,9 +112,11 @@ public static class Startup
         services.AddScoped<IAccessRepository, AccessRepository>();
         services.AddScoped<IAccessService, AccessService>();
 
+        services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IClubRepository, ClubRepository>();
         services.AddScoped<IPlayerRepository, PlayerRepository>();
         services.AddScoped<ITeamRepository, TeamRepository>();
+        services.AddScoped<ITeamMembershipRepository, TeamMembershipRepository>();
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 

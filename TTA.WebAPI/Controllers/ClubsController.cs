@@ -22,7 +22,6 @@ namespace TTA.WebAPI.Controllers;
 /// <param name="mediator">The mediator instance for dispatching commands.</param>
 /// <param name="logger">The logger instance for diagnostic information.</param>
 /// <param name="auth0Settings">The validated Auth0 configuration settings.</param>
-/// <param name="currentUserService">The service used to retrieve user properties from claims.</param>
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]

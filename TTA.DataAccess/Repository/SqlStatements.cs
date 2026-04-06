@@ -3,6 +3,18 @@
 public static class SqlStatements
 {
     /// <summary>
+    /// SQL constants for User-related database operations.
+    /// </summary>
+    public static class ForUsers
+    {
+        /// <summary>
+        /// SQL to retrieve a single user by ID.
+        /// </summary>
+        public const string GetUserById =
+            "SELECT * FROM public.get_user_by_id(@p_id)";
+    }
+
+    /// <summary>
     /// SQL constants for AccessPolicies-related database operations.
     /// </summary>
     public static class ForAccessPolicies
@@ -48,6 +60,43 @@ public static class SqlStatements
         /// </summary>
         public const string GetTeamsByClub =
             "SELECT * FROM public.get_teams_by_club(@p_club_id)";
+
+        /// <summary>
+        /// SQL to retrieve a single team by ID.
+        /// </summary>
+        public const string GetTeamById =
+            "SELECT * FROM public.get_team_by_id(@p_id)";
+    }
+
+    /// <summary>
+    /// SQL constants for TeamMembership-related database operations.
+    /// </summary>
+    public static class ForTeamMemberships
+    {
+        /// <summary>
+        /// SQL to call the upsert function for team membership.
+        /// </summary>
+        public const string UpsertMembership =
+            "SELECT * FROM public.upsert_team_membership(@Id, @UserId, @TeamId, @RoleInTeam, @IsPrimary)";
+
+        /// <summary>
+        /// SQL to soft-delete a membership by setting leftat and isprimary fields.
+        /// Only affects active memberships (where leftat is NULL).
+        /// </summary>
+        public const string TerminateMembership =
+            "UPDATE public.teammemberships SET leftat = NOW(), isprimary = FALSE WHERE id = @p_id AND leftat IS NULL";
+
+        /// <summary>
+        /// SQL to retrieve active team members with user details in JSON format.
+        /// </summary>
+        public const string GetMembersJson =
+            "SELECT public.get_team_members_json(@p_team_id)";
+
+        /// <summary>
+        /// SQL to retrieve a single membership by ID.
+        /// </summary>
+        public const string GetMembershipById =
+            "SELECT * FROM public.teammemberships WHERE id = @p_id";
     }
 
     /// <summary>
@@ -59,19 +108,19 @@ public static class SqlStatements
         /// SQL to call the upsert function and return the resulting player record.
         /// </summary>
         public const string UpsertPlayer =
-            "SELECT * FROM upsert_player(@Id, @HomeClubId, @FirstName, @LastName, @BirthDate, @Gender, @CreatedAt)";
+            "SELECT * FROM public.upsert_player(@Id, @HomeClubId, @FirstName, @LastName, @BirthDate, @Gender, @CreatedAt)";
 
         /// <summary>
         /// SQL to retrieve all players for a specific club.
         /// </summary>
         public const string GetPlayersByClub =
-            "SELECT * FROM get_players_by_club(@p_club_id)";
+            "SELECT * FROM public.get_players_by_club(@p_club_id)";
 
         /// <summary>
         /// SQL to retrieve a single player by ID.
         /// </summary>
         public const string GetPlayerById =
-            "SELECT * FROM get_player_by_id(@p_id)";
+            "SELECT * FROM public.get_player_by_id(@p_id)";
 
         /// <summary>
         /// SQL to delete a player.

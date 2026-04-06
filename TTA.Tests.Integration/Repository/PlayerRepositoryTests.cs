@@ -91,6 +91,62 @@ public class PlayerRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         players.Should().Contain(p => p.FirstName == "Player" && p.LastName == "Two");
     }
 
+    /// <summary>
+    /// Verifies that <see cref="PlayerRepository.GetByIdAsync"/> returns the correct player 
+    /// when a record with the specified ID exists in the database.
+    /// </summary>
+    [Fact]
+    public async Task GetByIdAsync_WhenPlayerExists_ShouldReturnPlayer()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var playerId = Guid.NewGuid();
+
+        // Seed database with required parent records (Country -> Region -> City -> Club)
+        await SeedClubDependenciesAsync(clubId);
+
+        var expectedPlayer = new Player
+        {
+            Id = playerId,
+            HomeClubId = clubId,
+            FirstName = "Vitaliy",
+            LastName = "Mykolenko",
+            BirthDate = new DateOnly(1999, 5, 29),
+            Gender = Gender.Male,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Persist the player first to ensure it can be retrieved
+        await _repository.CreatePlayerAsync(expectedPlayer, CancellationToken.None);
+
+        // Act
+        var result = await _repository.GetByIdAsync(playerId, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(expectedPlayer.Id);
+        result.FirstName.Should().Be(expectedPlayer.FirstName);
+        result.LastName.Should().Be(expectedPlayer.LastName);
+        result.HomeClubId.Should().Be(expectedPlayer.HomeClubId);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerRepository.GetByIdAsync"/> returns null 
+    /// when no player record is found for the provided unique identifier.
+    /// </summary>
+    [Fact]
+    public async Task GetByIdAsync_WhenPlayerDoesNotExist_ShouldReturnNull()
+    {
+        // Arrange
+        var nonExistentId = Guid.NewGuid();
+
+        // Act
+        var result = await _repository.GetByIdAsync(nonExistentId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
     #region Helpers for Seeding
 
     private static Player CreateTestPlayer(Guid id, Guid clubId, string first, string last) => new()
