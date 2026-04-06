@@ -204,6 +204,7 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
 
     /// <summary>
     /// Verifies that GetMembersJsonAsync does not include members who have already left the team.
+    /// Enforces a strict "[]" contract for empty results.
     /// </summary>
     [Fact]
     public async Task GetMembersJsonAsync_ShouldExcludeTerminatedMemberships()
@@ -229,17 +230,19 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
         };
 
         await _repository.CreateMembershipAsync(membership, CancellationToken.None);
-
-        // Act: Terminate with correct team scope
         await _repository.TerminateMembershipAsync(teamId, membership.Id, CancellationToken.None);
 
-        // Assert
+        // Act
         var jsonResult = await _repository.GetMembersJsonAsync(teamId, CancellationToken.None);
-        var options = new JsonSerializerOptions().GetDefault();
-        var members = string.IsNullOrWhiteSpace(jsonResult) || jsonResult == "[]"
-            ? new List<TeamMemberResponse>()
-            : JsonSerializer.Deserialize<List<TeamMemberResponse>>(jsonResult, options);
 
+        // Assert
+        // Updated: Strictly enforce the SQL contract (COALESCE result)
+        jsonResult.Should().Be("[]");
+
+        var options = new JsonSerializerOptions().GetDefault();
+        var members = JsonSerializer.Deserialize<List<TeamMemberResponse>>(jsonResult!, options);
+
+        members.Should().NotBeNull();
         members.Should().BeEmpty();
     }
 
