@@ -1,4 +1,5 @@
 ﻿using MediatR;
+using System.ComponentModel.DataAnnotations;
 using TTA.Common.Extensions;
 using TTA.DataAccess.Enums;
 using TTA.DataAccess.Models;
@@ -11,6 +12,7 @@ namespace TTA.BusinessLogic.Features.Teams.Commands;
 public record AddTeamMemberCommand(
     Guid TeamId,
     string UserEmail,
+    [EnumDataType(typeof(TeamRole))]
     TeamRole RoleInTeam,
     bool IsPrimary) : IRequest<Guid>;
 

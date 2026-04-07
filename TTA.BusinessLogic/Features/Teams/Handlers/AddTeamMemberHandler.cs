@@ -75,45 +75,4 @@ public class AddTeamMemberHandler(
         TeamRole.TeamManager or TeamRole.Analyst => AppRole.Editor,
         _ => AppRole.Viewer
     };
-
-
-
-
-
-
-
-
-
-
-
-
-    //public async Task<Guid> Handle(AddTeamMemberCommand command, CancellationToken cancellationToken)
-    //{
-    //    _logger.LogInformation("Processing AddTeamMemberCommand for User: {UserId}, Team: {TeamId}",
-    //        command.UserId, command.TeamId);
-
-    //    // 1. Validate Team existence
-    //    var team = await _teamRepository.GetByIdAsync(command.TeamId, cancellationToken);
-    //    if (team == null)
-    //    {
-    //        _logger.LogWarning("AddMember failed: Team {TeamId} not found.", command.TeamId);
-    //        throw new NotFoundException($"Team with ID {command.TeamId} was not found.");
-    //    }
-
-    //    // 2. Validate User existence
-    //    var user = await _userRepository.GetByIdAsync(command.UserId, cancellationToken);
-    //    if (user == null)
-    //    {
-    //        _logger.LogWarning("AddMember failed: User {UserId} not found.", command.UserId);
-    //        throw new NotFoundException($"User with ID {command.UserId} was not found.");
-    //    }
-
-    //    // 3. Map and Persist
-    //    var membership = command.ToModel();
-    //    var result = await _membershipRepository.CreateMembershipWithPolicyAsync(membership, cancellationToken);
-
-    //    _logger.LogInformation("Successfully persisted membership with ID: {MembershipId}", result.Id);
-
-    //    return result.Id;
-    //}
 }
