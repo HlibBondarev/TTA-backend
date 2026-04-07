@@ -1,7 +1,9 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
 using TTA.BusinessLogic.Features.Teams.Commands;
+using TTA.Common.Enums;
 using TTA.Common.Exceptions;
+using TTA.DataAccess.Enums;
 using TTA.DataAccess.Repository.Api;
 
 namespace TTA.BusinessLogic.Features.Teams.Handlers;
@@ -29,10 +31,18 @@ public class AddTeamMemberHandler(
     /// <exception cref="NotFoundException">Thrown when the team or user does not exist.</exception>
     public async Task<Guid> Handle(AddTeamMemberCommand command, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Processing AddTeamMemberCommand for User: {UserId}, Team: {TeamId}",
-            command.UserId, command.TeamId);
+        _logger.LogInformation("Processing AddTeamMemberCommand for Email: {Email}, Team: {TeamId}",
+            command.UserEmail, command.TeamId);
 
-        // 1. Validate Team existence
+        // 1. Resolve User by Email
+        var user = await _userRepository.GetByEmailAsync(command.UserEmail, cancellationToken);
+        if (user == null || !user.Any())
+        {
+            _logger.LogWarning("AddMember failed: User with email {Email} not found.", command.UserEmail);
+            throw new NotFoundException($"User with email {command.UserEmail} was not found.");
+        }
+
+        // 2. Validate Team existence
         var team = await _teamRepository.GetByIdAsync(command.TeamId, cancellationToken);
         if (team == null)
         {
@@ -40,20 +50,70 @@ public class AddTeamMemberHandler(
             throw new NotFoundException($"Team with ID {command.TeamId} was not found.");
         }
 
-        // 2. Validate User existence
-        var user = await _userRepository.GetByIdAsync(command.UserId, cancellationToken);
-        if (user == null)
-        {
-            _logger.LogWarning("AddMember failed: User {UserId} not found.", command.UserId);
-            throw new NotFoundException($"User with ID {command.UserId} was not found.");
-        }
+        // 3. Map TeamRole to system AppRole enum
+        AppRole appRole = MapToAppRole(command.RoleInTeam);
 
-        // 3. Map and Persist
+        // 4. Create model and persist via Repository
         var membership = command.ToModel();
-        var result = await _membershipRepository.CreateMembershipAsync(membership, cancellationToken);
+        membership.UserId = user.First().Id; // Assuming email is unique and taking the first match
 
-        _logger.LogInformation("Successfully persisted membership with ID: {MembershipId}", result.Id);
+        // Passing the enum directly to the repository
+        var result = await _membershipRepository.CreateMembershipWithPolicyAsync(membership, appRole, cancellationToken);
+
+        _logger.LogInformation("Successfully persisted membership {MembershipId} with AppRole {AppRole}",
+            result.Id, appRole.ToString());
 
         return result.Id;
     }
+
+    /// <summary>
+    /// Maps internal team roles to system-wide application roles.
+    /// </summary>
+    private static AppRole MapToAppRole(TeamRole role) => role switch
+    {
+        TeamRole.HeadCoach or TeamRole.AssistantCoach or TeamRole.ClubDirector => AppRole.FullControl,
+        TeamRole.TeamManager or TeamRole.Analyst => AppRole.Editor,
+        _ => AppRole.Viewer
+    };
+
+
+
+
+
+
+
+
+
+
+
+
+    //public async Task<Guid> Handle(AddTeamMemberCommand command, CancellationToken cancellationToken)
+    //{
+    //    _logger.LogInformation("Processing AddTeamMemberCommand for User: {UserId}, Team: {TeamId}",
+    //        command.UserId, command.TeamId);
+
+    //    // 1. Validate Team existence
+    //    var team = await _teamRepository.GetByIdAsync(command.TeamId, cancellationToken);
+    //    if (team == null)
+    //    {
+    //        _logger.LogWarning("AddMember failed: Team {TeamId} not found.", command.TeamId);
+    //        throw new NotFoundException($"Team with ID {command.TeamId} was not found.");
+    //    }
+
+    //    // 2. Validate User existence
+    //    var user = await _userRepository.GetByIdAsync(command.UserId, cancellationToken);
+    //    if (user == null)
+    //    {
+    //        _logger.LogWarning("AddMember failed: User {UserId} not found.", command.UserId);
+    //        throw new NotFoundException($"User with ID {command.UserId} was not found.");
+    //    }
+
+    //    // 3. Map and Persist
+    //    var membership = command.ToModel();
+    //    var result = await _membershipRepository.CreateMembershipWithPolicyAsync(membership, cancellationToken);
+
+    //    _logger.LogInformation("Successfully persisted membership with ID: {MembershipId}", result.Id);
+
+    //    return result.Id;
+    //}
 }

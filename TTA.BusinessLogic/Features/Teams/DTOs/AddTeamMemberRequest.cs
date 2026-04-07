@@ -9,6 +9,6 @@ namespace TTA.BusinessLogic.Features.Teams.DTOs;
 /// <param name="RoleInTeam">The role assigned to the user within this team.</param>
 /// <param name="IsPrimary">Indicates if this team is the user's primary team.</param>
 public record AddTeamMemberRequest(
-    string UserId,
+    string UserEmail,
     TeamRole RoleInTeam,
     bool IsPrimary);

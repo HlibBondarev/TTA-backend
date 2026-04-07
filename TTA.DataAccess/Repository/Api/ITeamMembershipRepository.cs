@@ -1,4 +1,5 @@
-﻿using TTA.DataAccess.Models;
+﻿using TTA.Common.Enums;
+using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Base;
 
 namespace TTA.DataAccess.Repository.Api;
@@ -10,12 +11,13 @@ namespace TTA.DataAccess.Repository.Api;
 public interface ITeamMembershipRepository : IEntityRepositoryBase<Guid, TeamMembership>
 {
     /// <summary>
-    /// Persists a new team membership or updates an existing one using a stored function.
+    /// Creates or updates a team membership and its associated access policy atomically.
     /// </summary>
     /// <param name="membership">The membership entity to save.</param>
+    /// <param name="appRole">The Role in App with type AppRole enum.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The persisted <see cref="TeamMembership"/> entity as returned by the database.</returns>
-    Task<TeamMembership> CreateMembershipAsync(TeamMembership membership, CancellationToken ct = default);
+    Task<TeamMembership> CreateMembershipWithPolicyAsync(TeamMembership membership, AppRole appRole, CancellationToken ct = default);
 
     /// <summary>
     /// Terminates an active membership by setting the departure date and resetting the primary flag.

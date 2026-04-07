@@ -10,7 +10,7 @@ namespace TTA.BusinessLogic.Features.Teams.Commands;
 /// </summary>
 public record AddTeamMemberCommand(
     Guid TeamId,
-    string UserId,
+    string UserEmail,
     TeamRole RoleInTeam,
     bool IsPrimary) : IRequest<Guid>;
 
@@ -23,7 +23,6 @@ public static class AddTeamMemberCommandExtensions
     {
         Id = Guid.NewGuid(),
         TeamId = cmd.TeamId,
-        UserId = cmd.UserId,
         RoleInTeam = cmd.RoleInTeam,
         IsPrimary = cmd.IsPrimary,
         JoinedAt = DateTime.UtcNow

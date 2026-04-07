@@ -32,7 +32,7 @@ public class TeamRepository(IDbConnectionFactory connectionFactory)
         var parameters = new DynamicParameters();
         parameters.Add("p_club_id", clubId);
 
-        // Aligned with PlayerRepository: use GetByPropValues for collections
+        // Aligned with TeamRepository: use GetByPropValues for collections
         return await GetByPropValues(
             SqlStatements.ForTeams.GetTeamsByClub,
             parameters,

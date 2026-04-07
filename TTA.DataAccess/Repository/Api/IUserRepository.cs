@@ -15,4 +15,12 @@ public interface IUserRepository : IEntityRepositoryBase<string, User>
     /// <param name="ct">The cancellation token.</param>
     /// <returns>The user entity if found; otherwise, null.</returns>
     Task<User?> GetByIdAsync(string id, CancellationToken ct);
+
+    /// <summary>
+    /// Retrieves all users associated with a specific email.
+    /// </summary>
+    /// <param name="email">The user email in DB.</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>A collection of <see cref="User"/> entities with a specific email.</returns>
+    Task<IEnumerable<User>> GetByEmailAsync(string email, CancellationToken ct = default);
 }

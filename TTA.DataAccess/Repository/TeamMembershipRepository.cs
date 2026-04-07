@@ -1,4 +1,5 @@
 ﻿using Dapper;
+using TTA.Common.Enums;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
@@ -14,13 +15,17 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, TeamMembership>(connectionFactory), ITeamMembershipRepository
 {
     /// <inheritdoc />
-    public async Task<TeamMembership> CreateMembershipAsync(TeamMembership membership, CancellationToken ct = default)
+    public async Task<TeamMembership> CreateMembershipWithPolicyAsync(TeamMembership membership, AppRole appRole, CancellationToken ct = default)
     {
-        // Dapper automatically maps TeamMembership properties to @parameters
+        var parameters = new DynamicParameters(membership);
+        // Dapper maps the enum value to its underlying integer (0, 1, or 2)
+        parameters.Add("AppRole", (int)appRole);
+
         return await CreateOrUpdate(
-            entity: membership,
-            sqlText: SqlStatements.ForTeamMemberships.UpsertMembership,
-            ct: ct);
+            membership,
+            SqlStatements.ForTeamMemberships.UpsertMembership,
+            parameters,
+            ct);
     }
 
     /// <inheritdoc />

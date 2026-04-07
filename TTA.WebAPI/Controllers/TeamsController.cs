@@ -63,7 +63,7 @@ public class TeamsController(
 
         var command = new AddTeamMemberCommand(
             teamId,
-            request.UserId,
+            request.UserEmail,
             request.RoleInTeam,
             request.IsPrimary);
 
