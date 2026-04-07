@@ -31,8 +31,8 @@ public class AddTeamMemberHandler(
     /// <exception cref="NotFoundException">Thrown when the team or user does not exist.</exception>
     public async Task<Guid> Handle(AddTeamMemberCommand command, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Processing AddTeamMemberCommand for Email: {Email}, Team: {TeamId}",
-            command.UserEmail, command.TeamId);
+        _logger.LogInformation("Processing AddTeamMemberCommand for the user email in Team: {TeamId}",
+            command.TeamId);
 
         // 1. Resolve User by Email
         var user = await _userRepository.GetByEmailAsync(command.UserEmail, cancellationToken);
