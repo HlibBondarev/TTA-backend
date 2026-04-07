@@ -13,7 +13,7 @@ public class AddTeamMemberRequestValidatorTests
     private readonly AddTeamMemberRequestValidator _validator = new();
 
     [Fact]
-    public void Should_Have_Error_When_UserEmail_Is_Valid()
+    public void Should_Not_Have_Error_When_UserEmail_Is_Valid()
     {
         // Arrange
         var request = new AddTeamMemberRequest("user_email@mail.com", TeamRole.Player, true);
