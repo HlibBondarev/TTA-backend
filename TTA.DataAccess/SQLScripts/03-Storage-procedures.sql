@@ -13,23 +13,27 @@ CREATE OR REPLACE FUNCTION auth.get_user_permission(
 RETURNS INT AS $$
 DECLARE
     v_role INT;
+    v_club_id UUID;
 BEGIN
-    -- Fetch the role INT directly from access policies
+    -- If target is a Team, find its parent Club to check for inherited permissions
+    IF p_target_type = 2 THEN
+        SELECT clubid INTO v_club_id FROM public.teams WHERE id = p_target_id;
+    END IF;
+
     SELECT role INTO v_role
     FROM auth.accesspolicies 
     WHERE userid = p_user_id 
       AND (
-          (targettype = 0) -- 0: Global
+          (targettype = 0) -- Global level
           OR 
-          (targettype = p_target_type AND targetid = p_target_id)
+          (targettype = p_target_type AND targetid = p_target_id) -- Direct target level
+          OR
+          (p_target_type = 2 AND targettype = 1 AND targetid = v_club_id) -- Inherited from Club to Team
       )
       AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
     ORDER BY 
-        role ASC, -- Lower number means higher privilege (0: FullControl)
-        (CASE 
-            WHEN targettype = 0 THEN 1 -- Global is less specific than direct target
-            ELSE 0 
-         END) ASC
+        role ASC, -- Priority to highest privilege (0: FullControl)
+        targettype ASC -- Priority: Global(0) > Club(1) > Team(2)
     LIMIT 1;
 
     RETURN v_role;
@@ -44,8 +48,20 @@ END;$$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION public.get_user_by_id(p_id TEXT)
 RETURNS SETOF public.users AS $$BEGIN
     RETURN QUERY
-    SELECT * FROM public.users WHERE id = p_id;
+    SELECT * FROM public.users 
+    WHERE id = p_id;
 END;$$ LANGUAGE plpgsql;
+
+-- 2) Retrieves all users with a specific email.
+
+CREATE OR REPLACE FUNCTION public.get_users_by_email(p_email TEXT)
+RETURNS SETOF public.users AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM public.users 
+    WHERE email = p_email;
+END;
+$$ LANGUAGE plpgsql;
 
 -- ====================================================
 -- ORGANIZATIONS (CLUBS) STORED FUNCTIONS & PROCEDURES
@@ -178,7 +194,9 @@ CREATE OR REPLACE FUNCTION public.upsert_team_membership(
     p_user_id VARCHAR(64),
     p_team_id UUID,
     p_role_in_team INT,
-    p_is_primary BOOLEAN
+    p_is_primary BOOLEAN,
+    p_app_role INT,
+    p_created_at TIMESTAMPTZ -- Received from the application (DateTime.UtcNow)
 )
 RETURNS SETOF public.teammemberships AS $$
 BEGIN
@@ -189,22 +207,26 @@ BEGIN
         WHERE userid = p_user_id AND isprimary = TRUE;
     END IF;
 
-    -- 2. Perform the Upsert
+    -- 2. Perform the Membership Upsert
     INSERT INTO public.teammemberships (
-        id, userid, teamid, roleinteam, joinedat, leftat, isprimary
+        id, userid, teamid, roleinteam, joinedat, isprimary
     )
     VALUES (
-        p_id, p_user_id, p_team_id, p_role_in_team, NOW(), NULL, p_is_primary
+        p_id, p_user_id, p_team_id, p_role_in_team, p_created_at, p_is_primary
     )
     ON CONFLICT (id) DO UPDATE SET
         roleinteam = EXCLUDED.roleinteam,
         isprimary = EXCLUDED.isprimary,
-        leftat = NULL; -- Reactivate if previously terminated
+        leftat = NULL;
 
-    -- 3. Return the resulting row
-    -- Using SETOF ensures no ambiguity between table columns and return columns
-    RETURN QUERY 
-    SELECT * FROM public.teammemberships WHERE id = p_id;
+    -- 3. Perform the Access Policy Upsert
+    -- Using the same p_created_at for consistency across schemas
+    INSERT INTO auth.accesspolicies (userid, role, targettype, targetid, createdat)
+    VALUES (p_user_id, p_app_role, 2, p_team_id, p_created_at)
+    ON CONFLICT (userid, targettype, targetid) DO UPDATE SET
+        role = EXCLUDED.role;
+
+    RETURN QUERY SELECT * FROM public.teammemberships WHERE id = p_id;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -245,8 +267,9 @@ DECLARE
 BEGIN
     UPDATE public.teammemberships
     SET 
-        leftat = CURRENT_TIMESTAMP,
-        isprimary = FALSE  -- Reset primary status upon termination
+        -- Ensures leftat is at least equal to joinedat, even if clocks drift
+        leftat = GREATEST(CURRENT_TIMESTAMP, joinedat),
+        isprimary = FALSE
     WHERE id = p_membership_id 
       AND teamid = p_team_id 
       AND leftat IS NULL;

@@ -1,4 +1,5 @@
-﻿using TTA.DataAccess.Models;
+﻿using Dapper;
+using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
 
@@ -16,5 +17,18 @@ public class UserRepository(IDbConnectionFactory connectionFactory)
     public async Task<User?> GetByIdAsync(string id, CancellationToken ct)
     {
         return await GetById(id, SqlStatements.ForUsers.GetUserById, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<IEnumerable<User>> GetByEmailAsync(string email, CancellationToken ct = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_email", email);
+
+        // Aligned with UserRepository: use GetByPropValues for collections
+        return await GetByPropValues(
+            SqlStatements.ForUsers.GetUsersByEmail,
+            parameters,
+            ct);
     }
 }

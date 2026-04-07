@@ -36,6 +36,7 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
 
     /// <summary>
     /// Verifies that a user with <c>TeamAdmin</c> permissions can successfully add a new member with a valid request.
+    /// This test uses an email address to identify the user, as required by the controller logic.
     /// </summary>
     [Fact]
     public async Task AddMember_ShouldReturnOk_WhenRequestIsValid()
@@ -43,12 +44,16 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         // Arrange
         var clubId = Guid.NewGuid();
         var teamId = Guid.NewGuid();
-        var newUserId = $"auth0|new-user-{Guid.NewGuid()}";
+        var newUserAuthId = $"auth0|new-user-{Guid.NewGuid()}";
+        var newUserEmail = "new-member@example.com";
 
         await SeedFullContextAsync(teamId, clubId);
-        await SeedUserAsync(newUserId, "New Player", "new@player.com");
 
-        var request = new AddTeamMemberRequest(newUserId, TeamRole.Player, true);
+        // Seed the user in the DB so the handler can find them by email
+        await SeedUserAsync(newUserAuthId, "New Player", newUserEmail);
+
+        // Controller expects Email in the request body
+        var request = new AddTeamMemberRequest(newUserEmail, TeamRole.Player, true);
 
         // Act
         var response = await Client.PostAsJsonAsync($"/api/teams/{teamId}/members", request);
@@ -58,7 +63,8 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
     }
 
     /// <summary>
-    /// Verifies that the system returns <c>400 Bad Request</c> when the <c>AddTeamMemberRequest</c> is invalid (e.g., missing UserId).
+    /// Verifies that the system returns <c>400 Bad Request</c> when the <c>AddTeamMemberRequest</c> 
+    /// contains invalid data, such as an incorrectly formatted email.
     /// </summary>
     [Fact]
     public async Task AddMember_ShouldReturnBadRequest_WhenRequestIsInvalid()
@@ -68,8 +74,8 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         var teamId = Guid.NewGuid();
         await SeedFullContextAsync(teamId, clubId);
 
-        // Providing an empty string for UserId to trigger validation error
-        var request = new AddTeamMemberRequest(string.Empty, TeamRole.Player, true);
+        // Providing an invalid email to trigger validation error
+        var request = new AddTeamMemberRequest("not-an-email", TeamRole.Player, true);
 
         // Act
         var response = await Client.PostAsJsonAsync($"/api/teams/{teamId}/members", request);
@@ -82,7 +88,7 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
     /// Verifies that a user with <c>TeamAdmin</c> permissions can successfully terminate an existing membership.
     /// </summary>
     [Fact]
-    public async Task TerminateMember_ShouldReturnOk_WhenMembershipExists()
+    public async Task TerminateMember_ShouldReturnNoContent_WhenMembershipExists()
     {
         // Arrange
         var clubId = Guid.NewGuid();
@@ -125,6 +131,8 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
     /// Seeds a complete data hierarchy (Country -> Region -> City -> Club -> Team) 
     /// and grants <c>TeamAdmin</c> permissions to the <c>TestUserId</c>.
     /// </summary>
+    /// <param name="teamId">The unique identifier for the team to be created.</param>
+    /// <param name="clubId">The unique identifier for the club to be created.</param>
     private async Task SeedFullContextAsync(Guid teamId, Guid clubId)
     {
         // Synchronize database user with claims from TestAuthHandler
@@ -162,6 +170,9 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
     /// <summary>
     /// Inserts or updates a user record to ensure consistency with authentication claims.
     /// </summary>
+    /// <param name="userId">The unique identifier (Auth0 ID) for the user.</param>
+    /// <param name="displayName">The name to be displayed for the user.</param>
+    /// <param name="email">The user's electronic mail address.</param>
     private async Task SeedUserAsync(string userId, string displayName, string email)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -175,8 +186,11 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
     }
 
     /// <summary>
-    /// Creates a membership record for a specific team and user.
+    /// Creates a membership record for a specific team and user in the database.
     /// </summary>
+    /// <param name="id">The unique identifier for the membership record.</param>
+    /// <param name="teamId">The ID of the team the user is joining.</param>
+    /// <param name="userId">The ID of the user joining the team.</param>
     private async Task SeedMembershipAsync(Guid id, Guid teamId, string userId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();

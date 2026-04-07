@@ -1,4 +1,5 @@
 ﻿using Dapper;
+using TTA.Common.Enums;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
@@ -14,13 +15,19 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, TeamMembership>(connectionFactory), ITeamMembershipRepository
 {
     /// <inheritdoc />
-    public async Task<TeamMembership> CreateMembershipAsync(TeamMembership membership, CancellationToken ct = default)
+    public async Task<TeamMembership> CreateMembershipWithPolicyAsync(TeamMembership membership, AppRole appRole, CancellationToken ct = default)
     {
-        // Dapper automatically maps TeamMembership properties to @parameters
+        // Create empty parameters and add ONLY the extra value (AppRole).
+        // The properties from the 'membership' object will be added automatically 
+        // by the CreateOrUpdate method internally.
+        var parameters = new DynamicParameters();
+        parameters.Add("AppRole", (int)appRole);
+
         return await CreateOrUpdate(
-            entity: membership,
-            sqlText: SqlStatements.ForTeamMemberships.UpsertMembership,
-            ct: ct);
+            membership,
+            SqlStatements.ForTeamMemberships.UpsertMembership,
+            parameters,
+            ct);
     }
 
     /// <inheritdoc />

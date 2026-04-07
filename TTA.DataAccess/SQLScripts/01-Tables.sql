@@ -239,10 +239,6 @@ CREATE TABLE playerpresences (
         CHECK (timeout IS NULL OR timeout >= timein)
 );
 
--- ==========================================
--- 7. ACCESS CONTROL & PERMISSIONS
--- ==========================================
-
 CREATE TABLE auth.accesspolicies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
     userid VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -251,11 +247,18 @@ CREATE TABLE auth.accesspolicies (
     targetid UUID NULL,                
     createdat TIMESTAMPTZ NOT NULL,
     expiresat TIMESTAMPTZ NULL,
+    
+    -- Updated unique constraint to treat multiple NULLs in targetid as the same value.
+    -- This ensures a user cannot have duplicate 'Global' policies.
+    CONSTRAINT uix_accesspolicies_user_target 
+        UNIQUE NULLS NOT DISTINCT (userid, targettype, targetid),
+
     -- Constraints for data integrity
     CONSTRAINT chk_accesspolicy_role 
         CHECK (role IN (0, 1, 2)),
     CONSTRAINT chk_accesspolicy_targettype 
         CHECK (targettype IN (0, 1, 2)),
+        
     -- Logic: Global (0) must have NULL targetid, others (1, 2) must have a value
     CONSTRAINT chk_accesspolicy_targetid_scope_logic CHECK (
         (targettype = 0 AND targetid IS NULL) OR 
@@ -265,10 +268,11 @@ CREATE TABLE auth.accesspolicies (
         CHECK (expiresat IS NULL OR expiresat >= createdat)
 );
 
+-- Performance indexes for lookups
 CREATE INDEX ix_accesspolicies_userid ON auth.accesspolicies(userid);
 CREATE INDEX ix_accesspolicies_scope ON auth.accesspolicies(targettype, targetid);
 
--- Partial Unique Index for active Club Owners
+-- Partial Unique Index for active Club Owners (Business logic constraint)
 CREATE UNIQUE INDEX uix_accesspolicies_club_owner 
 ON auth.accesspolicies (userid) 
 WHERE targettype = 1 -- 1: Club

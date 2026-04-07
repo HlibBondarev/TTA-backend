@@ -12,6 +12,12 @@ public static class SqlStatements
         /// </summary>
         public const string GetUserById =
             "SELECT * FROM public.get_user_by_id(@p_id)";
+
+        /// <summary>
+        /// SQL to retrieve a User by email.
+        /// </summary>
+        public const string GetUsersByEmail =
+            "SELECT * FROM public.get_users_by_email(@p_email)";
     }
 
     /// <summary>
@@ -77,7 +83,7 @@ public static class SqlStatements
         /// SQL to call the upsert function for team membership.
         /// </summary>
         public const string UpsertMembership =
-            "SELECT * FROM public.upsert_team_membership(@Id, @UserId, @TeamId, @RoleInTeam, @IsPrimary)";
+        "SELECT * FROM public.upsert_team_membership(@Id, @UserId, @TeamId, @RoleInTeam, @IsPrimary, @AppRole, @JoinedAt)";
 
         /// <summary>
         /// SQL to call the termination function with team-scoped validation.
