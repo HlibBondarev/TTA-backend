@@ -29,6 +29,8 @@ public class AddTeamMemberHandler(
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The unique identifier of the created membership.</returns>
     /// <exception cref="NotFoundException">Thrown when the team or user does not exist.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when multiple users are found with the same email.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the TeamRole cannot be mapped to an AppRole.</exception>
     public async Task<Guid> Handle(AddTeamMemberCommand command, CancellationToken cancellationToken)
     {
         string safeEmail = MaskEmail(command.UserEmail);
@@ -39,18 +41,18 @@ public class AddTeamMemberHandler(
         var users = await _userRepository.GetByEmailAsync(command.UserEmail, cancellationToken);
         var userList = users.ToList();
 
-        // FIX: Ensure exactly one user is found. 
-        // Throwing NotFoundException if 0 or Conflict/InvalidOperation if more than 1.
+        // Ensure exactly one user is found to prevent arbitrary assignment
         if (userList.Count == 0)
         {
+            // PII Fix: Use safeEmail in warning log
             _logger.LogWarning("AddMember failed: User with email {Email} not found.", safeEmail);
             throw new NotFoundException($"User with email {command.UserEmail} was not found.");
         }
 
         if (userList.Count > 1)
         {
+            // PII Fix: Use safeEmail in error log
             _logger.LogError("AddMember failed: Multiple users found with the same email {Email}.", safeEmail);
-            // Throwing a specialized exception or a generic InvalidOperation to prevent arbitrary assignment
             throw new InvalidOperationException($"Multiple users found with email {command.UserEmail}. Data integrity issue.");
         }
 
@@ -68,8 +70,8 @@ public class AddTeamMemberHandler(
         AppRole appRole = MapToAppRole(command.RoleInTeam);
 
         // 4. Create model and persist via Repository
-        var membership = command.ToModel();
-        membership.UserId = user.Id; // Using the guaranteed unique ID
+        // Refactor: Pass userId to ToModel to ensure the model is created with its required identity
+        var membership = command.ToModel(user.Id);
 
         var result = await _membershipRepository.CreateMembershipWithPolicyAsync(membership, appRole, cancellationToken);
 
@@ -81,18 +83,25 @@ public class AddTeamMemberHandler(
 
     /// <summary>
     /// Maps internal team roles to system-wide application roles.
+    /// Throws an exception if the role is not explicitly mapped to prevent hidden bugs.
     /// </summary>
+    /// <param name="role">The team role to map.</param>
+    /// <returns>The corresponding <see cref="AppRole"/>.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when an unmapped TeamRole is provided.</exception>
     private static AppRole MapToAppRole(TeamRole role) => role switch
     {
         TeamRole.HeadCoach or TeamRole.AssistantCoach or TeamRole.ClubDirector => AppRole.FullControl,
         TeamRole.TeamManager or TeamRole.Analyst => AppRole.Editor,
-        _ => AppRole.Viewer
+        TeamRole.Player => AppRole.Viewer,
+        _ => throw new ArgumentOutOfRangeException(nameof(role), role, $"No mapping defined for {role}")
     };
 
     /// <summary>
     /// Masks an email address to protect PII in logs.
     /// Example: test-user@example.com -> te***@example.com
     /// </summary>
+    /// <param name="email">The plaintext email to mask.</param>
+    /// <returns>A masked version of the email string.</returns>
     private static string MaskEmail(string email)
     {
         if (string.IsNullOrEmpty(email) || !email.Contains('@'))

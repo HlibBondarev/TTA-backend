@@ -17,8 +17,10 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
     /// <inheritdoc />
     public async Task<TeamMembership> CreateMembershipWithPolicyAsync(TeamMembership membership, AppRole appRole, CancellationToken ct = default)
     {
-        var parameters = new DynamicParameters(membership);
-        // Dapper maps the enum value to its underlying integer (0, 1, or 2)
+        // Create empty parameters and add ONLY the extra value (AppRole).
+        // The properties from the 'membership' object will be added automatically 
+        // by the CreateOrUpdate method internally.
+        var parameters = new DynamicParameters();
         parameters.Add("AppRole", (int)appRole);
 
         return await CreateOrUpdate(

@@ -11,7 +11,8 @@ public class AddTeamMemberRequestValidator : AbstractValidator<AddTeamMemberRequ
     public AddTeamMemberRequestValidator()
     {
         RuleFor(x => x.UserEmail)
-            .NotEmpty().EmailAddress().WithMessage("User email is required.");
+            .NotEmpty().WithMessage("User email is required.")
+            .EmailAddress().WithMessage("User email must be a valid email address.");
 
         RuleFor(x => x.RoleInTeam)
             .IsInEnum().WithMessage("A valid team role must be specified.");
