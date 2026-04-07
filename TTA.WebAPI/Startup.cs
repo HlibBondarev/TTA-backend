@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.OpenApi.Models;
 using Serilog;
 using Serilog.Exceptions;
+using System.Text.Json.Serialization;
 using TTA.BusinessLogic;
 using TTA.BusinessLogic.Services;
 using TTA.BusinessLogic.Services.Api;
@@ -120,7 +121,15 @@ public static class Startup
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
-        services.AddControllers();
+        // Add services to the container.
+        services.AddControllers()
+        .AddJsonOptions(options =>
+        {
+            // Global configuration to serialize/deserialize Enums as strings (e.g., "ClubDirector") 
+            // instead of numeric values (e.g., 0). This improves API readability and Swagger UI integration.
+            options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        });
+
         services.AddExceptionHandler<GlobalExceptionHandler>();
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();

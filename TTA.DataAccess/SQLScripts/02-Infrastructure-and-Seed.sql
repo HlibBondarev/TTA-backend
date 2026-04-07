@@ -136,7 +136,7 @@ END $$;
 DO $$ 
 DECLARE 
     v_user_id VARCHAR := 'auth0|69cf7ec5eff8f1358a0b9ae0'; 
-    v_team_id UUID := '22222222-2222-2222-2222-222222222201'; 
+    v_team_id UUID := '22222222-2222-2222-2222-222222222215'; 
     v_new_club_id UUID := '11111111-1111-1111-1111-111111111110';
 BEGIN
     -- 1. Ensure user exists
@@ -146,7 +146,7 @@ BEGIN
 
     -- 2. Existing Team Membership (for old tests)
     INSERT INTO public.teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary)
-    SELECT '99999999-9999-9999-9999-999999999901', v_user_id, v_team_id, 0, NOW(), true -- CHANGED: HeadCoach -> 0
+    SELECT '99999999-9999-9999-9999-999999999901', v_user_id, v_team_id, 0, NOW(), true -- roleinteam: HeadCoach -> 0
     WHERE NOT EXISTS (
         SELECT 1 FROM public.teammemberships 
         WHERE userid = v_user_id AND teamid = v_team_id
@@ -154,10 +154,10 @@ BEGIN
 
     -- 3. Policy for the OLD Team
     INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
-    SELECT '99999999-9999-9999-9999-999999999902', v_user_id, 1, 2, v_team_id, NOW() -- CHANGED: Editor -> 1, Team -> 2
+    SELECT '99999999-9999-9999-9999-999999999902', v_user_id, 0, 2, v_team_id, NOW() -- role: FullControl -> 0, targettype: Team -> 2
     WHERE NOT EXISTS (
         SELECT 1 FROM auth.accesspolicies 
-        WHERE userid = v_user_id AND targettype = 2 AND targetid = v_team_id -- CHANGED: Team -> 2
+        WHERE userid = v_user_id AND targettype = 2 AND targetid = v_team_id -- targettype: Team -> 2
     );
 
     -- 4. NEW: Policy for "My super club" (FullControl so you can add players)
@@ -165,14 +165,14 @@ BEGIN
     SELECT 
         '99999999-9999-9999-9999-999999999910', 
         v_user_id, 
-        0, -- CHANGED: FullControl -> 0
-        1, -- CHANGED: Club -> 1
+        0, -- role: FullControl -> 0
+        1, -- targettype: Club -> 1
         v_new_club_id, 
         NOW()
     WHERE NOT EXISTS (
         SELECT 1 FROM auth.accesspolicies 
         WHERE userid = v_user_id 
-          AND targettype = 1 -- CHANGED: Club -> 1
+          AND targettype = 1 -- targettype: Club -> 1
           AND targetid = v_new_club_id
     );
 
