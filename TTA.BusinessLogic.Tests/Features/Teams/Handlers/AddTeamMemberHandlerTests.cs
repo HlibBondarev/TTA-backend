@@ -135,4 +135,85 @@ public class AddTeamMemberHandlerTests
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
     }
+
+    /// <summary>
+    /// Verifies that the handler throws an <see cref="InvalidOperationException"/> 
+    /// when multiple users are found with the same email.
+    /// </summary>
+    [Fact]
+    public async Task Handle_MultipleUsersFoundWithSameEmail_ShouldThrowInvalidOperationException()
+    {
+        // Arrange
+        var command = new AddTeamMemberCommand(
+            TeamId: Guid.NewGuid(),
+            UserEmail: "duplicate@mail.com",
+            RoleInTeam: TeamRole.Player,
+            IsPrimary: true
+        );
+
+        // Mocking two users with the same email to simulate data inconsistency
+        _userRepoMock
+            .Setup(x => x.GetByEmailAsync(command.UserEmail, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new User { Id = "auth0|user-1", Email = "duplicate@mail.com" },
+                new User { Id = "auth0|user-2", Email = "duplicate@mail.com" }
+            ]);
+
+        _teamRepoMock
+            .Setup(x => x.GetByIdAsync(command.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Team { Id = command.TeamId });
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _handler.Handle(command, CancellationToken.None));
+
+        // Verify that an Error was logged before throwing
+        _loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Multiple users found")),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that the handler masks the user's email in the logs to protect PII.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldLogMaskedEmailInsteadOfPlaintext()
+    {
+        // Arrange
+        var plainEmail = "sensitive-user@example.com";
+        var maskedPart = "se***@example.com"; // Expected mask for 'sensitive-user'
+        var command = new AddTeamMemberCommand(Guid.NewGuid(), plainEmail, TeamRole.Player, true);
+
+        _teamRepoMock
+            .Setup(x => x.GetByIdAsync(command.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Team { Id = command.TeamId });
+
+        _userRepoMock
+            .Setup(x => x.GetByEmailAsync(command.UserEmail, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new User { Id = "auth0|123", Email = plainEmail }]);
+
+        _membershipRepoMock
+            .Setup(x => x.CreateMembershipWithPolicyAsync(It.IsAny<TeamMembership>(), It.IsAny<AppRole>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TeamMembership { Id = Guid.NewGuid() });
+
+        // Act
+        await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        // Check that the log message contains the masked version and DOES NOT contain the full plain email
+        _loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) =>
+                    v.ToString()!.Contains(maskedPart) &&
+                    !v.ToString()!.Contains(plainEmail)),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.AtLeastOnce);
+    }
 }

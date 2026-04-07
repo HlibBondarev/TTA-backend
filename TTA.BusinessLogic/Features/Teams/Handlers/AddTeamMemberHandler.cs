@@ -31,16 +31,30 @@ public class AddTeamMemberHandler(
     /// <exception cref="NotFoundException">Thrown when the team or user does not exist.</exception>
     public async Task<Guid> Handle(AddTeamMemberCommand command, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Processing AddTeamMemberCommand for the user email in Team: {TeamId}",
-            command.TeamId);
+        string safeEmail = MaskEmail(command.UserEmail);
+        _logger.LogInformation("Processing AddTeamMemberCommand for Email: {Email}, Team: {TeamId}",
+            safeEmail, command.TeamId);
 
         // 1. Resolve User by Email
-        var user = await _userRepository.GetByEmailAsync(command.UserEmail, cancellationToken);
-        if (user == null || !user.Any())
+        var users = await _userRepository.GetByEmailAsync(command.UserEmail, cancellationToken);
+        var userList = users.ToList();
+
+        // FIX: Ensure exactly one user is found. 
+        // Throwing NotFoundException if 0 or Conflict/InvalidOperation if more than 1.
+        if (userList.Count == 0)
         {
-            _logger.LogWarning("AddMember failed: User with the user email not found.");
+            _logger.LogWarning("AddMember failed: User with email {Email} not found.", safeEmail);
             throw new NotFoundException($"User with email {command.UserEmail} was not found.");
         }
+
+        if (userList.Count > 1)
+        {
+            _logger.LogError("AddMember failed: Multiple users found with the same email {Email}.", safeEmail);
+            // Throwing a specialized exception or a generic InvalidOperation to prevent arbitrary assignment
+            throw new InvalidOperationException($"Multiple users found with email {command.UserEmail}. Data integrity issue.");
+        }
+
+        var user = userList.Single();
 
         // 2. Validate Team existence
         var team = await _teamRepository.GetByIdAsync(command.TeamId, cancellationToken);
@@ -55,9 +69,8 @@ public class AddTeamMemberHandler(
 
         // 4. Create model and persist via Repository
         var membership = command.ToModel();
-        membership.UserId = user.First().Id; // Assuming email is unique and taking the first match
+        membership.UserId = user.Id; // Using the guaranteed unique ID
 
-        // Passing the enum directly to the repository
         var result = await _membershipRepository.CreateMembershipWithPolicyAsync(membership, appRole, cancellationToken);
 
         _logger.LogInformation("Successfully persisted membership {MembershipId} with AppRole {AppRole}",
@@ -75,4 +88,23 @@ public class AddTeamMemberHandler(
         TeamRole.TeamManager or TeamRole.Analyst => AppRole.Editor,
         _ => AppRole.Viewer
     };
+
+    /// <summary>
+    /// Masks an email address to protect PII in logs.
+    /// Example: test-user@example.com -> te***@example.com
+    /// </summary>
+    private static string MaskEmail(string email)
+    {
+        if (string.IsNullOrEmpty(email) || !email.Contains('@'))
+            return "****";
+
+        var parts = email.Split('@');
+        var name = parts[0];
+        var domain = parts[1];
+
+        if (name.Length <= 2)
+            return $"***@{domain}";
+
+        return $"{name[..2]}***@{domain}";
+    }
 }
