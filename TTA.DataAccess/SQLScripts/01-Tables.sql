@@ -239,10 +239,6 @@ CREATE TABLE playerpresences (
         CHECK (timeout IS NULL OR timeout >= timein)
 );
 
--- ==========================================
--- 7. ACCESS CONTROL & PERMISSIONS
--- ==========================================
-
 CREATE TABLE auth.accesspolicies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
     userid VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -252,8 +248,10 @@ CREATE TABLE auth.accesspolicies (
     createdat TIMESTAMPTZ NOT NULL,
     expiresat TIMESTAMPTZ NULL,
     
-    -- Ensures standard upserts can target the unique combination of user and resource
-    CONSTRAINT uix_accesspolicies_user_target UNIQUE (userid, targettype, targetid),
+    -- Updated unique constraint to treat multiple NULLs in targetid as the same value.
+    -- This ensures a user cannot have duplicate 'Global' policies.
+    CONSTRAINT uix_accesspolicies_user_target 
+        UNIQUE NULLS NOT DISTINCT (userid, targettype, targetid),
 
     -- Constraints for data integrity
     CONSTRAINT chk_accesspolicy_role 
