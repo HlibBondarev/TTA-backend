@@ -38,7 +38,7 @@ public class AddTeamMemberHandler(
         var user = await _userRepository.GetByEmailAsync(command.UserEmail, cancellationToken);
         if (user == null || !user.Any())
         {
-            _logger.LogWarning("AddMember failed: User with email {Email} not found.", command.UserEmail);
+            _logger.LogWarning("AddMember failed: User with the user email not found.");
             throw new NotFoundException($"User with email {command.UserEmail} was not found.");
         }
 
