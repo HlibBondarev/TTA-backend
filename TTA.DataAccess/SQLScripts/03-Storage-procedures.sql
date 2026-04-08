@@ -208,6 +208,7 @@ BEGIN
           AND userid = p_userid 
           AND roleinteam = p_roleinteam 
           AND leftat IS NULL
+          AND id <> p_id -- Ensure we don't block an update of the same record
     ) THEN
         RAISE EXCEPTION 'User already has an active membership with role % in this team.', p_roleinteam
         USING ERRCODE = '23505'; -- Unique violation
@@ -220,12 +221,20 @@ BEGIN
         SET isprimary = FALSE
         WHERE userid = p_userid 
             AND isprimary = TRUE 
-            AND leftat IS NULL;
+            AND leftat IS NULL
+            AND id <> p_id; -- Don't reset the flag if we are updating the current record
     END IF;
 
-    -- 1. Insert the membership record
+    -- 1. Insert or Update the membership record (Idempotent UPSERT)
     INSERT INTO public.teammemberships (id, teamid, userid, roleinteam, isprimary, joinedat)
-    VALUES (p_id, p_teamid, p_userid, p_roleinteam, p_isprimary, p_joinedat);
+    VALUES (p_id, p_teamid, p_userid, p_roleinteam, p_isprimary, p_joinedat)
+    ON CONFLICT (id) DO UPDATE 
+    SET 
+        teamid = EXCLUDED.teamid,
+        userid = EXCLUDED.userid,
+        roleinteam = EXCLUDED.roleinteam,
+        isprimary = EXCLUDED.isprimary,
+        joinedat = EXCLUDED.joinedat;
 
     -- 2. Synchronize access policies (Idempotent)
     -- uix_accesspolicies_user_target ensures we don't duplicate policies for the same team
