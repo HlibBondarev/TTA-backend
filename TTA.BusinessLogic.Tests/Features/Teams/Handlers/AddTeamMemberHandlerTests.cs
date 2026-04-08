@@ -1,7 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Moq;
 using Npgsql;
-using System.Reflection;
 using TTA.BusinessLogic.Features.Teams.Commands;
 using TTA.BusinessLogic.Features.Teams.Handlers;
 using TTA.Common.Enums;
@@ -329,37 +328,17 @@ public class AddTeamMemberHandlerTests
 
     /// <summary>
     /// Helper method to create a <see cref="PostgresException"/> with a specific SQL state for testing purposes.
-    /// Uses reflection to bypass the lack of a public constructor in Npgsql.
     /// </summary>
     /// <param name="sqlState">The 5-character SQLState code (e.g., "23505").</param>
     /// <returns>A populated instance of PostgresException.</returns>
     private static PostgresException CreatePostgresException(string sqlState)
     {
-        var type = typeof(PostgresException);
-
-        // Get the internal constructor that accepts the most parameters
-        var constructor = type.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-            .OrderByDescending(c => c.GetParameters().Length)
-            .FirstOrDefault();
-
-        if (constructor == null)
-        {
-            throw new InvalidOperationException("Failed to locate a suitable constructor for PostgresException.");
-        }
-
-        var parameters = constructor.GetParameters();
-        var args = new object?[parameters.Length];
-
-        for (int i = 0; i < parameters.Length; i++)
-        {
-            var paramName = parameters[i].Name?.ToLower();
-
-            // Assign the required SQL state, others get dummy test values
-            if (paramName == "sqlstate") args[i] = sqlState;
-            else if (parameters[i].ParameterType == typeof(string)) args[i] = "Database integrity constraint violation";
-            else args[i] = null;
-        }
-
-        return (PostgresException)constructor.Invoke(args);
+        // Directly using the public constructor to avoid reflection fragility
+        return new PostgresException(
+            messageText: "Database integrity constraint violation",
+            severity: "ERROR",
+            invariantSeverity: "ERROR",
+            sqlState: sqlState
+        );
     }
 }
