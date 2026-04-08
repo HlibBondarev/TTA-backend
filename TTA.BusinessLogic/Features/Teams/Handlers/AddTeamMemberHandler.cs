@@ -84,16 +84,17 @@ public class AddTeamMemberHandler(
         }
         catch (PostgresException ex) when (ex.SqlState == "23505")
         {
-            _logger.LogWarning("Member Refinement Failed: Duplicate active role {Role} for User {UserId}",
+            // Passing 'ex' as the first parameter to satisfy Sonar S2630
+            _logger.LogWarning(ex, "Member Refinement Failed: Duplicate active role {Role} for User {UserId}",
                 command.RoleInTeam, user.Id);
 
-            throw new ConflictException($"The user is already an active '{command.RoleInTeam}' in this team.");
+            throw new ConflictException($"The user is already an active '{command.RoleInTeam}' in this team.", ex);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error occurred while creating team membership for User {UserId} in Team {TeamId}",
-                user.Id, command.TeamId);
-            throw;
+            // To satisfy S2139 (either log or rethrow), we wrap the exception 
+            // with additional context. The logging will be handled by the global middleware.
+            throw new ApplicationException($"Error occurred while creating team membership for User {user.Id} in Team {command.TeamId}", ex);
         }
     }
 
