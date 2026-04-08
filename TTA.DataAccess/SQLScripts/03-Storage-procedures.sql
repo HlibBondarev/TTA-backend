@@ -185,50 +185,53 @@ END;$$ LANGUAGE plpgsql;
 -- TEAM MEMBERSHIP STORED FUNCTIONS
 -- ==========================================
 
--- 1) Adds or updates a team membership record.
--- Logic: If p_is_primary is TRUE, it resets any existing primary flags for this user 
--- across all other teams to ensure only one primary team exists at a time.
+-- 1) Upserts a team membership with strict integrity checks:
+-- a. Prevents duplicate active roles for the same user in a team.
+-- b. Ensures only one membership is marked as 'isprimary' for the user across all teams.
+-- c. Synchronizes access policies idempotently.
 
-CREATE OR REPLACE FUNCTION public.upsert_team_membership(
+CREATE OR REPLACE FUNCTION public.upsert_team_membership_with_policy(
     p_id UUID,
-    p_user_id VARCHAR(64),
-    p_team_id UUID,
-    p_role_in_team INT,
-    p_is_primary BOOLEAN,
-    p_app_role INT,
-    p_created_at TIMESTAMPTZ -- Received from the application (DateTime.UtcNow)
+    p_teamid UUID,
+    p_userid VARCHAR(64),
+    p_roleinteam INT,
+    p_isprimary BOOLEAN,
+    p_joinedat TIMESTAMPTZ,
+    p_approle INT
 )
 RETURNS SETOF public.teammemberships AS $$
 BEGIN
-    -- 1. Reset other primary flags if this one is set to primary
-    IF p_is_primary THEN
-        UPDATE public.teammemberships
-        SET isprimary = FALSE
-        WHERE userid = p_user_id AND isprimary = TRUE;
+    -- Business Rule 1: Prevent duplicate active roles in the same team
+    IF EXISTS (
+        SELECT 1 FROM public.teammemberships 
+        WHERE teamid = p_teamid 
+          AND userid = p_userid 
+          AND roleinteam = p_roleinteam 
+          AND leftat IS NULL
+    ) THEN
+        RAISE EXCEPTION 'User already has an active membership with role % in this team.', p_roleinteam
+        USING ERRCODE = '23505'; -- Unique violation
     END IF;
 
-    -- 2. Perform the Membership Upsert
-    INSERT INTO public.teammemberships (
-        id, userid, teamid, roleinteam, joinedat, isprimary
-    )
-    VALUES (
-        p_id, p_user_id, p_team_id, p_role_in_team, p_created_at, p_is_primary
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        roleinteam = EXCLUDED.roleinteam,
-        isprimary = EXCLUDED.isprimary,
-        leftat = NULL;
+    -- Business Rule 2: Reset other primary flags if this new/updated membership is set to primary
+    IF p_isprimary THEN
+        UPDATE public.teammemberships
+        SET isprimary = FALSE
+        WHERE userid = p_userid AND isprimary = TRUE;
+    END IF;
 
-    -- 3. Perform the Access Policy Upsert
-    -- Using the same p_created_at for consistency across schemas
-    INSERT INTO auth.accesspolicies (userid, role, targettype, targetid, createdat)
-    VALUES (p_user_id, p_app_role, 2, p_team_id, p_created_at)
-    ON CONFLICT (userid, targettype, targetid) DO UPDATE SET
-        role = EXCLUDED.role;
+    -- 1. Insert the membership record
+    INSERT INTO public.teammemberships (id, teamid, userid, roleinteam, isprimary, joinedat)
+    VALUES (p_id, p_teamid, p_userid, p_roleinteam, p_isprimary, p_joinedat);
+
+    -- 2. Synchronize access policies (Idempotent)
+    -- uix_accesspolicies_user_target ensures we don't duplicate policies for the same team
+    INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
+    VALUES (gen_random_uuid(), p_userid, p_approle, 2, p_teamid, p_joinedat)
+    ON CONFLICT ON CONSTRAINT uix_accesspolicies_user_target DO NOTHING;
 
     RETURN QUERY SELECT * FROM public.teammemberships WHERE id = p_id;
-END;
-$$ LANGUAGE plpgsql;
+END;$$ LANGUAGE plpgsql;
 
 -- 2) Retrieves all active members of a specific team in json-format.
 

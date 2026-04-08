@@ -17,15 +17,13 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
     /// <inheritdoc />
     public async Task<TeamMembership> CreateMembershipWithPolicyAsync(TeamMembership membership, AppRole appRole, CancellationToken ct = default)
     {
-        // Create empty parameters and add ONLY the extra value (AppRole).
-        // The properties from the 'membership' object will be added automatically 
-        // by the CreateOrUpdate method internally.
+        // We only add AppRole; other params are mapped from the membership entity automatically by BaseRepository
         var parameters = new DynamicParameters();
         parameters.Add("AppRole", (int)appRole);
 
         return await CreateOrUpdate(
             membership,
-            SqlStatements.ForTeamMemberships.UpsertMembership,
+            SqlStatements.ForTeamMemberships.UpsertMembershipWithPolicy,
             parameters,
             ct);
     }

@@ -1,5 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Moq;
+using Npgsql;
+using System.Reflection;
 using TTA.BusinessLogic.Features.Teams.Commands;
 using TTA.BusinessLogic.Features.Teams.Handlers;
 using TTA.Common.Enums;
@@ -215,5 +217,149 @@ public class AddTeamMemberHandlerTests
                 null,
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.AtLeastOnce);
+    }
+
+    /// <summary>
+    /// Verifies that the handler throws a <see cref="ConflictException"/> 
+    /// when the database reports a duplicate active membership (Postgres Error 23505).
+    /// </summary>
+    [Fact]
+    public async Task Handle_DuplicateActiveRole_ShouldThrowConflictException()
+    {
+        // Arrange
+        var command = new AddTeamMemberCommand(
+            TeamId: Guid.NewGuid(),
+            UserEmail: "conflict@example.com",
+            RoleInTeam: TeamRole.Player,
+            IsPrimary: false
+        );
+
+        _teamRepoMock
+            .Setup(x => x.GetByIdAsync(command.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Team { Id = command.TeamId });
+
+        _userRepoMock
+            .Setup(x => x.GetByEmailAsync(command.UserEmail, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new User { Id = "test-user-id" }]);
+
+        // Simulate PostgreSQL Unique Violation (23505)
+        var pgException = CreatePostgresException("23505");
+
+        _membershipRepoMock
+            .Setup(x => x.CreateMembershipWithPolicyAsync(It.IsAny<TeamMembership>(), It.IsAny<AppRole>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(pgException);
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ConflictException>(() => _handler.Handle(command, CancellationToken.None));
+
+        // Verify internal state and logging
+        Assert.Contains(command.RoleInTeam.ToString(), exception.Message);
+
+        _loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Member Refinement Failed")),
+                null,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that the handler correctly logs and rethrows unexpected exceptions.
+    /// </summary>
+    [Fact]
+    public async Task Handle_UnexpectedException_ShouldLogAndRethrow()
+    {
+        // Arrange
+        var command = new AddTeamMemberCommand(Guid.NewGuid(), "error@example.com", TeamRole.Analyst, false);
+
+        // Pass User check
+        _userRepoMock
+            .Setup(x => x.GetByEmailAsync(command.UserEmail, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new User { Id = "user-123", Email = command.UserEmail }]);
+
+        // Pass Team check
+        _teamRepoMock
+            .Setup(x => x.GetByIdAsync(command.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Team { Id = command.TeamId });
+
+        // Fail Membership persistence with a generic exception
+        var expectedException = new Exception("Database connection failed");
+        _membershipRepoMock
+            .Setup(x => x.CreateMembershipWithPolicyAsync(It.IsAny<TeamMembership>(), It.IsAny<AppRole>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(expectedException);
+
+        // Act & Assert
+        // We use ThrowsAsync<Exception> but ensure it's the specific instance
+        var actualException = await Assert.ThrowsAsync<Exception>(() => _handler.Handle(command, CancellationToken.None));
+        Assert.Equal(expectedException.Message, actualException.Message);
+
+        _loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Error occurred while creating team membership")),
+                expectedException,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that an undefined TeamRole throws an <see cref="ArgumentOutOfRangeException"/>.
+    /// </summary>
+    [Fact]
+    public async Task Handle_UndefinedRole_ShouldThrowArgumentOutOfRangeException()
+    {
+        // Arrange
+        // (int)999 is an undefined value for TeamRole enum
+        var command = new AddTeamMemberCommand(Guid.NewGuid(), "unknown-role@example.com", (TeamRole)999, false);
+
+        _teamRepoMock
+            .Setup(x => x.GetByIdAsync(command.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Team { Id = command.TeamId });
+
+        _userRepoMock
+            .Setup(x => x.GetByEmailAsync(command.UserEmail, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new User { Id = "user-123" }]);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => _handler.Handle(command, CancellationToken.None));
+    }
+
+    /// <summary>
+    /// Helper method to create a <see cref="PostgresException"/> with a specific SQL state for testing purposes.
+    /// Uses reflection to bypass the lack of a public constructor in Npgsql.
+    /// </summary>
+    /// <param name="sqlState">The 5-character SQLState code (e.g., "23505").</param>
+    /// <returns>A populated instance of PostgresException.</returns>
+    private static PostgresException CreatePostgresException(string sqlState)
+    {
+        var type = typeof(PostgresException);
+
+        // Get the internal constructor that accepts the most parameters
+        var constructor = type.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+            .OrderByDescending(c => c.GetParameters().Length)
+            .FirstOrDefault();
+
+        if (constructor == null)
+        {
+            throw new InvalidOperationException("Failed to locate a suitable constructor for PostgresException.");
+        }
+
+        var parameters = constructor.GetParameters();
+        var args = new object?[parameters.Length];
+
+        for (int i = 0; i < parameters.Length; i++)
+        {
+            var paramName = parameters[i].Name?.ToLower();
+
+            // Assign the required SQL state, others get dummy test values
+            if (paramName == "sqlstate") args[i] = sqlState;
+            else if (parameters[i].ParameterType == typeof(string)) args[i] = "Database integrity constraint violation";
+            else args[i] = null;
+        }
+
+        return (PostgresException)constructor.Invoke(args);
     }
 }
