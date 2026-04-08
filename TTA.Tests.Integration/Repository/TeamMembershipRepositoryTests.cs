@@ -1,6 +1,5 @@
 ﻿using Dapper;
 using FluentAssertions;
-using Npgsql;
 using System.Text.Json;
 using TTA.BusinessLogic.Features.Teams.DTOs;
 using TTA.Common.Enums;
@@ -463,18 +462,6 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
               VALUES (@id, @email, 'Test User', now())",
             new { id, email });
         return id;
-    }
-
-    private async Task<int> SeedCountryAsync(NpgsqlConnection conn)
-    {
-        // Generate a longer code to prevent collisions in parallel runs
-        var countryCode = Guid.NewGuid().ToString("N")[..8];
-        return await conn.ExecuteScalarAsync<int>(@"
-        INSERT INTO public.countries (name, code, createdat) 
-        VALUES (@name, @code, NOW()) 
-        ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
-        RETURNING id",
-            new { name = $"Country_{countryCode}", code = countryCode });
     }
 
     #endregion
