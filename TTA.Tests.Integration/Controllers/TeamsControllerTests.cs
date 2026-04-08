@@ -129,10 +129,8 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
 
     /// <summary>
     /// Seeds a complete data hierarchy (Country -> Region -> City -> Club -> Team) 
-    /// and grants <c>TeamAdmin</c> permissions to the <c>TestUserId</c>.
+    /// and grants permissions to the TestUserId via an active team membership.
     /// </summary>
-    /// <param name="teamId">The unique identifier for the team to be created.</param>
-    /// <param name="clubId">The unique identifier for the club to be created.</param>
     private async Task SeedFullContextAsync(Guid teamId, Guid clubId)
     {
         // Synchronize database user with claims from TestAuthHandler
@@ -160,10 +158,11 @@ public class TeamsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
             INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) 
             VALUES (@teamId, @clubId, @sportId, 'Integration Test Team', 0, @now)", new { teamId, clubId, sportId, now });
 
-        // Grant Team-level access (TargetType 2) to satisfy the TeamAdmin policy requirement
+        // Grant Team-level access by creating an active membership for the test user.
+        // auth.get_user_permission will now find this and return the necessary AppRole.
         await conn.ExecuteAsync(@"
-            INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat) 
-            VALUES (@id, @userId, 0, 2, @teamId, @now)",
+            INSERT INTO public.teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary) 
+            VALUES (@id, @userId, @teamId, 0, @now, true)",
             new { id = Guid.NewGuid(), userId = TestUserId, teamId, now });
     }
 

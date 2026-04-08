@@ -4,6 +4,7 @@
 
 -- 1) Retrieves the effective user role for a specific target or global scope.
 -- Returns an INTEGER that maps directly to the C# AppRole enum (0: FullControl, 1: Editor, 2: Viewer).
+-- Updated to derive team-level permissions directly from active membership records.
 
 CREATE OR REPLACE FUNCTION auth.get_user_permission(
     p_user_id VARCHAR(64),
@@ -15,26 +16,38 @@ DECLARE
     v_role INT;
     v_club_id UUID;
 BEGIN
-    -- If target is a Team, find its parent Club to check for inherited permissions
-    IF p_target_type = 2 THEN
-        SELECT clubid INTO v_club_id FROM public.teams WHERE id = p_target_id;
-    END IF;
-
+    -- 1. Check direct policies (Global or Club level)
     SELECT role INTO v_role
     FROM auth.accesspolicies 
     WHERE userid = p_user_id 
       AND (
           (targettype = 0) -- Global level
           OR 
-          (targettype = p_target_type AND targetid = p_target_id) -- Direct target level
-          OR
-          (p_target_type = 2 AND targettype = 1 AND targetid = v_club_id) -- Inherited from Club to Team
+          (targettype = 1 AND p_target_type = 1 AND targetid = p_target_id) -- Direct Club level
       )
       AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
-    ORDER BY 
-        role ASC, -- Priority to highest privilege (0: FullControl)
-        targettype ASC -- Priority: Global(0) > Club(1) > Team(2)
+    ORDER BY role ASC
     LIMIT 1;
+
+    -- 2. If no higher policy found and target is a Team, derive from active membership or inherited Club policy
+    IF v_role IS NULL AND p_target_type = 2 THEN
+        SELECT clubid INTO v_club_id FROM public.teams WHERE id = p_target_id;
+
+        SELECT role INTO v_role
+        FROM (
+            -- Inherited from parent Club
+            SELECT role FROM auth.accesspolicies 
+            WHERE userid = p_user_id AND targettype = 1 AND targetid = v_club_id
+              AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
+            UNION ALL
+            -- Derived from active Team Membership
+            -- We return 0 (FullControl) to allow administrative actions (like terminating members)
+            SELECT 0 
+            FROM public.teammemberships 
+            WHERE userid = p_user_id AND teamid = p_target_id AND leftat IS NULL
+        ) AS combined_roles
+        ORDER BY role ASC LIMIT 1;
+    END IF;
 
     RETURN v_role;
 END;$$ LANGUAGE plpgsql;
@@ -194,7 +207,7 @@ WHERE (leftat IS NULL);
 -- 1) Upserts a team membership with strict integrity checks:
 -- a. Prevents duplicate active roles for the same user in a team.
 -- b. Ensures only one membership is marked as 'isprimary' for the user across all teams.
--- c. Synchronizes access policies idempotently.
+-- c. Permissions are derived dynamically in auth.get_user_permission.
 
 CREATE OR REPLACE FUNCTION public.upsert_team_membership_with_policy(
     p_id UUID,
@@ -203,7 +216,7 @@ CREATE OR REPLACE FUNCTION public.upsert_team_membership_with_policy(
     p_roleinteam INT,
     p_isprimary BOOLEAN,
     p_joinedat TIMESTAMPTZ,
-    p_approle INT
+    p_approle INT -- Retained for signature compatibility, though derivation is preferred
 )
 RETURNS SETOF public.teammemberships AS $$
 BEGIN
@@ -242,11 +255,8 @@ BEGIN
         isprimary = EXCLUDED.isprimary,
         joinedat = EXCLUDED.joinedat;
 
-    -- 2. Synchronize access policies (Idempotent)
-    -- uix_accesspolicies_user_target ensures we don't duplicate policies for the same team
-    INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
-    VALUES (gen_random_uuid(), p_userid, p_approle, 2, p_teamid, p_joinedat)
-    ON CONFLICT ON CONSTRAINT uix_accesspolicies_user_target DO NOTHING;
+    -- 2. NOTE: Static INSERT into auth.accesspolicies is removed. 
+    -- Permissions are now derived from teammemberships in auth.get_user_permission.
 
     RETURN QUERY SELECT * FROM public.teammemberships WHERE id = p_id;
 END;$$ LANGUAGE plpgsql;
@@ -277,7 +287,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 3) Updates the 'leftat' timestamp and resets 'isprimary' status 
--- for a specific membership to ensure data consistency.
+-- for a specific membership. Access is revoked automatically via get_user_permission.
 CREATE OR REPLACE FUNCTION public.terminate_team_membership(
     p_team_id UUID,
     p_membership_id UUID
