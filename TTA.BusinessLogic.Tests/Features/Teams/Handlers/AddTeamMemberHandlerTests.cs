@@ -242,7 +242,6 @@ public class AddTeamMemberHandlerTests
             .Setup(x => x.GetByEmailAsync(command.UserEmail, It.IsAny<CancellationToken>()))
             .ReturnsAsync([new User { Id = "test-user-id" }]);
 
-        // Simulate PostgreSQL Unique Violation (23505)
         var pgException = CreatePostgresException("23505");
 
         _membershipRepoMock
@@ -252,31 +251,31 @@ public class AddTeamMemberHandlerTests
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ConflictException>(() => _handler.Handle(command, CancellationToken.None));
 
-        // Verify exception details
+        // Verify exception details and inner exception preservation
         Assert.Contains(command.RoleInTeam.ToString(), exception.Message);
-        // Verify inner exception is preserved
         Assert.Equal(pgException, exception.InnerException);
 
-        // FIX: Update logger verification to expect the pgException object
+        // Verify logger call with the exception object to satisfy Sonar S2630
         _loggerMock.Verify(
             x => x.Log(
                 LogLevel.Warning,
                 It.IsAny<EventId>(),
                 It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Member Refinement Failed")),
-                pgException, // Changed from null to pgException
+                pgException,
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
     }
 
     /// <summary>
-    /// Verifies that the handler wraps unexpected exceptions into an ApplicationException 
-    /// with contextual information to satisfy Sonar rule S2139.
+    /// Verifies that the handler correctly bubbles up unexpected exceptions 
+    /// to the GlobalExceptionHandler without redundant logging.
     /// </summary>
     [Fact]
-    public async Task Handle_UnexpectedException_ShouldRethrowWithContext()
+    public async Task Handle_UnexpectedException_ShouldRethrowToGlobalHandler()
     {
         // Arrange
         var command = new AddTeamMemberCommand(Guid.NewGuid(), "error@example.com", TeamRole.Analyst, false);
+        var expectedException = new Exception("Database connection failed");
 
         _userRepoMock
             .Setup(x => x.GetByEmailAsync(command.UserEmail, It.IsAny<CancellationToken>()))
@@ -286,25 +285,24 @@ public class AddTeamMemberHandlerTests
             .Setup(x => x.GetByIdAsync(command.TeamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Team { Id = command.TeamId });
 
-        var expectedInnerException = new Exception("Database connection failed");
-
         _membershipRepoMock
             .Setup(x => x.CreateMembershipWithPolicyAsync(It.IsAny<TeamMembership>(), It.IsAny<AppRole>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(expectedInnerException);
+            .ThrowsAsync(expectedException);
 
         // Act & Assert
-        // 1. Verify that it throws ApplicationException (as defined in our handler)
-        var actualException = await Assert.ThrowsAsync<ApplicationException>(() => _handler.Handle(command, CancellationToken.None));
+        // Expect original exception to bubble up for GlobalExceptionHandler to handle
+        var actualException = await Assert.ThrowsAsync<Exception>(() => _handler.Handle(command, CancellationToken.None));
+        Assert.Equal(expectedException.Message, actualException.Message);
 
-        // 2. Verify contextual message
-        Assert.Contains("Error occurred while creating team membership", actualException.Message);
-        Assert.Contains("user-123", actualException.Message);
-
-        // 3. Verify inner exception is preserved (Critical for S2630/S2139)
-        Assert.Equal(expectedInnerException, actualException.InnerException);
-
-        // NOTE: We no longer verify _loggerMock.LogError here because we removed it 
-        // to satisfy Sonar's "Log or Rethrow" rule. Logging is now handled by Global Middleware.
+        // Verify no error log is generated here to satisfy Sonar S2139 (Log or Rethrow)
+        _loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
     }
 
     /// <summary>
