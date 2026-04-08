@@ -214,10 +214,13 @@ BEGIN
     END IF;
 
     -- Business Rule 2: Reset other primary flags if this new/updated membership is set to primary
+    --                  Only affect active memberships (leftat IS NULL) to maintain historical data integrity.
     IF p_isprimary THEN
         UPDATE public.teammemberships
         SET isprimary = FALSE
-        WHERE userid = p_userid AND isprimary = TRUE;
+        WHERE userid = p_userid 
+            AND isprimary = TRUE 
+            AND leftat IS NULL;
     END IF;
 
     -- 1. Insert the membership record
