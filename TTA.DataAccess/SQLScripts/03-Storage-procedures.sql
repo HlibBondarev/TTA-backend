@@ -185,6 +185,12 @@ END;$$ LANGUAGE plpgsql;
 -- TEAM MEMBERSHIP STORED FUNCTIONS
 -- ==========================================
 
+-- Enforce Business Rule 1 at the DB level to prevent concurrent-insert races.
+-- This ensures only one active role of a specific type exists per user in a team.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_teammemberships_active_role_per_team 
+ON public.teammemberships (teamid, userid, roleinteam) 
+WHERE (leftat IS NULL);
+
 -- 1) Upserts a team membership with strict integrity checks:
 -- a. Prevents duplicate active roles for the same user in a team.
 -- b. Ensures only one membership is marked as 'isprimary' for the user across all teams.
