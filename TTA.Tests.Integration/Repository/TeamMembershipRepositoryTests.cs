@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using FluentAssertions;
+using Npgsql;
 using System.Text.Json;
 using TTA.BusinessLogic.Features.Teams.DTOs;
 using TTA.Common.Enums;
@@ -211,6 +212,34 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
             _repository.CreateMembershipWithPolicyAsync(second, AppRole.Editor));
 
         Assert.Equal("23505", ex.SqlState);
+    }
+
+    [Theory]
+    [InlineData(true)]  // New is primary -> should reset old
+    [InlineData(false)] // New is NOT primary -> should NOT reset old
+    public async Task CreateMembershipWithPolicyAsync_ShouldHandlePrimaryResetCorrectly(bool newIsPrimary)
+    {
+        // Arrange
+        var teamId = await SeedTeamAsync();
+        var userId = await SeedUserAsync("primary-test@test.com");
+
+        // Seed an existing primary membership
+        var oldMembership = CreateModel(teamId, userId, TeamRole.Player, isPrimary: true);
+        await _repository.CreateMembershipWithPolicyAsync(oldMembership, AppRole.Viewer);
+
+        // Act: Create new membership
+        var newMembership = CreateModel(teamId, userId, TeamRole.AssistantCoach, isPrimary: newIsPrimary);
+        await _repository.CreateMembershipWithPolicyAsync(newMembership, (int)AppRole.FullControl);
+
+        // Assert
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var oldIsPrimary = await conn.ExecuteScalarAsync<bool>(
+            "SELECT isprimary FROM public.teammemberships WHERE id = @Id", new { oldMembership.Id });
+
+        if (newIsPrimary)
+            Assert.False(oldIsPrimary); // Should be reset
+        else
+            Assert.True(oldIsPrimary);  // Should remain primary
     }
 
     /// <summary>
@@ -434,6 +463,18 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
               VALUES (@id, @email, 'Test User', now())",
             new { id, email });
         return id;
+    }
+
+    private async Task<int> SeedCountryAsync(NpgsqlConnection conn)
+    {
+        // Generate a longer code to prevent collisions in parallel runs
+        var countryCode = Guid.NewGuid().ToString("N")[..8];
+        return await conn.ExecuteScalarAsync<int>(@"
+        INSERT INTO public.countries (name, code, createdat) 
+        VALUES (@name, @code, NOW()) 
+        ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+        RETURNING id",
+            new { name = $"Country_{countryCode}", code = countryCode });
     }
 
     #endregion

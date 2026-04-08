@@ -3,8 +3,8 @@
 -- =============================================================
 
 -- 1) Retrieves the effective user role for a specific target or global scope.
--- Returns an INTEGER that maps directly to the C# AppRole enum (0: FullControl, 1: Editor, 2: Viewer).
--- Updated to derive team-level permissions directly from active membership records.
+-- Returns an INTEGER mapping to C# AppRole (0: FullControl, 1: Editor, 2: Viewer).
+-- Logic: Checks direct policies first, then derives team-level access from active memberships.
 
 CREATE OR REPLACE FUNCTION auth.get_user_permission(
     p_user_id VARCHAR(64),
@@ -16,7 +16,7 @@ DECLARE
     v_role INT;
     v_club_id UUID;
 BEGIN
-    -- 1. Check direct policies (Global or Club level)
+    -- 1. Check direct policies (Global or Direct Club level)
     SELECT role INTO v_role
     FROM auth.accesspolicies 
     WHERE userid = p_user_id 
@@ -29,19 +29,21 @@ BEGIN
     ORDER BY role ASC
     LIMIT 1;
 
-    -- 2. If no higher policy found and target is a Team, derive from active membership or inherited Club policy
+    -- 2. If no direct policy found and target is a Team, derive from membership or inherited Club policy
     IF v_role IS NULL AND p_target_type = 2 THEN
+        -- Resolve parent club for inheritance check
         SELECT clubid INTO v_club_id FROM public.teams WHERE id = p_target_id;
 
         SELECT role INTO v_role
         FROM (
-            -- Inherited from parent Club
+            -- Inherited from parent Club policy
             SELECT role FROM auth.accesspolicies 
             WHERE userid = p_user_id AND targettype = 1 AND targetid = v_club_id
               AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
             UNION ALL
             -- Derived from active Team Membership
-            -- We return 0 (FullControl) to allow administrative actions (like terminating members)
+            -- Note: We check 'leftat' to ensure the membership is still active.
+            -- Using 0 (FullControl) ensures the member has administrative rights for their team.
             SELECT 0 
             FROM public.teammemberships 
             WHERE userid = p_user_id AND teamid = p_target_id AND leftat IS NULL
@@ -207,7 +209,7 @@ WHERE (leftat IS NULL);
 -- 1) Upserts a team membership with strict integrity checks:
 -- a. Prevents duplicate active roles for the same user in a team.
 -- b. Ensures only one membership is marked as 'isprimary' for the user across all teams.
--- c. Permissions are derived dynamically in auth.get_user_permission.
+-- c. Uses p_approle to maintain a matching record in auth.accesspolicies for standard lookups.
 
 CREATE OR REPLACE FUNCTION public.upsert_team_membership_with_policy(
     p_id UUID,
@@ -216,7 +218,7 @@ CREATE OR REPLACE FUNCTION public.upsert_team_membership_with_policy(
     p_roleinteam INT,
     p_isprimary BOOLEAN,
     p_joinedat TIMESTAMPTZ,
-    p_approle INT -- Retained for signature compatibility, though derivation is preferred
+    p_approle INT -- Now used to synchronize the security policy
 )
 RETURNS SETOF public.teammemberships AS $$
 BEGIN
@@ -227,24 +229,23 @@ BEGIN
           AND userid = p_userid 
           AND roleinteam = p_roleinteam 
           AND leftat IS NULL
-          AND id <> p_id -- Ensure we don't block an update of the same record
+          AND id <> p_id 
     ) THEN
         RAISE EXCEPTION 'User already has an active membership with role % in this team.', p_roleinteam
-        USING ERRCODE = '23505'; -- Unique violation
+        USING ERRCODE = '23505';
     END IF;
 
-    -- Business Rule 2: Reset other primary flags if this new/updated membership is set to primary
-    --                  Only affect active memberships (leftat IS NULL) to maintain historical data integrity.
+    -- Business Rule 2: Reset other primary flags for active memberships
     IF p_isprimary THEN
         UPDATE public.teammemberships
         SET isprimary = FALSE
         WHERE userid = p_userid 
             AND isprimary = TRUE 
             AND leftat IS NULL
-            AND id <> p_id; -- Don't reset the flag if we are updating the current record
+            AND id <> p_id;
     END IF;
 
-    -- 1. Insert or Update the membership record (Idempotent UPSERT)
+    -- 1. Insert or Update the membership record
     INSERT INTO public.teammemberships (id, teamid, userid, roleinteam, isprimary, joinedat)
     VALUES (p_id, p_teamid, p_userid, p_roleinteam, p_isprimary, p_joinedat)
     ON CONFLICT (id) DO UPDATE 
@@ -255,8 +256,12 @@ BEGIN
         isprimary = EXCLUDED.isprimary,
         joinedat = EXCLUDED.joinedat;
 
-    -- 2. NOTE: Static INSERT into auth.accesspolicies is removed. 
-    -- Permissions are now derived from teammemberships in auth.get_user_permission.
+    -- 2. Synchronize the security policy in the auth schema
+    -- This ensures p_approle is used (Rabbit's fix) and permissions are explicitly stored.
+    INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
+    VALUES (gen_random_uuid(), p_userid, p_approle, 2, p_teamid, NOW())
+    ON CONFLICT (userid, targettype, targetid) DO UPDATE 
+    SET role = EXCLUDED.role;
 
     RETURN QUERY SELECT * FROM public.teammemberships WHERE id = p_id;
 END;$$ LANGUAGE plpgsql;
