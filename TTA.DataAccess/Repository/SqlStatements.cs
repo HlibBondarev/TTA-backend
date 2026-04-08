@@ -82,8 +82,8 @@ public static class SqlStatements
         /// <summary>
         /// SQL to call the upsert function for team membership.
         /// </summary>
-        public const string UpsertMembership =
-        "SELECT * FROM public.upsert_team_membership(@Id, @UserId, @TeamId, @RoleInTeam, @IsPrimary, @AppRole, @JoinedAt)";
+        public const string UpsertMembershipWithPolicy =
+            "SELECT * FROM public.upsert_team_membership_with_policy(@Id, @TeamId, @UserId, @RoleInTeam, @IsPrimary, @JoinedAt, @AppRole)";
 
         /// <summary>
         /// SQL to call the termination function with team-scoped validation.

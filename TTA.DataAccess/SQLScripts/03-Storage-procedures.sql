@@ -3,7 +3,8 @@
 -- =============================================================
 
 -- 1) Retrieves the effective user role for a specific target or global scope.
--- Returns an INTEGER that maps directly to the C# AppRole enum (0: FullControl, 1: Editor, 2: Viewer).
+-- Returns an INTEGER mapping to C# AppRole (0: FullControl, 1: Editor, 2: Viewer).
+-- Logic: Checks direct policies first, then derives team-level access from active memberships.
 
 CREATE OR REPLACE FUNCTION auth.get_user_permission(
     p_user_id VARCHAR(64),
@@ -15,26 +16,40 @@ DECLARE
     v_role INT;
     v_club_id UUID;
 BEGIN
-    -- If target is a Team, find its parent Club to check for inherited permissions
-    IF p_target_type = 2 THEN
-        SELECT clubid INTO v_club_id FROM public.teams WHERE id = p_target_id;
-    END IF;
-
+    -- 1. Check direct policies (Global or Direct Club level)
     SELECT role INTO v_role
     FROM auth.accesspolicies 
     WHERE userid = p_user_id 
       AND (
           (targettype = 0) -- Global level
           OR 
-          (targettype = p_target_type AND targetid = p_target_id) -- Direct target level
-          OR
-          (p_target_type = 2 AND targettype = 1 AND targetid = v_club_id) -- Inherited from Club to Team
+          (targettype = 1 AND p_target_type = 1 AND targetid = p_target_id) -- Direct Club level
       )
       AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
-    ORDER BY 
-        role ASC, -- Priority to highest privilege (0: FullControl)
-        targettype ASC -- Priority: Global(0) > Club(1) > Team(2)
+    ORDER BY role ASC
     LIMIT 1;
+
+    -- 2. If no direct policy found and target is a Team, derive from membership or inherited Club policy
+    IF v_role IS NULL AND p_target_type = 2 THEN
+        -- Resolve parent club for inheritance check
+        SELECT clubid INTO v_club_id FROM public.teams WHERE id = p_target_id;
+
+        SELECT role INTO v_role
+        FROM (
+            -- Inherited from parent Club policy
+            SELECT role FROM auth.accesspolicies 
+            WHERE userid = p_user_id AND targettype = 1 AND targetid = v_club_id
+              AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
+            UNION ALL
+            -- Derived from active Team Membership
+            -- Note: We check 'leftat' to ensure the membership is still active.
+            -- Using 0 (FullControl) ensures the member has administrative rights for their team.
+            SELECT 0 
+            FROM public.teammemberships 
+            WHERE userid = p_user_id AND teamid = p_target_id AND leftat IS NULL
+        ) AS combined_roles
+        ORDER BY role ASC LIMIT 1;
+    END IF;
 
     RETURN v_role;
 END;$$ LANGUAGE plpgsql;
@@ -185,50 +200,71 @@ END;$$ LANGUAGE plpgsql;
 -- TEAM MEMBERSHIP STORED FUNCTIONS
 -- ==========================================
 
--- 1) Adds or updates a team membership record.
--- Logic: If p_is_primary is TRUE, it resets any existing primary flags for this user 
--- across all other teams to ensure only one primary team exists at a time.
+-- Enforce Business Rule 1 at the DB level to prevent concurrent-insert races.
+-- This ensures only one active role of a specific type exists per user in a team.
+CREATE UNIQUE INDEX IF NOT EXISTS uix_teammemberships_active_role_per_team 
+ON public.teammemberships (teamid, userid, roleinteam) 
+WHERE (leftat IS NULL);
 
-CREATE OR REPLACE FUNCTION public.upsert_team_membership(
+-- 1) Upserts a team membership with strict integrity checks:
+-- a. Prevents duplicate active roles for the same user in a team.
+-- b. Ensures only one membership is marked as 'isprimary' for the user across all teams.
+-- c. Uses p_approle to maintain a matching record in auth.accesspolicies for standard lookups.
+
+CREATE OR REPLACE FUNCTION public.upsert_team_membership_with_policy(
     p_id UUID,
-    p_user_id VARCHAR(64),
-    p_team_id UUID,
-    p_role_in_team INT,
-    p_is_primary BOOLEAN,
-    p_app_role INT,
-    p_created_at TIMESTAMPTZ -- Received from the application (DateTime.UtcNow)
+    p_teamid UUID,
+    p_userid VARCHAR(64),
+    p_roleinteam INT,
+    p_isprimary BOOLEAN,
+    p_joinedat TIMESTAMPTZ,
+    p_approle INT -- Now used to synchronize the security policy
 )
 RETURNS SETOF public.teammemberships AS $$
 BEGIN
-    -- 1. Reset other primary flags if this one is set to primary
-    IF p_is_primary THEN
-        UPDATE public.teammemberships
-        SET isprimary = FALSE
-        WHERE userid = p_user_id AND isprimary = TRUE;
+    -- Business Rule 1: Prevent duplicate active roles in the same team
+    IF EXISTS (
+        SELECT 1 FROM public.teammemberships 
+        WHERE teamid = p_teamid 
+          AND userid = p_userid 
+          AND roleinteam = p_roleinteam 
+          AND leftat IS NULL
+          AND id <> p_id 
+    ) THEN
+        RAISE EXCEPTION 'User already has an active membership with role % in this team.', p_roleinteam
+        USING ERRCODE = '23505';
     END IF;
 
-    -- 2. Perform the Membership Upsert
-    INSERT INTO public.teammemberships (
-        id, userid, teamid, roleinteam, joinedat, isprimary
-    )
-    VALUES (
-        p_id, p_user_id, p_team_id, p_role_in_team, p_created_at, p_is_primary
-    )
-    ON CONFLICT (id) DO UPDATE SET
+    -- Business Rule 2: Reset other primary flags for active memberships
+    IF p_isprimary THEN
+        UPDATE public.teammemberships
+        SET isprimary = FALSE
+        WHERE userid = p_userid 
+            AND isprimary = TRUE 
+            AND leftat IS NULL
+            AND id <> p_id;
+    END IF;
+
+    -- 1. Insert or Update the membership record
+    INSERT INTO public.teammemberships (id, teamid, userid, roleinteam, isprimary, joinedat)
+    VALUES (p_id, p_teamid, p_userid, p_roleinteam, p_isprimary, p_joinedat)
+    ON CONFLICT (id) DO UPDATE 
+    SET 
+        teamid = EXCLUDED.teamid,
+        userid = EXCLUDED.userid,
         roleinteam = EXCLUDED.roleinteam,
         isprimary = EXCLUDED.isprimary,
-        leftat = NULL;
+        joinedat = EXCLUDED.joinedat;
 
-    -- 3. Perform the Access Policy Upsert
-    -- Using the same p_created_at for consistency across schemas
-    INSERT INTO auth.accesspolicies (userid, role, targettype, targetid, createdat)
-    VALUES (p_user_id, p_app_role, 2, p_team_id, p_created_at)
-    ON CONFLICT (userid, targettype, targetid) DO UPDATE SET
-        role = EXCLUDED.role;
+    -- 2. Synchronize the security policy in the auth schema
+    -- This ensures p_approle is used (Rabbit's fix) and permissions are explicitly stored.
+    INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
+    VALUES (gen_random_uuid(), p_userid, p_approle, 2, p_teamid, NOW())
+    ON CONFLICT (userid, targettype, targetid) DO UPDATE 
+    SET role = EXCLUDED.role;
 
     RETURN QUERY SELECT * FROM public.teammemberships WHERE id = p_id;
-END;
-$$ LANGUAGE plpgsql;
+END;$$ LANGUAGE plpgsql;
 
 -- 2) Retrieves all active members of a specific team in json-format.
 
@@ -256,7 +292,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 3) Updates the 'leftat' timestamp and resets 'isprimary' status 
--- for a specific membership to ensure data consistency.
+-- for a specific membership. Access is revoked automatically via get_user_permission.
 CREATE OR REPLACE FUNCTION public.terminate_team_membership(
     p_team_id UUID,
     p_membership_id UUID

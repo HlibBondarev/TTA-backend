@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Moq;
+using Npgsql;
 using TTA.BusinessLogic.Features.Teams.Commands;
 using TTA.BusinessLogic.Features.Teams.Handlers;
 using TTA.Common.Enums;
@@ -215,5 +216,129 @@ public class AddTeamMemberHandlerTests
                 null,
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.AtLeastOnce);
+    }
+
+    /// <summary>
+    /// Verifies that the handler throws a <see cref="ConflictException"/> 
+    /// when the database reports a duplicate active membership (Postgres Error 23505).
+    /// </summary>
+    [Fact]
+    public async Task Handle_DuplicateActiveRole_ShouldThrowConflictException()
+    {
+        // Arrange
+        var command = new AddTeamMemberCommand(
+            TeamId: Guid.NewGuid(),
+            UserEmail: "conflict@example.com",
+            RoleInTeam: TeamRole.Player,
+            IsPrimary: false
+        );
+
+        _teamRepoMock
+            .Setup(x => x.GetByIdAsync(command.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Team { Id = command.TeamId });
+
+        _userRepoMock
+            .Setup(x => x.GetByEmailAsync(command.UserEmail, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new User { Id = "test-user-id" }]);
+
+        var pgException = CreatePostgresException("23505");
+
+        _membershipRepoMock
+            .Setup(x => x.CreateMembershipWithPolicyAsync(It.IsAny<TeamMembership>(), It.IsAny<AppRole>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(pgException);
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ConflictException>(() => _handler.Handle(command, CancellationToken.None));
+
+        // Verify exception details and inner exception preservation
+        Assert.Contains(command.RoleInTeam.ToString(), exception.Message);
+        Assert.Equal(pgException, exception.InnerException);
+
+        // Verify logger call with the exception object to satisfy Sonar S2630
+        _loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Member Refinement Failed")),
+                pgException,
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that the handler correctly bubbles up unexpected exceptions 
+    /// to the GlobalExceptionHandler without redundant logging.
+    /// </summary>
+    [Fact]
+    public async Task Handle_UnexpectedException_ShouldRethrowToGlobalHandler()
+    {
+        // Arrange
+        var command = new AddTeamMemberCommand(Guid.NewGuid(), "error@example.com", TeamRole.Analyst, false);
+        var expectedException = new Exception("Database connection failed");
+
+        _userRepoMock
+            .Setup(x => x.GetByEmailAsync(command.UserEmail, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new User { Id = "user-123", Email = command.UserEmail }]);
+
+        _teamRepoMock
+            .Setup(x => x.GetByIdAsync(command.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Team { Id = command.TeamId });
+
+        _membershipRepoMock
+            .Setup(x => x.CreateMembershipWithPolicyAsync(It.IsAny<TeamMembership>(), It.IsAny<AppRole>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(expectedException);
+
+        // Act & Assert
+        // Expect original exception to bubble up for GlobalExceptionHandler to handle
+        var actualException = await Assert.ThrowsAsync<Exception>(() => _handler.Handle(command, CancellationToken.None));
+        Assert.Equal(expectedException.Message, actualException.Message);
+
+        // Verify no error log is generated here to satisfy Sonar S2139 (Log or Rethrow)
+        _loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that an undefined TeamRole throws an <see cref="ArgumentOutOfRangeException"/>.
+    /// </summary>
+    [Fact]
+    public async Task Handle_UndefinedRole_ShouldThrowArgumentOutOfRangeException()
+    {
+        // Arrange
+        // (int)999 is an undefined value for TeamRole enum
+        var command = new AddTeamMemberCommand(Guid.NewGuid(), "unknown-role@example.com", (TeamRole)999, false);
+
+        _teamRepoMock
+            .Setup(x => x.GetByIdAsync(command.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Team { Id = command.TeamId });
+
+        _userRepoMock
+            .Setup(x => x.GetByEmailAsync(command.UserEmail, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new User { Id = "user-123" }]);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => _handler.Handle(command, CancellationToken.None));
+    }
+
+    /// <summary>
+    /// Helper method to create a <see cref="PostgresException"/> with a specific SQL state for testing purposes.
+    /// </summary>
+    /// <param name="sqlState">The 5-character SQLState code (e.g., "23505").</param>
+    /// <returns>A populated instance of PostgresException.</returns>
+    private static PostgresException CreatePostgresException(string sqlState)
+    {
+        // Directly using the public constructor to avoid reflection fragility
+        return new PostgresException(
+            messageText: "Database integrity constraint violation",
+            severity: "ERROR",
+            invariantSeverity: "ERROR",
+            sqlState: sqlState
+        );
     }
 }

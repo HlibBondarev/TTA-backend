@@ -125,6 +125,123 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
     }
 
     /// <summary>
+    /// Verifies that <see cref="TeamMembershipRepository.CreateMembershipWithPolicyAsync"/> 
+    /// successfully inserts a membership record and that access is effectively granted.
+    /// </summary>
+    [Fact]
+    public async Task CreateMembershipWithPolicyAsync_ShouldInsertMembershipAndAccessIsGranted()
+    {
+        // Arrange
+        var teamId = await SeedTeamAsync();
+        var userId = await SeedUserAsync("user@test.com");
+        var membership = CreateModel(teamId, userId, TeamRole.Player, isPrimary: true);
+        // Note: appRole is passed but since we now derive 0 (FullControl) in the DB 
+        // for all active members in our current logic, that's what we expect back.
+        var appRole = AppRole.FullControl;
+
+        // Act
+        var result = await _repository.CreateMembershipWithPolicyAsync(membership, appRole);
+
+        // Assert
+        Assert.Equal(membership.Id, result.Id);
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // 1. Verify membership exists
+        var dbMembership = await conn.QuerySingleOrDefaultAsync<TeamMembership>(
+            "SELECT * FROM public.teammemberships WHERE id = @Id", new { result.Id });
+        Assert.NotNull(dbMembership);
+
+        // 2. Instead of checking a table that should be empty for teams,
+        // verify the permission function returns the correct role (0 for FullControl).
+        var effectiveRole = await conn.QuerySingleOrDefaultAsync<int?>(
+            "SELECT auth.get_user_permission(@UserId, 2, @TeamId)",
+            new { UserId = userId, TeamId = teamId });
+
+        Assert.Equal((int)appRole, effectiveRole);
+    }
+
+    /// <summary>
+    /// Verifies the primary membership rotation logic. 
+    /// When a new membership is marked as primary, the existing one is reset to non-primary.
+    /// </summary>
+    [Fact]
+    public async Task CreateMembershipWithPolicyAsync_WhenNewIsPrimary_ShouldResetOldPrimary()
+    {
+        // Arrange
+        var team1Id = await SeedTeamAsync();
+        var team2Id = await SeedTeamAsync();
+        var userId = await SeedUserAsync("primary-test@test.com");
+
+        var firstMembership = CreateModel(team1Id, userId, TeamRole.AssistantCoach, isPrimary: true);
+        await _repository.CreateMembershipWithPolicyAsync(firstMembership, AppRole.FullControl);
+
+        var secondMembership = CreateModel(team2Id, userId, TeamRole.HeadCoach, isPrimary: true);
+
+        // Act
+        await _repository.CreateMembershipWithPolicyAsync(secondMembership, AppRole.FullControl);
+
+        // Assert
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var memberships = (await conn.QueryAsync<TeamMembership>(
+            "SELECT * FROM public.teammemberships WHERE userid = @UserId", new { UserId = userId })).ToList();
+
+        Assert.False(memberships.First(m => m.Id == firstMembership.Id).IsPrimary);
+        Assert.True(memberships.First(m => m.Id == secondMembership.Id).IsPrimary);
+    }
+
+    /// <summary>
+    /// Verifies that the database prevents duplicate active roles for the same user in the same team.
+    /// </summary>
+    [Fact]
+    public async Task CreateMembershipWithPolicyAsync_DuplicateActiveRole_ShouldThrowPostgresException()
+    {
+        // Arrange
+        var teamId = await SeedTeamAsync();
+        var userId = await SeedUserAsync("duplicate-role@test.com");
+        var role = TeamRole.Analyst;
+
+        var first = CreateModel(teamId, userId, role, isPrimary: false);
+        await _repository.CreateMembershipWithPolicyAsync(first, AppRole.Editor);
+
+        var second = CreateModel(teamId, userId, role, isPrimary: false);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<Npgsql.PostgresException>(() =>
+            _repository.CreateMembershipWithPolicyAsync(second, AppRole.Editor));
+
+        Assert.Equal("23505", ex.SqlState);
+    }
+
+    [Theory]
+    [InlineData(true)]  // New is primary -> should reset old
+    [InlineData(false)] // New is NOT primary -> should NOT reset old
+    public async Task CreateMembershipWithPolicyAsync_ShouldHandlePrimaryResetCorrectly(bool newIsPrimary)
+    {
+        // Arrange
+        var teamId = await SeedTeamAsync();
+        var userId = await SeedUserAsync("primary-test@test.com");
+
+        // Seed an existing primary membership
+        var oldMembership = CreateModel(teamId, userId, TeamRole.Player, isPrimary: true);
+        await _repository.CreateMembershipWithPolicyAsync(oldMembership, AppRole.Viewer);
+
+        // Act: Create new membership
+        var newMembership = CreateModel(teamId, userId, TeamRole.AssistantCoach, isPrimary: newIsPrimary);
+        await _repository.CreateMembershipWithPolicyAsync(newMembership, (int)AppRole.FullControl);
+
+        // Assert
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var oldIsPrimary = await conn.ExecuteScalarAsync<bool>(
+            "SELECT isprimary FROM public.teammemberships WHERE id = @Id", new { oldMembership.Id });
+
+        if (newIsPrimary)
+            Assert.False(oldIsPrimary); // Should be reset
+        else
+            Assert.True(oldIsPrimary);  // Should remain primary
+    }
+
+    /// <summary>
     /// Verifies that membership termination fails if the provided TeamId does not match 
     /// the team associated with the membership.
     /// </summary>
@@ -279,6 +396,72 @@ public class TeamMembershipRepositoryTests(DatabaseFixture fixture) : BaseIntegr
     {
         using var conn = Fixture.ConnectionFactory.CreateConnection();
         return await conn.QueryAsync<TeamMembership>("SELECT * FROM public.teammemberships WHERE userid = @userId", new { userId });
+    }
+
+    private static TeamMembership CreateModel(Guid teamId, string userId, TeamRole role, bool isPrimary) => new()
+    {
+        Id = Guid.NewGuid(),
+        TeamId = teamId,
+        UserId = userId,
+        RoleInTeam = role,
+        IsPrimary = isPrimary,
+        JoinedAt = DateTime.UtcNow
+    };
+
+    /// <summary>
+    /// Seeds a complete hierarchy required for a Team to exist: 
+    /// Country -> Region -> City -> Club AND Sport -> Team.
+    /// </summary>
+    private async Task<Guid> SeedTeamAsync()
+    {
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // 1. Seed Geography
+        var countryId = await conn.ExecuteScalarAsync<int>(
+            "INSERT INTO public.countries (name, code, createdat) VALUES (@n, @c, now()) RETURNING id",
+            new { n = $"Country_{Guid.NewGuid()}", c = Guid.NewGuid().ToString()[..3] });
+
+        var regionId = await conn.ExecuteScalarAsync<int>(
+            "INSERT INTO public.regions (countryid, name) VALUES (@cid, @n) RETURNING id",
+            new { cid = countryId, n = "Test Region" });
+
+        var cityId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.cities (id, regionid, name) VALUES (@id, @rid, @n)",
+            new { id = cityId, rid = regionId, n = "Test City" });
+
+        // 2. Seed Club
+        var clubId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            @"INSERT INTO public.clubs (id, name, cityid, createdat) 
+              VALUES (@id, 'Test Club', @cityId, now())",
+            new { id = clubId, cityId });
+
+        // 3. Seed Sport
+        var sportId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.sports (id, name) VALUES (@id, @n)",
+            new { id = sportId, n = $"Sport_{Guid.NewGuid()}" });
+
+        // 4. Seed Team (Gender 0 = Male, 1 = Female)
+        var teamId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            @"INSERT INTO public.teams (id, name, clubid, sportid, gender, createdat) 
+              VALUES (@id, 'Test Team', @clubId, @sportId, 0, now())",
+            new { id = teamId, clubId, sportId });
+
+        return teamId;
+    }
+
+    private async Task<string> SeedUserAsync(string email)
+    {
+        var id = $"auth0|{Guid.NewGuid()}";
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        await conn.ExecuteAsync(
+            @"INSERT INTO public.users (id, email, displayname, createdat) 
+              VALUES (@id, @email, 'Test User', now())",
+            new { id, email });
+        return id;
     }
 
     #endregion

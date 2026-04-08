@@ -1,5 +1,6 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using TTA.BusinessLogic.Features.Teams.Commands;
 using TTA.Common.Enums;
 using TTA.Common.Exceptions;
@@ -9,7 +10,8 @@ using TTA.DataAccess.Repository.Api;
 namespace TTA.BusinessLogic.Features.Teams.Handlers;
 
 /// <summary>
-/// Handles the addition of a member to a team, ensuring both the team and the user exist.
+/// Handles the addition of a member to a team, ensuring both the team and the user exist,
+/// preventing duplicate active roles, and managing primary team status.
 /// </summary>
 public class AddTeamMemberHandler(
     ITeamMembershipRepository membershipRepository,
@@ -23,13 +25,14 @@ public class AddTeamMemberHandler(
     private readonly ILogger<AddTeamMemberHandler> _logger = logger;
 
     /// <summary>
-    /// Validates dependencies and persists the new team membership.
+    /// Validates dependencies and persists the new team membership with integrity checks.
     /// </summary>
     /// <param name="command">The command containing membership details.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The unique identifier of the created membership.</returns>
     /// <exception cref="NotFoundException">Thrown when the team or user does not exist.</exception>
-    /// <exception cref="InvalidOperationException">Thrown when multiple users are found with the same email.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when data integrity issues are detected (e.g., duplicate emails).</exception>
+    /// <exception cref="ConflictException">Thrown when the user already has an active membership with the same role.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the TeamRole cannot be mapped to an AppRole.</exception>
     public async Task<Guid> Handle(AddTeamMemberCommand command, CancellationToken cancellationToken)
     {
@@ -41,17 +44,14 @@ public class AddTeamMemberHandler(
         var users = await _userRepository.GetByEmailAsync(command.UserEmail, cancellationToken);
         var userList = users.ToList();
 
-        // Ensure exactly one user is found to prevent arbitrary assignment
         if (userList.Count == 0)
         {
-            // PII Fix: Use safeEmail in warning log
             _logger.LogWarning("AddMember failed: User with email {Email} not found.", safeEmail);
             throw new NotFoundException($"User with email {command.UserEmail} was not found.");
         }
 
         if (userList.Count > 1)
         {
-            // PII Fix: Use safeEmail in error log
             _logger.LogError("AddMember failed: Multiple users found with the same email {Email}.", safeEmail);
             throw new InvalidOperationException($"Multiple users found with email {command.UserEmail}. Data integrity issue.");
         }
@@ -69,16 +69,28 @@ public class AddTeamMemberHandler(
         // 3. Map TeamRole to system AppRole enum
         AppRole appRole = MapToAppRole(command.RoleInTeam);
 
-        // 4. Create model and persist via Repository
-        // Refactor: Pass userId to ToModel to ensure the model is created with its required identity
+        // 4. Prepare Entity
         var membership = command.ToModel(user.Id);
 
-        var result = await _membershipRepository.CreateMembershipWithPolicyAsync(membership, appRole, cancellationToken);
+        try
+        {
+            // 5. Persistence with DB-level validation (Active Role Check & Primary Flag Reset)
+            var result = await _membershipRepository.CreateMembershipWithPolicyAsync(membership, appRole, cancellationToken);
 
-        _logger.LogInformation("Successfully persisted membership {MembershipId} with AppRole {AppRole}",
-            result.Id, appRole.ToString());
+            _logger.LogInformation("Successfully persisted membership {MembershipId} for User {UserId} with AppRole {AppRole}",
+                result.Id, user.Id, appRole.ToString());
 
-        return result.Id;
+            return result.Id;
+        }
+        catch (PostgresException ex) when (ex.SqlState == "23505")
+        {
+            // Pass 'ex' to satisfy Sonar S2630
+            _logger.LogWarning(ex, "Member Refinement Failed: Duplicate active role {Role} for User {UserId}",
+                command.RoleInTeam, user.Id);
+
+            // Wrap with custom ConflictException to preserve context and satisfy S2139
+            throw new ConflictException($"The user is already an active '{command.RoleInTeam}' in this team.", ex);
+        }
     }
 
     /// <summary>
