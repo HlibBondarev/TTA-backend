@@ -4,7 +4,7 @@
 
 -- 1) Retrieves the effective user role for a specific target or global scope.
 -- Returns an INTEGER mapping to C# AppRole (0: FullControl, 1: Editor, 2: Viewer).
--- Logic: Checks direct policies first, then derives team-level access from active memberships.
+-- Logic: Checks direct policies first, then derives team-level access
 
 CREATE OR REPLACE FUNCTION auth.get_user_permission(
     p_user_id VARCHAR(64),
@@ -16,7 +16,8 @@ DECLARE
     v_role INT;
     v_club_id UUID;
 BEGIN
-    -- 1. Check direct policies (Global or Direct Club level)
+    -- 1. Check direct top-level policies (Global or Direct Club level)
+    -- Logic: Returns the most permissive role if a Global or direct Club policy exists.
     SELECT role INTO v_role
     FROM auth.accesspolicies 
     WHERE userid = p_user_id 
@@ -29,29 +30,68 @@ BEGIN
     ORDER BY role ASC
     LIMIT 1;
 
-    -- 2. If no direct policy found and target is a Team, derive from membership or inherited Club policy
+    -- 2. If target is a Team, check inheritance and direct team policies in auth.accesspolicies
     IF v_role IS NULL AND p_target_type = 2 THEN
-        -- Resolve parent club for inheritance check
+        -- Resolve parent club to check for inherited club-level permissions
         SELECT clubid INTO v_club_id FROM public.teams WHERE id = p_target_id;
 
         SELECT role INTO v_role
         FROM (
-            -- Inherited from parent Club policy
+            -- a) Inherited from parent Club policy (targettype = 1)
             SELECT role FROM auth.accesspolicies 
             WHERE userid = p_user_id AND targettype = 1 AND targetid = v_club_id
               AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
+            
             UNION ALL
-            -- Derived from active Team Membership
-            -- Note: We check 'leftat' to ensure the membership is still active.
-            -- Using 0 (FullControl) ensures the member has administrative rights for their team.
-            SELECT 0 
-            FROM public.teammemberships 
-            WHERE userid = p_user_id AND teamid = p_target_id AND leftat IS NULL
+
+            -- b) Direct Team Policy (targettype = 2) 
+            -- This is the record managed strictly by the TerminateMemberHandler
+            SELECT role FROM auth.accesspolicies 
+            WHERE userid = p_user_id AND targettype = 2 AND targetid = p_target_id
+              AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
         ) AS combined_roles
         ORDER BY role ASC LIMIT 1;
     END IF;
 
     RETURN v_role;
+END;$$ LANGUAGE plpgsql;
+
+-- 2) Universal upsert for access policies. 
+-- To revoke access, we call this with p_expiresat = CURRENT_TIMESTAMP.
+CREATE OR REPLACE FUNCTION auth.upsert_access_policy(
+    p_id UUID,
+    p_userid VARCHAR(64),
+    p_targettype INT,
+    p_targetid UUID,
+    p_role INT,
+    p_createdat TIMESTAMPTZ,
+    p_expiresat TIMESTAMPTZ DEFAULT NULL
+)
+RETURNS SETOF auth.accesspolicies AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO auth.accesspolicies (id, userid, targettype, targetid, role, createdat, expiresat)
+    VALUES (p_id, p_userid, p_targettype, p_targetid, p_role, p_createdat, p_expiresat)
+    ON CONFLICT (id) DO UPDATE SET
+        role = EXCLUDED.role,
+        expiresat = EXCLUDED.expiresat
+    RETURNING *;
+END;$$ LANGUAGE plpgsql;
+
+-- Retrieves an active access policy for a specific user within a specific team.
+-- An active policy is one where expiresat is either NULL or in the future.
+CREATE OR REPLACE FUNCTION auth.get_active_team_policy(
+    p_user_id VARCHAR(64),
+    p_team_id UUID
+)
+RETURNS SETOF auth.accesspolicies AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM auth.accesspolicies
+    WHERE userid = p_user_id
+      AND targettype = 2 -- Team scope
+      AND targetid = p_team_id
+      AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP);
 END;$$ LANGUAGE plpgsql;
 
 -- ==========================================
@@ -291,27 +331,59 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 3) Updates the 'leftat' timestamp and resets 'isprimary' status 
--- for a specific membership. Access is revoked automatically via get_user_permission.
-CREATE OR REPLACE FUNCTION public.terminate_team_membership(
+-- 2) Returns all active memberships for a user in a specific team.
+-- A user can have multiple roles (e.g., Player and Captain).
+CREATE OR REPLACE FUNCTION public.get_active_memberships_by_email(
     p_team_id UUID,
-    p_membership_id UUID
+    p_email VARCHAR(255)
 )
-RETURNS BOOLEAN AS $$
-DECLARE
-    v_rows_affected INT;
+RETURNS SETOF public.teammemberships AS $$
 BEGIN
-    UPDATE public.teammemberships
-    SET 
-        -- Ensures leftat is at least equal to joinedat, even if clocks drift
-        leftat = GREATEST(CURRENT_TIMESTAMP, joinedat),
-        isprimary = FALSE
-    WHERE id = p_membership_id 
-      AND teamid = p_team_id 
-      AND leftat IS NULL;
+    RETURN QUERY
+    SELECT m.* FROM public.teammemberships m
+    JOIN public.users u ON m.userid = u.id
+    WHERE m.teamid = p_team_id 
+      AND u.email = p_email 
+      AND m.leftat IS NULL;
+END;$$ LANGUAGE plpgsql;
 
-    GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
-    RETURN v_rows_affected > 0;
+-- 3) Returns a specific active membership for a user in a team by their role.
+CREATE OR REPLACE FUNCTION public.get_active_membership_by_email_and_role(
+    p_team_id UUID,
+    p_email VARCHAR(255),
+    p_role INT
+)
+RETURNS SETOF public.teammemberships AS $$
+BEGIN
+    RETURN QUERY
+    SELECT m.* FROM public.teammemberships m
+    JOIN public.users u ON m.userid = u.id
+    WHERE m.teamid = p_team_id 
+      AND u.email = p_email 
+      AND m.roleinteam = p_role
+      AND m.leftat IS NULL;
+END;$$ LANGUAGE plpgsql;
+
+-- 4) Universal upsert for memberships (handles creation, updating and termination via p_leftat)
+CREATE OR REPLACE FUNCTION public.upsert_team_membership(
+    p_id UUID,
+    p_userid VARCHAR(64),
+    p_teamid UUID,
+    p_roleinteam INT,
+    p_joinedat TIMESTAMPTZ,
+    p_isprimary BOOLEAN,
+    p_leftat TIMESTAMPTZ DEFAULT NULL
+)
+RETURNS SETOF public.teammemberships AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO public.teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary, leftat)
+    VALUES (p_id, p_userid, p_teamid, p_roleinteam, p_joinedat, p_isprimary, p_leftat)
+    ON CONFLICT (id) DO UPDATE SET
+        roleinteam = EXCLUDED.roleinteam,
+        isprimary = EXCLUDED.isprimary,
+        leftat = EXCLUDED.leftat
+    RETURNING *;
 END;$$ LANGUAGE plpgsql;
 
 -- ====================================================
