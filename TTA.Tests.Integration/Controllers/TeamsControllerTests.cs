@@ -184,7 +184,7 @@ public class TeamsControllerTests : BaseApiTest
         await SeedAccessPolicyInternalAsync(conn, TestUserId, (int)TargetScope.Club, clubId, (int)AppRole.FullControl);
     }
 
-    private async Task SeedRequiredLocationDataInternalAsync(NpgsqlConnection conn, Guid clubId)
+    private static async Task SeedRequiredLocationDataInternalAsync(NpgsqlConnection conn, Guid clubId)
     {
         await conn.ExecuteAsync("INSERT INTO public.countries (id, name, code) VALUES (1, 'Ukraine', 'UA') ON CONFLICT DO NOTHING");
         await conn.ExecuteAsync("INSERT INTO public.regions (id, name, countryid) VALUES (1, 'Test Region', 1) ON CONFLICT DO NOTHING");
@@ -198,7 +198,7 @@ public class TeamsControllerTests : BaseApiTest
             new { clubId, cityId, now = DateTime.UtcNow });
     }
 
-    private async Task SeedTeamInternalAsync(NpgsqlConnection conn, Guid id, Guid clubId)
+    private static async Task SeedTeamInternalAsync(NpgsqlConnection conn, Guid id, Guid clubId)
     {
         var sportId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
@@ -211,7 +211,7 @@ public class TeamsControllerTests : BaseApiTest
             new { id, clubId, sportId, now = DateTime.UtcNow });
     }
 
-    private async Task SeedUserInternalAsync(NpgsqlConnection conn, string userId, string name, string email)
+    private static async Task SeedUserInternalAsync(NpgsqlConnection conn, string userId, string name, string email)
     {
         await conn.ExecuteAsync(@"
             INSERT INTO public.users (id, displayname, email, createdat) 
@@ -219,7 +219,7 @@ public class TeamsControllerTests : BaseApiTest
             new { userId, name, email, now = DateTime.UtcNow });
     }
 
-    private async Task SeedAccessPolicyInternalAsync(NpgsqlConnection conn, string userId, int scope, Guid targetId, int role)
+    private static async Task SeedAccessPolicyInternalAsync(NpgsqlConnection conn, string userId, int scope, Guid targetId, int role)
     {
         await conn.ExecuteAsync(@"
             INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat) 
