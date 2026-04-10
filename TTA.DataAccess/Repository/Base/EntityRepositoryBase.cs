@@ -186,4 +186,41 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
             throw;
         }
     }
+
+    /// <inheritdoc />
+    public async Task<IDbConnection> OpenConnectionAsync(CancellationToken ct = default)
+    {
+        var connection = GetConnection();
+
+        // Ensure the connection is opened asynchronously for Npgsql
+        if (connection is NpgsqlConnection npgsqlConn)
+        {
+            await npgsqlConn.OpenAsync(ct);
+        }
+        else
+        {
+            connection.Open();
+        }
+
+        return connection;
+    }
+
+    /// <inheritdoc />
+    public async Task ExecuteCommandAsync(
+        string sqlText,
+        DynamicParameters parameters,
+        IDbConnection connection,
+        IDbTransaction transaction,
+        CancellationToken ct = default)
+    {
+        // Define the command to run within the existing transaction context
+        var command = new CommandDefinition(
+            sqlText,
+            parameters,
+            transaction,
+            commandType: CommandType.Text,
+            cancellationToken: ct);
+
+        await connection.ExecuteAsync(command);
+    }
 }

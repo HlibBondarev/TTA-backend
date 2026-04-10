@@ -5,7 +5,7 @@ using TTA.DataAccess.Repository.Base;
 namespace TTA.DataAccess.Repository.Auth;
 
 /// <summary>
-/// Specialized repository for handling user access policies and role retrieval.
+/// Provides methods for managing user access policies, including granting and revoking permissions.
 /// </summary>
 public interface IAccessRepository : IEntityRepositoryBase<Guid, AccessPolicy>
 {
@@ -22,4 +22,45 @@ public interface IAccessRepository : IEntityRepositoryBase<Guid, AccessPolicy>
         TargetScope targetScope,
         Guid? targetId,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Grants a new access policy or updates an existing one.
+    /// </summary>
+    /// <param name="accessPolicy">The access policy entity to persist.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The persisted <see cref="AccessPolicy"/>.</returns>
+    Task<AccessPolicy> AddAccessAsync(AccessPolicy accessPolicy, CancellationToken ct = default);
+
+    /// <summary>
+    /// Revokes an access policy by setting its expiration date.
+    /// Access is considered revoked if <c>ExpiresAt</c> is less than or equal to current time.
+    /// </summary>
+    /// <param name="accessPolicy">The policy entity with an updated expiration timestamp.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The updated <see cref="AccessPolicy"/>.</returns>
+    Task<AccessPolicy> RemoveAccessAsync(AccessPolicy accessPolicy, CancellationToken ct = default);
+
+    /// <summary>
+    /// Revokes an access policy by setting its expiration date using an existing transaction.
+    /// Access is considered revoked if <c>ExpiresAt</c> is less than or equal to current time.
+    /// </summary>
+    /// <param name="accessPolicy">The policy entity with an updated expiration timestamp.</param>
+    /// <param name="connection">An existing and open database connection.</param>
+    /// <param name="transaction">An active transaction associated with the provided connection.</param>
+    /// <param name="ct">A token to monitor for cancellation requests.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    Task RemoveAccessAsync(
+        AccessPolicy accessPolicy,
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Searches for an active (non-expired) access policy for a specific user and team.
+    /// </summary>
+    /// <param name="userId">The unique identifier of the user.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The active <see cref="AccessPolicy"/> if found; otherwise, <c>null</c>.</returns>
+    Task<AccessPolicy?> GetActiveTeamPolicyAsync(string userId, Guid teamId, CancellationToken ct = default);
 }

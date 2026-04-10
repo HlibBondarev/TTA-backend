@@ -4,6 +4,7 @@ using Npgsql;
 using TTA.BusinessLogic.Features.Teams.Commands;
 using TTA.Common.Enums;
 using TTA.Common.Exceptions;
+using TTA.Common.Extensions;
 using TTA.DataAccess.Enums;
 using TTA.DataAccess.Repository.Api;
 
@@ -36,7 +37,7 @@ public class AddTeamMemberHandler(
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the TeamRole cannot be mapped to an AppRole.</exception>
     public async Task<Guid> Handle(AddTeamMemberCommand command, CancellationToken cancellationToken)
     {
-        string safeEmail = MaskEmail(command.UserEmail);
+        string safeEmail = command.UserEmail.MaskEmail();
         _logger.LogInformation("Processing AddTeamMemberCommand for Email: {Email}, Team: {TeamId}",
             safeEmail, command.TeamId);
 
@@ -67,7 +68,7 @@ public class AddTeamMemberHandler(
         }
 
         // 3. Map TeamRole to system AppRole enum
-        AppRole appRole = MapToAppRole(command.RoleInTeam);
+        AppRole appRole = command.RoleInTeam.MapToAppRole();
 
         // 4. Prepare Entity
         var membership = command.ToModel(user.Id);
@@ -91,41 +92,5 @@ public class AddTeamMemberHandler(
             // Wrap with custom ConflictException to preserve context and satisfy S2139
             throw new ConflictException($"The user is already an active '{command.RoleInTeam}' in this team.", ex);
         }
-    }
-
-    /// <summary>
-    /// Maps internal team roles to system-wide application roles.
-    /// Throws an exception if the role is not explicitly mapped to prevent hidden bugs.
-    /// </summary>
-    /// <param name="role">The team role to map.</param>
-    /// <returns>The corresponding <see cref="AppRole"/>.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">Thrown when an unmapped TeamRole is provided.</exception>
-    private static AppRole MapToAppRole(TeamRole role) => role switch
-    {
-        TeamRole.HeadCoach or TeamRole.AssistantCoach or TeamRole.ClubDirector => AppRole.FullControl,
-        TeamRole.TeamManager or TeamRole.Analyst => AppRole.Editor,
-        TeamRole.Player => AppRole.Viewer,
-        _ => throw new ArgumentOutOfRangeException(nameof(role), role, $"No mapping defined for {role}")
-    };
-
-    /// <summary>
-    /// Masks an email address to protect PII in logs.
-    /// Example: test-user@example.com -> te***@example.com
-    /// </summary>
-    /// <param name="email">The plaintext email to mask.</param>
-    /// <returns>A masked version of the email string.</returns>
-    private static string MaskEmail(string email)
-    {
-        if (string.IsNullOrEmpty(email) || !email.Contains('@'))
-            return "****";
-
-        var parts = email.Split('@');
-        var name = parts[0];
-        var domain = parts[1];
-
-        if (name.Length <= 2)
-            return $"***@{domain}";
-
-        return $"{name[..2]}***@{domain}";
     }
 }

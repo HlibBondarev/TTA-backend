@@ -31,4 +31,55 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
 
         return result.HasValue ? (AppRole)result.Value : null;
     }
+
+    /// <inheritdoc />
+    public async Task<AccessPolicy> AddAccessAsync(AccessPolicy accessPolicy, CancellationToken ct = default)
+    {
+        return await CreateOrUpdate(accessPolicy, SqlStatements.ForAccessPolicies.UpsertAccessPolicy, null, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<AccessPolicy> RemoveAccessAsync(AccessPolicy accessPolicy, CancellationToken ct = default)
+    {
+        // Logic: The caller must set accessPolicy.ExpiresAt = DateTime.UtcNow
+        return await CreateOrUpdate(accessPolicy, SqlStatements.ForAccessPolicies.UpsertAccessPolicy, null, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task RemoveAccessAsync(
+        AccessPolicy accessPolicy,
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        CancellationToken ct = default)
+    {
+        var parameters = new DynamicParameters(accessPolicy);
+
+        // We use the shared connection and transaction provided by the handler
+        await ExecuteCommandAsync(
+            SqlStatements.ForAccessPolicies.UpsertAccessPolicy,
+            parameters,
+            connection,
+            transaction,
+            ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<AccessPolicy?> GetActiveTeamPolicyAsync(
+        string userId,
+        Guid teamId,
+        CancellationToken ct = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("UserId", userId);
+        parameters.Add("TeamId", teamId);
+
+        // Using GetByPropValues from the base repository to fetch the collection 
+        // and returning the first active policy found.
+        var results = await GetByPropValues(
+            SqlStatements.ForAccessPolicies.GetActiveTeamPolicy,
+            parameters,
+            ct);
+
+        return results.FirstOrDefault();
+    }
 }

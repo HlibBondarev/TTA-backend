@@ -17,8 +17,9 @@ public class TeamRoleTests
     [InlineData(TeamRole.ClubDirector, 2)]
     [InlineData(TeamRole.TeamManager, 3)]
     [InlineData(TeamRole.Analyst, 4)]
-    [InlineData(TeamRole.Player, 5)]
-    [InlineData(TeamRole.Captain, 6)]
+    [InlineData(TeamRole.Captain, 5)]
+    [InlineData(TeamRole.Player, 6)]
+
     public void TeamRole_Members_HaveExpectedIntegerValues(TeamRole role, int expectedValue)
     {
         Assert.Equal(expectedValue, (int)role);

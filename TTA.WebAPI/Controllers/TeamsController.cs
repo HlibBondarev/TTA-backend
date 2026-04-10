@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using TTA.BusinessLogic.Features.Teams.Commands;
 using TTA.BusinessLogic.Features.Teams.DTOs;
 using TTA.BusinessLogic.Features.Teams.Queries;
+using TTA.Common.Extensions;
 using TTA.DataAccess.Models;
 
 namespace TTA.WebAPI.Controllers;
@@ -73,38 +74,32 @@ public class TeamsController(
     }
 
     /// <summary>
-    /// Terminates a user's membership in a team.
+    /// Terminates a user's membership and access rights within a team.
     /// </summary>
     /// <param name="teamId">The unique identifier of the team.</param>
-    /// <param name="membershipId">The unique identifier of the membership record to terminate.</param>
-    /// <returns>True if the operation was successful.</returns>
-    /// <remarks>
-    /// This is a soft-delete operation that sets the 'LeftAt' timestamp.
-    /// Access is restricted to users with administrative rights ("TeamAdmin" policy).
-    /// </remarks>
-    /// <response code="200">If the membership was successfully terminated.</response>
-    /// <response code="401">If the user is not authenticated.</response>
-    /// <response code="403">If the user does not have permission to manage this club.</response>
-    /// <response code="404">If the membership record was not found.</response>
-    [HttpDelete("{teamId:guid}/members/{membershipId:guid}")]
+    /// <param name="request">The termination details including user email and role.</param>
+    /// <returns>No content if successful.</returns>
+    /// <response code="204">If the membership was successfully terminated.</response>
+    /// <response code="404">If the active membership was not found for the given email and role.</response>
+    [HttpDelete("{teamId:guid}/members/terminate")]
     [Authorize(Policy = "TeamAdmin")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> TerminateMember([FromRoute] Guid teamId, [FromRoute] Guid membershipId)
+    public async Task<IActionResult> TerminateMember(
+        [FromRoute] Guid teamId,
+        [FromBody] TerminateMembershipRequest request)
     {
-        _logger.LogInformation("Executing TerminateMember action for Membership {MembershipId} in Team {TeamId}.",
-            membershipId, teamId);
+        _logger.LogInformation("Executing TerminateMember action for Team {TeamId}, User {Email}.",
+            teamId, request.UserEmail.MaskEmail());
 
-        var command = new TerminateMembershipCommand(teamId, membershipId);
-        var result = await _mediator.Send(command);
+        // Mapping route data and request DTO to the command
+        var command = new TerminateMembershipCommand(
+            teamId,
+            request.UserEmail,
+            request.RoleInTeam,
+            request.LeftAt);
 
-        if (!result)
-        {
-            // If the membership wasn't found in THIS team, we return NotFound
-            return NotFound($"Membership {membershipId} not found in team {teamId}.");
-        }
+        await _mediator.Send(command);
 
         return NoContent();
     }

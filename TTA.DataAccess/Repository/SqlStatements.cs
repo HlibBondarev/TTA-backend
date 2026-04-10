@@ -1,5 +1,8 @@
 ﻿namespace TTA.DataAccess.Repository;
 
+/// <summary>
+/// Contains SQL command constants for invoking PostgreSQL storage functions.
+/// </summary>
 public static class SqlStatements
 {
     /// <summary>
@@ -21,15 +24,28 @@ public static class SqlStatements
     }
 
     /// <summary>
-    /// SQL constants for AccessPolicies-related database operations.
+    /// Commands related to user access, roles, and authorization policies.
     /// </summary>
     public static class ForAccessPolicies
     {
         /// <summary>
-        /// Name of the PostgreSQL function to get a user permission.
+        /// Invokes the universal upsert function for access policies.
+        /// Used for both granting new permissions and revoking existing ones (by setting ExpiresAt).
+        /// </summary>
+        public const string UpsertAccessPolicy =
+            "SELECT * FROM auth.upsert_access_policy(@Id, @UserId, @TargetType, @TargetId, @Role, @CreatedAt, @ExpiresAt)";
+
+        /// <summary>
+        /// Calls the authorization engine to retrieve the effective user role for a specific context.
         /// </summary>
         public const string GetUserPermission =
             "SELECT auth.get_user_permission(@UserId, @TargetType, @TargetId)";
+
+        /// <summary>
+        /// SQL to retrieve an active access policy for a user within a specific team context.
+        /// </summary>
+        public const string GetActiveTeamPolicy =
+            "SELECT * FROM auth.get_active_team_policy(@UserId, @TeamId)";
     }
 
     /// <summary>
@@ -75,7 +91,7 @@ public static class SqlStatements
     }
 
     /// <summary>
-    /// SQL constants for TeamMembership-related database operations.
+    /// Commands for managing team memberships and player/staff assignments.
     /// </summary>
     public static class ForTeamMemberships
     {
@@ -86,22 +102,31 @@ public static class SqlStatements
             "SELECT * FROM public.upsert_team_membership_with_policy(@Id, @TeamId, @UserId, @RoleInTeam, @IsPrimary, @JoinedAt, @AppRole)";
 
         /// <summary>
-        /// SQL to call the termination function with team-scoped validation.
-        /// </summary>
-        public const string TerminateMembership =
-            "SELECT public.terminate_team_membership(@p_team_id, @p_membership_id)";
-
-        /// <summary>
         /// SQL to retrieve active team members with user details in JSON format.
         /// </summary>
         public const string GetMembersJson =
             "SELECT public.get_team_members_json(@p_team_id)";
 
         /// <summary>
-        /// SQL to retrieve a single membership by ID.
+        /// Invokes the universal upsert function for team memberships.
+        /// Handles role updates, primary flag changes, and termination via the LeftAt parameter.
         /// </summary>
-        public const string GetMembershipById =
-            "SELECT * FROM public.teammemberships WHERE id = @p_id";
+        public const string UpsertMembership =
+            "SELECT * FROM public.upsert_team_membership(@Id, @UserId, @TeamId, @RoleInTeam, @JoinedAt, @IsPrimary, @LeftAt)";
+
+        /// <summary>
+        /// Calls a specialized function to retrieve all active memberships (where LeftAt is NULL) 
+        /// for a user identified by email within a specific team.
+        /// </summary>
+        public const string GetActiveByEmail =
+            "SELECT * FROM public.get_active_memberships_by_email(@TeamId, @UserEmail)";
+
+        /// <summary>
+        /// Calls a specialized function to retrieve an active membership (where LeftAt is NULL) 
+        /// for a user identified by email and role within a specific team.
+        /// </summary>
+        public const string GetActiveByEmailAndRole =
+            "SELECT * FROM public.get_active_membership_by_email_and_role(@TeamId, @UserEmail, @RoleInTeam)";
     }
 
     /// <summary>
