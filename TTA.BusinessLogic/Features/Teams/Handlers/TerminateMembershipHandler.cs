@@ -68,31 +68,23 @@ public class TerminateMembershipHandler(
         var terminationDate = command.LeftAt ?? DateTime.UtcNow;
 
         using var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
-        try
+
+        // 3. Update Membership
+        membership.LeftAt = terminationDate;
+        await _membershipRepository.TerminateMembershipAsync(membership, cancellationToken);
+
+        // 4. Update Access Policy
+        if (accessPolicy != null)
         {
-            // 3. Update Membership
-            membership.LeftAt = terminationDate;
-            await _membershipRepository.TerminateMembershipAsync(membership, cancellationToken);
-
-            // 4. Update Access Policy
-            if (accessPolicy != null)
-            {
-                accessPolicy.ExpiresAt = terminationDate;
-                await _accessRepository.RemoveAccessAsync(accessPolicy, cancellationToken);
-            }
-
-            scope.Complete();
-
-            _logger.LogInformation("Successfully terminated membership and access for User {UserId}. Effective date: {Date}",
-                membership.UserId, terminationDate);
-
-            return true;
+            accessPolicy.ExpiresAt = terminationDate;
+            await _accessRepository.RemoveAccessAsync(accessPolicy, cancellationToken);
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Critical error during termination for {Email} in team {TeamId}",
-                safeEmail, command.TeamId);
-            throw;
-        }
+
+        scope.Complete();
+
+        _logger.LogInformation("Successfully terminated membership and access for User {UserId}. Effective date: {Date}",
+            membership.UserId, terminationDate);
+
+        return true;
     }
 }
