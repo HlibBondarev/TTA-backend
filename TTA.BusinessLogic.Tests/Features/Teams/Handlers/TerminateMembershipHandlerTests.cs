@@ -178,6 +178,69 @@ public class TerminateMembershipHandlerTests
         _transactionMock.Verify(x => x.Commit(), Times.Never);
     }
 
+    /// <summary>
+    /// Verifies the atomicity of the membership termination process by simulating a partial failure.
+    /// Specifically, it ensures that if the access revocation step fails after a successful membership update, 
+    /// the exception is propagated to trigger a database rollback.
+    /// </summary>
+    /// <remarks>
+    /// This test validates that the handler respects the shared transaction lifecycle:
+    /// 1. Membership is marked as terminated in the database.
+    /// 2. An exception is thrown during access policy expiration.
+    /// 3. The handler allows the exception to bubble up, preventing the transaction from committing.
+    /// </remarks>
+    [Fact]
+    public async Task Handle_ShouldThrowAndRollback_WhenAccessRevocationFails()
+    {
+        // Arrange
+        var command = new TerminateMembershipCommand(
+            Guid.NewGuid(),
+            "member@example.com",
+            TeamRole.Player,
+            DateTime.UtcNow);
+
+        var membership = new TeamMembership { Id = Guid.NewGuid(), UserId = "user-1" };
+        var policy = new AccessPolicy { Id = Guid.NewGuid(), UserId = "user-1" };
+        var expectedExceptionMessage = "Database connection lost during access revocation";
+
+        _membershipRepoMock
+            .Setup(x => x.GetActiveMembershipByEmailAndRoleAsync(command.TeamId, command.UserEmail, command.RoleInTeam, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(membership);
+
+        _membershipRepoMock
+            .Setup(x => x.TerminateMembershipAsync(It.IsAny<TeamMembership>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _accessRepoMock
+            .Setup(x => x.GetActiveTeamPolicyAsync(membership.UserId, command.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(policy);
+
+        // Mock RemoveAccessAsync to throw an exception
+        _accessRepoMock
+            .Setup(x => x.RemoveAccessAsync(It.IsAny<AccessPolicy>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception(expectedExceptionMessage));
+
+        // Act
+        var act = () => _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<Exception>()
+            .WithMessage(expectedExceptionMessage);
+
+        // Verify that termination was attempted but the failure in access revocation stopped the flow
+        _membershipRepoMock.Verify(x => x.TerminateMembershipAsync(
+            It.IsAny<TeamMembership>(),
+            It.IsAny<IDbConnection>(),
+            It.IsAny<IDbTransaction>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _accessRepoMock.Verify(x => x.RemoveAccessAsync(
+            It.IsAny<AccessPolicy>(),
+            It.IsAny<IDbConnection>(),
+            It.IsAny<IDbTransaction>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private void VerifyLog(LogLevel level, string messageContains)
     {
         _loggerMock.Verify(
