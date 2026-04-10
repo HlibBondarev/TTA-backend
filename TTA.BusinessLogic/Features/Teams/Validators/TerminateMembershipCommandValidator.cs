@@ -12,7 +12,7 @@ public class TerminateMembershipCommandValidator : AbstractValidator<TerminateMe
         RuleFor(x => x.RoleInTeam).IsInEnum();
 
         RuleFor(x => x.LeftAt)
-            .Must(date => !date.HasValue || date.Value >= DateTime.UtcNow.AddMinutes(-1))
+            .Must(date => !date.HasValue || date.Value >= DateTime.UtcNow)
             .WithMessage("Termination date cannot be in the past.");
     }
 }
