@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using System.Transactions;
 using TTA.BusinessLogic.Features.Teams.Commands;
+using TTA.Common.Exceptions;
 using TTA.Common.Extensions;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Auth;
@@ -51,11 +52,13 @@ public class TerminateMembershipHandler(
             command.RoleInTeam,
             cancellationToken);
 
+        // Throw NotFoundException instead of returning false
         if (membership == null)
         {
             _logger.LogWarning("Termination failed: Active membership for {Email} not found in team {TeamId}.",
                 safeEmail, command.TeamId);
-            return false;
+
+            throw new NotFoundException($"Active membership for {command.UserEmail} not found in team {command.TeamId}.");
         }
 
         // 2. Resolve access policy

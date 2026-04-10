@@ -99,13 +99,7 @@ public class TeamsController(
             request.RoleInTeam,
             request.LeftAt);
 
-        var result = await _mediator.Send(command);
-
-        if (!result)
-        {
-            // If the handler returns false, it means no active membership was found
-            return NotFound($"Active membership for {request.UserEmail} with role {request.RoleInTeam} not found in team {teamId}.");
-        }
+        await _mediator.Send(command);
 
         return NoContent();
     }
