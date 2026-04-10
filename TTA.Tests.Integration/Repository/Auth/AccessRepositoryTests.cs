@@ -221,8 +221,8 @@ public class AccessRepositoryTests : BaseIntegrationTest
         var scope = TargetScope.Team;
         var role = AppRole.FullControl;
 
-        var creationDate = DateTime.UtcNow.AddMinutes(-1);
-        var terminationDate = DateTime.UtcNow;
+        var creationDate = DateTime.UtcNow.AddMinutes(-5);
+        var terminationDate = DateTime.UtcNow.AddMinutes(-1);
 
         await SeedUserAsync(userId);
         await SeedAccessPolicyAsync(userId, scope, teamId, role, creationDate);
