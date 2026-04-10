@@ -4,19 +4,19 @@ using TTA.DataAccess.Enums;
 namespace TTA.BusinessLogic.Features.Teams.Commands;
 
 /// <summary>
-/// Command to terminate a user's membership and associated access policies within a specific team.
-/// This operation performs a soft delete by setting termination and expiration timestamps.
+/// Command to terminate a user's membership in a team.
+/// Termination is achieved by setting the <c>LeftAt</c> timestamp on the membership record,
+/// which effectively revokes the user's team-level access.
 /// </summary>
-/// <param name="TeamId">The unique identifier of the team from which the user is being removed.</param>
-/// <param name="UserEmail">The email address of the user whose membership is to be terminated.</param>
-/// <param name="RoleInTeam">The specific role of the user within the team that is being revoked.</param>
+/// <param name="TeamId">The unique identifier of the team.</param>
+/// <param name="UserEmail">The email of the user whose membership is being terminated.</param>
+/// <param name="RoleInTeam">The specific role to be terminated (to handle users with multiple roles).</param>
 /// <param name="LeftAt">
-/// Optional termination date and time. 
-/// If provided, this value is used for both the membership 'LeftAt' field and the access policy 'ExpiresAt' field.
-/// If <c>null</c>, the current system UTC time will be used.
+/// The timestamp when the membership ends. If null, the current UTC time is used.
+/// This value marks the end of the membership and the removal of associated access rights.
 /// </param>
 public record TerminateMembershipCommand(
     Guid TeamId,
     string UserEmail,
     TeamRole RoleInTeam,
-    DateTime? LeftAt) : IRequest<bool>;
+    DateTime? LeftAt = null) : IRequest<bool>;
