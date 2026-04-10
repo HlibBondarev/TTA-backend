@@ -154,6 +154,54 @@ public class AccessRepositoryTests : BaseIntegrationTest
         role.Should().BeNull("because current time is past the expiresat timestamp");
     }
 
+
+    /// <summary>
+    /// Verifies that adding and then removing an access policy for a non-team scope
+    /// (e.g., Club) correctly reflects in the user's effective role.
+    /// </summary>
+    [Fact]
+    public async Task AddAndRemoveAccess_ShouldReflectChanges_ForClubScope()
+    {
+        // Arrange
+        var userId = $"auth0|{Guid.NewGuid()}";
+        var clubId = Guid.NewGuid();
+        var scope = TargetScope.Club;
+        var role = AppRole.FullControl;
+
+        // Set CreatedAt significantly in the past to satisfy the DB constraint:
+        // expiresat >= createdat
+        var createdAt = DateTime.UtcNow.AddDays(-1);
+        var expiresAt = DateTime.UtcNow.AddSeconds(-1);
+
+        await SeedUserAsync(userId);
+
+        var policy = new AccessPolicy
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            TargetId = clubId,
+            TargetType = scope,
+            Role = role,
+            CreatedAt = createdAt
+        };
+
+        // Act - Add Access
+        await _repository.AddAccessAsync(policy);
+
+        // Assert - Role should be present
+        var roleBefore = await _repository.GetUserRoleForScope(userId, scope, clubId);
+        roleBefore.Should().Be(role);
+
+        // Act - Remove Access
+        // Now policy.ExpiresAt (-1s) is > policy.CreatedAt (-1 day), satisfying the DB check
+        policy.ExpiresAt = expiresAt;
+        await _repository.RemoveAccessAsync(policy);
+
+        // Assert - Role should now be null because expiresat < NOW() in Postgres
+        var roleAfter = await _repository.GetUserRoleForScope(userId, scope, clubId);
+        roleAfter.Should().BeNull("because the access policy has been expired/revoked");
+    }
+
     #endregion
 
     #region GetActiveTeamPolicyAsync Tests
