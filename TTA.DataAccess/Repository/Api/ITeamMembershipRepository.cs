@@ -37,6 +37,21 @@ public interface ITeamMembershipRepository : IEntityRepositoryBase<Guid, TeamMem
     Task<TeamMembership> TerminateMembershipAsync(TeamMembership teamMembership, CancellationToken ct = default);
 
     /// <summary>
+    /// Logically terminates a membership by setting the <c>LeftAt</c> timestamp using an existing transaction.
+    /// This ensures atomic execution when coordinated with other repository actions.
+    /// </summary>
+    /// <param name="teamMembership">The membership entity to update.</param>
+    /// <param name="connection">An existing and open database connection.</param>
+    /// <param name="transaction">An active transaction associated with the provided connection.</param>
+    /// <param name="ct">A token to monitor for cancellation requests.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    Task TerminateMembershipAsync(
+        TeamMembership teamMembership,
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Retrieves all active memberships (where <c>LeftAt</c> is null) for a specific user email within a team.
     /// </summary>
     /// <param name="teamId">The unique identifier of the team.</param>

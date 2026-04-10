@@ -41,6 +41,21 @@ public interface IAccessRepository : IEntityRepositoryBase<Guid, AccessPolicy>
     Task<AccessPolicy> RemoveAccessAsync(AccessPolicy accessPolicy, CancellationToken ct = default);
 
     /// <summary>
+    /// Revokes an access policy by setting its expiration date using an existing transaction.
+    /// Access is considered revoked if <c>ExpiresAt</c> is less than or equal to current time.
+    /// </summary>
+    /// <param name="accessPolicy">The policy entity with an updated expiration timestamp.</param>
+    /// <param name="connection">An existing and open database connection.</param>
+    /// <param name="transaction">An active transaction associated with the provided connection.</param>
+    /// <param name="ct">A token to monitor for cancellation requests.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    Task RemoveAccessAsync(
+        AccessPolicy accessPolicy,
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Searches for an active (non-expired) access policy for a specific user and team.
     /// </summary>
     /// <param name="userId">The unique identifier of the user.</param>

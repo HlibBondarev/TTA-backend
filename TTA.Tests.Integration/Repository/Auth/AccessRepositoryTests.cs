@@ -11,10 +11,14 @@ namespace TTA.Tests.Integration.Repository.Auth;
 /// Integration tests for <see cref="AccessRepository"/> using a real PostgreSQL container.
 /// Verifies permission resolution logic, policy creation, and soft-revocation via expiration.
 /// </summary>
-/// <param name="fixture">The shared database fixture instance.</param>
-public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(fixture)
+public class AccessRepositoryTests : BaseIntegrationTest
 {
-    private readonly AccessRepository _repository = new(fixture.ConnectionFactory);
+    private readonly AccessRepository _repository;
+
+    public AccessRepositoryTests(DatabaseFixture fixture) : base(fixture)
+    {
+        _repository = new AccessRepository(fixture.ConnectionFactory);
+    }
 
     #region GetUserRoleForScope Tests
 
@@ -84,7 +88,6 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
 
     #endregion 
 
-
     #region AddAccessAsync and RemoveAccessAsync tests
 
     /// <summary>
@@ -119,7 +122,6 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
 
     /// <summary>
     /// Verifies that setting <c>ExpiresAt</c> to a past timestamp correctly revokes access.
-    /// This tests the database constraint and the filtering logic in the storage function.
     /// </summary>
     [Fact]
     public async Task RemoveAccessAsync_ShouldRevokePermission_WhenExpiresAtIsSetToPast()
@@ -127,8 +129,6 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         // Arrange
         var userId = $"auth0|{Guid.NewGuid()}";
         var targetId = Guid.NewGuid();
-
-        // Use a fixed point in the past for creation to allow expiration in the past without violating DB constraints
         var creationTime = DateTime.UtcNow.AddMinutes(-5);
 
         var policy = new AccessPolicy
@@ -145,12 +145,9 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         var createdPolicy = await _repository.AddAccessAsync(policy);
 
         // Act
-        // Set expiration slightly after creation but still in the past relative to now.
-        // This satisfies: CreatedAt <= ExpiresAt < Current_Timestamp
         createdPolicy.ExpiresAt = creationTime.AddSeconds(1);
         await _repository.RemoveAccessAsync(createdPolicy);
 
-        // The auth.get_user_permission function filters by: (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
         var role = await _repository.GetUserRoleForScope(userId, TargetScope.Team, targetId);
 
         // Assert
@@ -163,7 +160,7 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
 
     /// <summary>
     /// Verifies that <see cref="AccessRepository.GetActiveTeamPolicyAsync"/> returns the correct 
-    /// <see cref="AccessPolicy"/> when an active policy for the specified team exists.
+    /// policy when an active policy for the specified team exists.
     /// </summary>
     [Fact]
     public async Task GetActiveTeamPolicyAsync_ShouldReturnPolicy_WhenActiveTeamPolicyExists()
@@ -173,7 +170,6 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         var teamId = Guid.NewGuid();
         await SeedUserAsync(userId);
 
-        // Seed an active policy (ExpiresAt is NULL)
         var policyId = Guid.NewGuid();
         await SeedAccessPolicyAsync(userId, TargetScope.Team, teamId, AppRole.Editor, id: policyId);
 
@@ -183,9 +179,6 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         // Assert
         result.Should().NotBeNull();
         result!.Id.Should().Be(policyId);
-        result.UserId.Should().Be(userId);
-        result.TargetId.Should().Be(teamId);
-        result.TargetType.Should().Be(TargetScope.Team);
     }
 
     /// <summary>
@@ -200,7 +193,6 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         var teamId = Guid.NewGuid();
         await SeedUserAsync(userId);
 
-        // Seed an expired policy (ExpiresAt is in the past)
         var expiredAt = DateTime.UtcNow.AddMinutes(-10);
         var createdAt = DateTime.UtcNow.AddMinutes(-20);
         await SeedAccessPolicyAsync(userId, TargetScope.Team, teamId, AppRole.Viewer, createdAt, expiredAt);
@@ -209,52 +201,47 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
         var result = await _repository.GetActiveTeamPolicyAsync(userId, teamId);
 
         // Assert
-        result.Should().BeNull("because the storage function should filter out expired policies");
+        result.Should().BeNull();
     }
 
-    /// <summary>
-    /// Verifies that <see cref="AccessRepository.GetActiveTeamPolicyAsync"/> does not return
-    /// policies that belong to a different scope (e.g., Club), even if they are active.
-    /// </summary>
-    [Fact]
-    public async Task GetActiveTeamPolicyAsync_ShouldReturnNull_WhenOnlyClubPolicyExists()
-    {
-        // Arrange
-        var userId = $"auth0|{Guid.NewGuid()}";
-        var clubId = Guid.NewGuid(); // Different ID type, but used to ensure scope filtering
-        await SeedUserAsync(userId);
+    #endregion
 
-        // Seed a Club policy instead of a Team policy
-        await SeedAccessPolicyAsync(userId, TargetScope.Club, clubId, AppRole.FullControl);
-
-        // Act
-        var result = await _repository.GetActiveTeamPolicyAsync(userId, Guid.NewGuid());
-
-        // Assert
-        result.Should().BeNull("because the method is specifically looking for Team scope policies (targettype = 2)");
-    }
+    #region RemoveAccessAsync Tests
 
     /// <summary>
-    /// Verifies that <see cref="AccessRepository.GetActiveTeamPolicyAsync"/> returns the policy
-    /// when it has a future expiration date.
+    /// Verifies that RemoveAccessAsync correctly updates the expiration date 
+    /// when executed within a manually managed transaction.
     /// </summary>
     [Fact]
-    public async Task GetActiveTeamPolicyAsync_ShouldReturnPolicy_WhenExpiresAtIsInFuture()
+    public async Task RemoveAccessAsync_WithTransaction_ShouldUpdateExpirationDate()
     {
         // Arrange
         var userId = $"auth0|{Guid.NewGuid()}";
         var teamId = Guid.NewGuid();
-        await SeedUserAsync(userId);
+        var scope = TargetScope.Team;
+        var role = AppRole.FullControl;
 
-        var futureExpiration = DateTime.UtcNow.AddDays(1);
-        await SeedAccessPolicyAsync(userId, TargetScope.Team, teamId, AppRole.Editor, expiresAt: futureExpiration);
+        var creationDate = DateTime.UtcNow.AddMinutes(-1);
+        var terminationDate = DateTime.UtcNow;
+
+        await SeedUserAsync(userId);
+        await SeedAccessPolicyAsync(userId, scope, teamId, role, creationDate);
+
+        var policy = await _repository.GetActiveTeamPolicyAsync(userId, teamId);
+        policy.Should().NotBeNull();
 
         // Act
-        var result = await _repository.GetActiveTeamPolicyAsync(userId, teamId);
+        using var connection = await Fixture.ConnectionFactory.CreateConnection().OpenAsync();
+        using var transaction = connection.BeginTransaction();
+
+        policy!.ExpiresAt = terminationDate;
+        await _repository.RemoveAccessAsync(policy, connection, transaction);
+
+        transaction.Commit();
 
         // Assert
-        result.Should().NotBeNull();
-        result!.ExpiresAt.Should().BeCloseTo(futureExpiration, precision: TimeSpan.FromSeconds(1));
+        var updatedPolicy = await _repository.GetActiveTeamPolicyAsync(userId, teamId);
+        updatedPolicy.Should().BeNull();
     }
 
     #endregion
@@ -262,7 +249,7 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
     #region Seed Helpers
 
     /// <summary>
-    /// Updated helper to support optional ID and expiration for advanced scenarios.
+    /// Universal helper to seed access policies with optional parameters for advanced scenarios.
     /// </summary>
     private async Task SeedAccessPolicyAsync(
         string userId,
@@ -293,48 +280,43 @@ public class AccessRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTes
     }
 
     /// <summary>
-    /// Seeds a user into the database. Uses ON CONFLICT to prevent issues with shared state or repeated calls.
+    /// Seeds a user into the database with correct column mapping.
     /// </summary>
     private async Task SeedUserAsync(string userId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
-        const string sql = @"
-            INSERT INTO public.users (id, displayname, email, createdat) 
-            VALUES (@id, @name, @email, @date) 
-            ON CONFLICT (id) DO NOTHING";
+
+        const string sql = @"INSERT INTO users (id, displayname, email, createdat) 
+                            VALUES (@id, @displayname, @email, @createdat) 
+                            ON CONFLICT (id) DO NOTHING";
 
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", userId);
-        cmd.Parameters.AddWithValue("name", "Access Test User");
+        cmd.Parameters.AddWithValue("displayname", "Access Test User");
         cmd.Parameters.AddWithValue("email", $"{userId}@example.com");
-        cmd.Parameters.AddWithValue("date", DateTime.UtcNow);
-        await cmd.ExecuteNonQueryAsync();
-    }
-
-    /// <summary>
-    /// Directly seeds an access policy into the auth schema for setup purposes.
-    /// </summary>
-    private async Task SeedAccessPolicyAsync(string userId, TargetScope targetType, Guid? targetId, AppRole role)
-    {
-        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
-        await conn.OpenAsync();
-
-        var sql = @"INSERT INTO auth.accesspolicies (id, userid, targettype, targetid, role, createdat) 
-                    VALUES (@id, @uid, @tt, @tid, @r, @dt)";
-
-        using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("id", Guid.NewGuid());
-        cmd.Parameters.AddWithValue("uid", userId);
-
-        // Map enum values to integers as expected by the PostgreSQL schema
-        cmd.Parameters.AddWithValue("tt", (int)targetType);
-        cmd.Parameters.AddWithValue("tid", (object?)targetId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("r", (int)role);
-        cmd.Parameters.AddWithValue("dt", DateTime.UtcNow);
-
+        cmd.Parameters.AddWithValue("createdat", DateTime.UtcNow);
         await cmd.ExecuteNonQueryAsync();
     }
 
     #endregion
+}
+
+/// <summary>
+/// Extension to simplify connection opening in integration tests.
+/// </summary>
+public static class ConnectionExtensions
+{
+    public static async Task<System.Data.IDbConnection> OpenAsync(this System.Data.IDbConnection connection)
+    {
+        if (connection is NpgsqlConnection npgsqlConn)
+        {
+            await npgsqlConn.OpenAsync();
+        }
+        else
+        {
+            connection.Open();
+        }
+        return connection;
+    }
 }

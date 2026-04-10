@@ -1,4 +1,5 @@
 ﻿using Dapper;
+using System.Data;
 using TTA.DataAccess.Models.Base;
 
 namespace TTA.DataAccess.Repository.Base;
@@ -100,5 +101,30 @@ public interface IEntityRepositoryBase<TKey, TEntity>
     Task<T> ExecuteQueryInTransaction<T>(
         string sqlText,
         DynamicParameters parameters,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Opens and returns a new database connection asynchronously.
+    /// The caller is responsible for disposing of the connection.
+    /// </summary>
+    /// <param name="ct">A token to monitor for cancellation requests.</param>
+    /// <returns>A task that represents the asynchronous operation, containing the opened <see cref="IDbConnection"/>.</returns>
+    Task<IDbConnection> OpenConnectionAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Executes a command using a shared database connection and an active transaction.
+    /// Use this method to coordinate multiple repository calls within a single atomic operation.
+    /// </summary>
+    /// <param name="sqlText">The SQL text or function name to execute.</param>
+    /// <param name="parameters">The dynamic parameters for the command.</param>
+    /// <param name="connection">An existing and open <see cref="IDbConnection"/>.</param>
+    /// <param name="transaction">An active <see cref="IDbTransaction"/> associated with the provided connection.</param>
+    /// <param name="ct">A token to monitor for cancellation requests.</param>
+    /// <returns>A task that represents the asynchronous operation.</returns>
+    Task ExecuteCommandAsync(
+        string sqlText,
+        DynamicParameters parameters,
+        IDbConnection connection,
+        IDbTransaction transaction,
         CancellationToken ct = default);
 }

@@ -33,33 +33,52 @@ public class TeamsControllerTests : BaseApiTest
     [Fact]
     public async Task GetMembers_ShouldReturnOk_WhenTeamExists()
     {
+        // Arrange
         var clubId = Guid.NewGuid();
         var teamId = Guid.NewGuid();
         await SeedFullContextAsync(teamId, clubId);
 
+        // Act
         var response = await Client.GetAsync($"/api/teams/{teamId}/members");
 
+        // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     /// <summary>
     /// Verifies that a user with sufficient permissions can add a new member to the team.
+    /// Also checks if the corresponding AccessPolicy is created in the database.
     /// </summary>
     [Fact]
     public async Task AddMember_ShouldReturnOk_WhenRequestIsValid()
     {
+        // Arrange
         var clubId = Guid.NewGuid();
         var teamId = Guid.NewGuid();
         var newUserEmail = "new-member@example.com";
+        var newUserAuthId = $"auth0|{Guid.NewGuid()}";
 
         await SeedFullContextAsync(teamId, clubId);
-        await SeedUserAsync($"auth0|{Guid.NewGuid()}", "New Member", newUserEmail);
+        await SeedUserAsync(newUserAuthId, "New Member", newUserEmail);
 
         var request = new AddTeamMemberRequest(newUserEmail, TeamRole.Player, false);
 
+        // Act
         var response = await Client.PostAsJsonAsync($"/api/teams/{teamId}/members", request);
 
+        // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Verify side effect: Ensure AccessPolicy was created for the new member
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // Fix for CS8600: Using 'dynamic?' to explicitly allow null from Dapper
+        dynamic? policy = await conn.QueryFirstOrDefaultAsync(
+            "SELECT role FROM auth.accesspolicies WHERE userid = @userId AND targetid = @teamId",
+            new { userId = newUserAuthId, teamId });
+
+        // Cast to object? for the FluentAssertion check
+        ((object?)policy).Should().NotBeNull("an AccessPolicy record must be created automatically by the repository/database");
     }
 
     /// <summary>
@@ -68,14 +87,17 @@ public class TeamsControllerTests : BaseApiTest
     [Fact]
     public async Task AddMember_ShouldReturnBadRequest_WhenRequestIsInvalid()
     {
+        // Arrange
         var clubId = Guid.NewGuid();
         var teamId = Guid.NewGuid();
         await SeedFullContextAsync(teamId, clubId);
 
         var request = new AddTeamMemberRequest("invalid-email", TeamRole.Player, false);
 
+        // Act
         var response = await Client.PostAsJsonAsync($"/api/teams/{teamId}/members", request);
 
+        // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -85,7 +107,7 @@ public class TeamsControllerTests : BaseApiTest
 
     /// <summary>
     /// Verifies that an authorized user can successfully terminate a team membership.
-    /// Returns 204 NoContent upon successful completion of the transaction.
+    /// Ensures that the associated AccessPolicy is also marked as expired.
     /// </summary>
     [Fact]
     public async Task TerminateMember_ShouldReturnNoContent_WhenMembershipExists()
@@ -113,6 +135,14 @@ public class TeamsControllerTests : BaseApiTest
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // Verify side effect: AccessPolicy must have an expiration date set
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var expiresAt = await conn.QueryFirstOrDefaultAsync<DateTime?>(
+            "SELECT expiresat FROM auth.accesspolicies WHERE userid = @victimUserId AND targetid = @teamId",
+            new { victimUserId, teamId });
+
+        expiresAt.Should().NotBeNull();
     }
 
     /// <summary>
@@ -121,18 +151,21 @@ public class TeamsControllerTests : BaseApiTest
     [Fact]
     public async Task TerminateMember_ShouldReturnNotFound_WhenMembershipDoesNotExist()
     {
+        // Arrange
         var teamId = Guid.NewGuid();
         var clubId = Guid.NewGuid();
         await SeedFullContextAsync(teamId, clubId);
 
         var request = new TerminateMembershipRequest("nonexistent@example.com", TeamRole.HeadCoach, null);
 
+        // Act
         var httpRequest = new HttpRequestMessage(HttpMethod.Delete, $"/api/teams/{teamId}/members/terminate")
         {
             Content = JsonContent.Create(request)
         };
         var response = await Client.SendAsync(httpRequest);
 
+        // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
@@ -142,6 +175,7 @@ public class TeamsControllerTests : BaseApiTest
     [Fact]
     public async Task TerminateMember_ShouldReturnForbidden_WhenUserHasNoPolicy()
     {
+        // Arrange
         var clubId = Guid.NewGuid();
         var teamId = Guid.NewGuid();
         var victimEmail = "victim@example.com";
@@ -150,7 +184,9 @@ public class TeamsControllerTests : BaseApiTest
         using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.OpenAsync();
-            await SeedRequiredLocationDataInternalAsync(conn, clubId);
+            await SeedRequiredLocationDataInternalAsync(conn);
+            var cityId = await GetFirstCityIdAsync(conn);
+            await SeedClubInternalAsync(conn, clubId, cityId);
             await SeedTeamInternalAsync(conn, teamId, clubId);
             await SeedUserInternalAsync(conn, TestUserId, "No Access User", "test@example.com");
             await SeedUserInternalAsync(conn, victimUserId, "Victim", victimEmail);
@@ -160,12 +196,14 @@ public class TeamsControllerTests : BaseApiTest
 
         var request = new TerminateMembershipRequest(victimEmail, TeamRole.Player, null);
 
+        // Act
         var httpRequest = new HttpRequestMessage(HttpMethod.Delete, $"/api/teams/{teamId}/members/terminate")
         {
             Content = JsonContent.Create(request)
         };
         var response = await Client.SendAsync(httpRequest);
 
+        // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
@@ -178,20 +216,50 @@ public class TeamsControllerTests : BaseApiTest
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        await SeedRequiredLocationDataInternalAsync(conn, clubId);
+        await SeedRequiredLocationDataInternalAsync(conn);
+        var cityId = await GetFirstCityIdAsync(conn);
+        await SeedClubInternalAsync(conn, clubId, cityId);
         await SeedTeamInternalAsync(conn, teamId, clubId);
         await SeedUserInternalAsync(conn, TestUserId, "Admin", "test@example.com");
         await SeedAccessPolicyInternalAsync(conn, TestUserId, (int)TargetScope.Club, clubId, (int)AppRole.FullControl);
     }
 
-    private static async Task SeedRequiredLocationDataInternalAsync(NpgsqlConnection conn, Guid clubId)
+    private static async Task SeedRequiredLocationDataInternalAsync(NpgsqlConnection conn)
     {
-        await conn.ExecuteAsync("INSERT INTO public.countries (id, name, code) VALUES (1, 'Ukraine', 'UA') ON CONFLICT DO NOTHING");
-        await conn.ExecuteAsync("INSERT INTO public.regions (id, name, countryid) VALUES (1, 'Test Region', 1) ON CONFLICT DO NOTHING");
+        // 1. Seed Country - Handle both unique name and code
+        await conn.ExecuteAsync(@"
+        INSERT INTO public.countries (name, code) 
+        VALUES ('Ukraine', 'UA') 
+        ON CONFLICT (name) DO NOTHING");
 
-        var cityId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.cities (id, name, regionid) VALUES (@cityId, 'Test City', 1) ON CONFLICT DO NOTHING", new { cityId });
+        var countryId = await conn.QueryFirstAsync<int>(
+            "SELECT id FROM public.countries WHERE name = 'Ukraine'");
 
+        // 2. Seed Region - UNIQUE(countryid, name)
+        await conn.ExecuteAsync(@"
+        INSERT INTO public.regions (countryid, name) 
+        VALUES (@countryId, 'Test Region') 
+        ON CONFLICT (countryid, name) DO NOTHING",
+            new { countryId });
+
+        var regionId = await conn.QueryFirstAsync<int>(
+            "SELECT id FROM public.regions WHERE name = 'Test Region' AND countryid = @countryId",
+            new { countryId });
+
+        // 3. Seed City - UNIQUE(regionid, name)
+        // We use a fixed Name to ensure ON CONFLICT works, but a random ID for the first insert
+        await conn.ExecuteAsync(@"
+        INSERT INTO public.cities (id, name, regionid) 
+        VALUES (@id, 'Test City', @regionId) 
+        ON CONFLICT (regionid, name) DO NOTHING",
+            new { id = Guid.NewGuid(), regionId });
+    }
+
+    private static async Task<Guid> GetFirstCityIdAsync(NpgsqlConnection conn)
+        => await conn.QueryFirstAsync<Guid>("SELECT id FROM public.cities LIMIT 1");
+
+    private static async Task SeedClubInternalAsync(NpgsqlConnection conn, Guid clubId, Guid cityId)
+    {
         await conn.ExecuteAsync(@"
             INSERT INTO public.clubs (id, name, cityid, createdat) 
             VALUES (@clubId, 'Test Club', @cityId, @now) ON CONFLICT DO NOTHING",

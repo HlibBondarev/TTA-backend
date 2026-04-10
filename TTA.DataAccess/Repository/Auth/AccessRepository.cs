@@ -46,6 +46,24 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
+    public async Task RemoveAccessAsync(
+        AccessPolicy accessPolicy,
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        CancellationToken ct = default)
+    {
+        var parameters = new DynamicParameters(accessPolicy);
+
+        // We use the shared connection and transaction provided by the handler
+        await ExecuteCommandAsync(
+            SqlStatements.ForAccessPolicies.UpsertAccessPolicy,
+            parameters,
+            connection,
+            transaction,
+            ct);
+    }
+
+    /// <inheritdoc />
     public async Task<AccessPolicy?> GetActiveTeamPolicyAsync(
         string userId,
         Guid teamId,

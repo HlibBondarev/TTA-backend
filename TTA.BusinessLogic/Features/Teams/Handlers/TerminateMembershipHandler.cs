@@ -1,6 +1,5 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
-using System.Transactions;
 using TTA.BusinessLogic.Features.Teams.Commands;
 using TTA.Common.Exceptions;
 using TTA.Common.Extensions;
@@ -11,14 +10,8 @@ namespace TTA.BusinessLogic.Features.Teams.Handlers;
 
 /// <summary>
 /// Handles the termination of a team membership and its associated access policies.
-/// This handler performs a soft delete by setting expiration dates in a single transaction.
+/// This handler performs a soft delete by setting expiration dates in a single database transaction.
 /// </summary>
-/// <remarks>
-/// Logic:
-/// 1. Finds the active membership by email and role.
-/// 2. Finds the corresponding access policy for the user in the team scope.
-/// 3. Updates both entities with the termination date (LeftAt) in a transaction.
-/// </remarks>
 public class TerminateMembershipHandler(
     ITeamMembershipRepository membershipRepository,
     IAccessRepository accessRepository,
@@ -29,14 +22,12 @@ public class TerminateMembershipHandler(
     private readonly ILogger<TerminateMembershipHandler> _logger = logger;
 
     /// <summary>
-    /// Processes the termination command.
+    /// Processes the membership termination using an implicit rollback pattern.
     /// </summary>
-    /// <param name="command">The command containing team ID, user email, role, and optional termination date.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>
-    /// A task that represents the asynchronous operation. 
-    /// The task result is <c>true</c> if termination was successful; otherwise, <c>false</c>.
-    /// </returns>
+    /// <param name="command">Termination details including Team, Email, and Role.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A boolean indicating success.</returns>
+    /// <exception cref="NotFoundException">Thrown when no active membership is found.</exception>
     public async Task<bool> Handle(TerminateMembershipCommand command, CancellationToken cancellationToken)
     {
         string safeEmail = command.UserEmail.MaskEmail();
@@ -52,12 +43,9 @@ public class TerminateMembershipHandler(
             command.RoleInTeam,
             cancellationToken);
 
-        // Throw NotFoundException instead of returning false
         if (membership == null)
         {
-            _logger.LogWarning("Termination failed: Active membership for {Email} not found in team {TeamId}.",
-                safeEmail, command.TeamId);
-
+            _logger.LogWarning("Termination failed: Active membership for {Email} not found.", safeEmail);
             throw new NotFoundException($"Active membership for {command.UserEmail} not found in team {command.TeamId}.");
         }
 
@@ -67,26 +55,29 @@ public class TerminateMembershipHandler(
             command.TeamId,
             cancellationToken);
 
-        // Determine termination time (Command value or current UTC)
         var terminationDate = command.LeftAt ?? DateTime.UtcNow;
 
-        using var scope = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+        // 3. Open connection and start transaction. 
+        // If transaction.Commit() is not called due to an exception, 
+        // Dispose() will automatically trigger a rollback.
+        using var connection = await _membershipRepository.OpenConnectionAsync(cancellationToken);
+        using var transaction = connection.BeginTransaction();
 
-        // 3. Update Membership
+        // 4. Update Membership status
         membership.LeftAt = terminationDate;
-        await _membershipRepository.TerminateMembershipAsync(membership, cancellationToken);
+        await _membershipRepository.TerminateMembershipAsync(membership, connection, transaction, cancellationToken);
 
-        // 4. Update Access Policy
+        // 5. Update Access Policy if it exists
         if (accessPolicy != null)
         {
             accessPolicy.ExpiresAt = terminationDate;
-            await _accessRepository.RemoveAccessAsync(accessPolicy, cancellationToken);
+            await _accessRepository.RemoveAccessAsync(accessPolicy, connection, transaction, cancellationToken);
         }
 
-        scope.Complete();
+        // 6. Commit the transaction
+        transaction.Commit();
 
-        _logger.LogInformation("Successfully terminated membership and access for User {UserId}. Effective date: {Date}",
-            membership.UserId, terminationDate);
+        _logger.LogInformation("Successfully terminated membership for User {UserId}.", membership.UserId);
 
         return true;
     }

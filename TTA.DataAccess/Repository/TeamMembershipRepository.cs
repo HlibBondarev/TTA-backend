@@ -48,6 +48,24 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
+    public async Task TerminateMembershipAsync(
+        TeamMembership teamMembership,
+        System.Data.IDbConnection connection,
+        System.Data.IDbTransaction transaction,
+        CancellationToken ct = default)
+    {
+        var parameters = new DynamicParameters(teamMembership);
+
+        // We use the shared connection and transaction provided by the caller (Handler)
+        await ExecuteCommandAsync(
+            SqlStatements.ForTeamMemberships.UpsertMembership,
+            parameters,
+            connection,
+            transaction,
+            ct);
+    }
+
+    /// <inheritdoc />
     public async Task<IEnumerable<TeamMembership>> GetActiveMembershipsByEmailAsync(Guid teamId, string userEmail, CancellationToken ct = default)
     {
         var parameters = new DynamicParameters();

@@ -1,6 +1,7 @@
 ﻿using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
+using System.Data;
 using TTA.BusinessLogic.Features.Teams.Commands;
 using TTA.BusinessLogic.Features.Teams.Handlers;
 using TTA.Common.Exceptions;
@@ -21,6 +22,8 @@ public class TerminateMembershipHandlerTests
     private readonly Mock<ITeamMembershipRepository> _membershipRepoMock;
     private readonly Mock<IAccessRepository> _accessRepoMock;
     private readonly Mock<ILogger<TerminateMembershipHandler>> _loggerMock;
+    private readonly Mock<IDbConnection> _connectionMock;
+    private readonly Mock<IDbTransaction> _transactionMock;
     private readonly TerminateMembershipHandler _handler;
 
     public TerminateMembershipHandlerTests()
@@ -28,6 +31,18 @@ public class TerminateMembershipHandlerTests
         _membershipRepoMock = new Mock<ITeamMembershipRepository>();
         _accessRepoMock = new Mock<IAccessRepository>();
         _loggerMock = new Mock<ILogger<TerminateMembershipHandler>>();
+
+        // Infrastructure mocks for transaction coordination
+        _connectionMock = new Mock<IDbConnection>();
+        _transactionMock = new Mock<IDbTransaction>();
+
+        // Setup the connection to return a mock transaction
+        _connectionMock.Setup(x => x.BeginTransaction()).Returns(_transactionMock.Object);
+
+        // Setup repository to return the mock connection
+        _membershipRepoMock
+            .Setup(x => x.OpenConnectionAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(_connectionMock.Object);
 
         _handler = new TerminateMembershipHandler(
             _membershipRepoMock.Object,
@@ -37,7 +52,7 @@ public class TerminateMembershipHandlerTests
 
     /// <summary>
     /// Verifies that when a valid membership and access policy exist, 
-    /// both are updated with the correct termination date and the handler returns true.
+    /// both are updated within the same transaction and the handler returns true.
     /// </summary>
     [Fact]
     public async Task Handle_MembershipExists_ShouldReturnTrueAndTerminateBothEntities()
@@ -68,13 +83,19 @@ public class TerminateMembershipHandlerTests
         membership.LeftAt.Should().Be(terminationDate);
         accessPolicy.ExpiresAt.Should().Be(terminationDate);
 
-        _membershipRepoMock.Verify(x => x.TerminateMembershipAsync(membership, It.IsAny<CancellationToken>()), Times.Once);
-        _accessRepoMock.Verify(x => x.RemoveAccessAsync(accessPolicy, It.IsAny<CancellationToken>()), Times.Once);
+        // Verify that repositories use the shared connection and transaction
+        _membershipRepoMock.Verify(x => x.TerminateMembershipAsync(
+            membership, _connectionMock.Object, _transactionMock.Object, It.IsAny<CancellationToken>()), Times.Once);
+
+        _accessRepoMock.Verify(x => x.RemoveAccessAsync(
+            accessPolicy, _connectionMock.Object, _transactionMock.Object, It.IsAny<CancellationToken>()), Times.Once);
+
+        _transactionMock.Verify(x => x.Commit(), Times.Once);
     }
 
     /// <summary>
-    /// Verifies that if no active membership is found, the handler throws a <see cref="NotFoundException"/>.
-    /// This aligns with the domain logic requested by CodeRabbit.
+    /// Verifies that if no active membership is found, the handler throws a <see cref="NotFoundException"/>
+    /// and does not attempt to open a transaction.
     /// </summary>
     [Fact]
     public async Task Handle_MembershipNotFound_ShouldThrowNotFoundException()
@@ -93,12 +114,12 @@ public class TerminateMembershipHandlerTests
         await act.Should().ThrowAsync<NotFoundException>()
             .WithMessage($"*Active membership for {command.UserEmail}*not found*");
 
+        _membershipRepoMock.Verify(x => x.OpenConnectionAsync(It.IsAny<CancellationToken>()), Times.Never);
         VerifyLog(LogLevel.Warning, "Termination failed");
     }
 
     /// <summary>
     /// Verifies that the handler completes successfully even if there is no associated access policy to remove.
-    /// Only the membership record should be updated in this case.
     /// </summary>
     [Fact]
     public async Task Handle_NoAccessPolicy_ShouldStillReturnTrue()
@@ -120,22 +141,31 @@ public class TerminateMembershipHandlerTests
 
         // Assert
         result.Should().BeTrue();
-        _accessRepoMock.Verify(x => x.RemoveAccessAsync(It.IsAny<AccessPolicy>(), It.IsAny<CancellationToken>()), Times.Never);
-        _membershipRepoMock.Verify(x => x.TerminateMembershipAsync(membership, It.IsAny<CancellationToken>()), Times.Once);
+        _accessRepoMock.Verify(x => x.RemoveAccessAsync(
+            It.IsAny<AccessPolicy>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        _membershipRepoMock.Verify(x => x.TerminateMembershipAsync(
+            membership, _connectionMock.Object, _transactionMock.Object, It.IsAny<CancellationToken>()), Times.Once);
+
+        _transactionMock.Verify(x => x.Commit(), Times.Once);
     }
 
     /// <summary>
-    /// Verifies that any unhandled exception from the repository layer bubbles up to the global handler.
-    /// This ensures SonarCloud S2139 is satisfied by avoiding "log and throw" in the handler.
+    /// Verifies that any repository exception bubbles up and transaction is not committed.
     /// </summary>
     [Fact]
     public async Task Handle_RepositoryThrows_ShouldBubbleUpException()
     {
         // Arrange
         var command = new TerminateMembershipCommand(Guid.NewGuid(), "error@test.com", TeamRole.Player, null);
+        var membership = new TeamMembership { UserId = "user-123", TeamId = command.TeamId };
 
         _membershipRepoMock
             .Setup(x => x.GetActiveMembershipByEmailAndRoleAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TeamRole>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(membership);
+
+        _membershipRepoMock
+            .Setup(x => x.TerminateMembershipAsync(It.IsAny<TeamMembership>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new Exception("Database connection failure"));
 
         // Act
@@ -144,13 +174,10 @@ public class TerminateMembershipHandlerTests
         // Assert
         await act.Should().ThrowAsync<Exception>()
             .WithMessage("Database connection failure");
+
+        _transactionMock.Verify(x => x.Commit(), Times.Never);
     }
 
-    /// <summary>
-    /// Helper method to verify logger calls.
-    /// </summary>
-    /// <param name="level">Expected LogLevel.</param>
-    /// <param name="messageContains">Substring expected in the log message.</param>
     private void VerifyLog(LogLevel level, string messageContains)
     {
         _loggerMock.Verify(
