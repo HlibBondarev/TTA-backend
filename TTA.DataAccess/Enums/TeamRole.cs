@@ -2,15 +2,19 @@
 
 namespace TTA.DataAccess.Enums;
 
+/// <summary>
+/// Defines roles within a sports team.
+/// Explicit integer values are mapped to the public.teammemberships.roleinteam column.
+/// </summary>
 public enum TeamRole
 {
-    HeadCoach,
-    AssistantCoach,
-    ClubDirector,
-    TeamManager,
-    Analyst,
-    Captain,
-    Player
+    HeadCoach = 0,
+    AssistantCoach = 1,
+    ClubDirector = 2,
+    TeamManager = 3,
+    Analyst = 4,
+    Captain = 5,  // Explicitly set to match DB ordinal
+    Player = 6  // Explicitly set to match DB ordinal
 }
 
 /// <summary>
