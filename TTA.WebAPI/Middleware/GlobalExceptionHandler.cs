@@ -30,24 +30,29 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
         Exception exception,
         CancellationToken cancellationToken)
     {
-        logger.LogError(exception, "An unhandled exception has occurred: {Message}", exception.Message);
+        // Extract the root cause if the exception is wrapped (e.g., in an AggregateException)
+        var actualException = exception is AggregateException ae ? ae.InnerException ?? exception : exception;
+
+        logger.LogError(actualException, "An unhandled exception has occurred: {Message}", actualException.Message);
 
         if (httpContext.Response.HasStarted)
         {
             return false;
         }
 
-        var (statusCode, baseMessage) = MapException(exception);
+        // Use the unwrapped exception for status code and message mapping
+        var (statusCode, baseMessage) = MapException(actualException);
 
         // Detailed collection of validation errors for both Detail string and Extensions dictionary
         var validationErrors = new Dictionary<string, string[]>();
         var detailBuilder = new StringBuilder(baseMessage);
 
-        // Extract structured data if the exception contains entries in the Data dictionary (e.g., ValidationException)
-        if (exception.Data.Count > 0)
+        // Extract structured data if the actual exception contains entries in the Data dictionary
+        if (actualException.Data.Count > 0)
         {
+            // Efficiency fix: Use char ' ' instead of string " "
             detailBuilder.Append(' ');
-            foreach (DictionaryEntry entry in exception.Data)
+            foreach (DictionaryEntry entry in actualException.Data)
             {
                 var key = entry.Key.ToString() ?? "Error";
                 var values = entry.Value as string[] ?? [entry.Value?.ToString() ?? "Unknown error"];
