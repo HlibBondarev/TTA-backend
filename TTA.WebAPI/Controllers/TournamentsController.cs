@@ -35,7 +35,7 @@ public class TournamentsController(
     /// <param name="request">The tournament creation request data.</param>
     /// <param name="validator">The validator for the creation request.</param>
     /// <returns>The newly created tournament entity.</returns>
-    /// <response code="200">Returns the created tournament.</response>
+    /// <response code="201">Returns the created tournament.</response>
     /// <response code="400">If the request data is invalid or validation fails.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="404">If the tournament or associated entities were not found.</response>

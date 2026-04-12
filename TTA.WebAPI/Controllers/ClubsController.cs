@@ -40,7 +40,7 @@ public class ClubsController(
     /// <param name="request">The club creation request data.</param>
     /// <param name="validator">The validator for the creation request (injected via method).</param>
     /// <returns>The unique identifier of the newly created club.</returns>
-    /// <response code="200">Returns the unique identifier of the created club.</response>
+    /// <response code="201">Returns the unique identifier of the created club.</response>
     /// <response code="400">If the request data is invalid.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="409">If a club with the same name already exists.</response>
@@ -109,7 +109,7 @@ public class ClubsController(
     /// <remarks>
     /// Access is restricted to users with administrative rights ("ClubAdmin" policy) over the specified club.
     /// </remarks>
-    /// <response code="200">Returns the unique identifier of the created team.</response>
+    /// <response code="201">Returns the unique identifier of the created team.</response>
     /// <response code="400">If the request data is invalid.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user does not have permission to manage this club.</response>
@@ -158,7 +158,7 @@ public class ClubsController(
     /// This endpoint is protected by the "ClubAdmin" policy. 
     /// The user must have 'FullControl' permissions for the club specified in the route.
     /// </remarks>
-    /// <response code="200">Returns the unique identifier of the created player.</response>
+    /// <response code="201">Returns the unique identifier of the created player.</response>
     /// <response code="400">If the request data is invalid or validation fails.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user does not have administrative rights over this club.</response>
