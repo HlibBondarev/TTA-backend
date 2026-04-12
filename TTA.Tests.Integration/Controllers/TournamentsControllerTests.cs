@@ -62,7 +62,7 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
     /// Verifies that an authorized user can create a new tournament.
     /// </summary>
     [Fact]
-    public async Task Create_ShouldReturnOk_WhenDataIsValid()
+    public async Task Create_ShouldReturnCreated_WhenDataIsValid()
     {
         // Arrange
         await SeedUserAsync(TestUserId);
@@ -84,7 +84,7 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         var response = await Client.PostAsJsonAsync(BaseUrl, request);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
         var result = await response.Content.ReadFromJsonAsync<TournamentResponse>();
         result.Should().NotBeNull();
         result!.Name.Should().Be(request.Name);

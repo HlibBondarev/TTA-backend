@@ -39,9 +39,9 @@ public class TournamentsController(
     /// <response code="400">If the request data is invalid or validation fails.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="404">If the tournament or associated entities were not found.</response>
-    /// <response code="409">If a club with the same name already exists.</response>
+    /// <response code="409">If a tournament with the same name already exists.</response>
     [HttpPost]
-    [ProducesResponseType(typeof(TournamentResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(TournamentResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -66,7 +66,7 @@ public class TournamentsController(
 
         var result = await _mediator.Send(command);
 
-        return Ok(result);
+        return StatusCode(StatusCodes.Status201Created, result);
     }
 
     /// <summary>
@@ -81,7 +81,7 @@ public class TournamentsController(
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user does not have permission to manage this tournament.</response>
     /// <response code="404">If the tournament or associated entities were not found.</response>
-    /// <response code="409">If a club with the same name already exists.</response>
+    /// <response code="409">If a tournament with the same name already exists.</response>
     [HttpPut("{id:guid}")]
     [ProducesResponseType(typeof(TournamentResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

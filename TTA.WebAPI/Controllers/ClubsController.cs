@@ -45,7 +45,7 @@ public class ClubsController(
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="409">If a club with the same name already exists.</response>
     [HttpPost]
-    [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
@@ -96,7 +96,7 @@ public class ClubsController(
         _logger.LogInformation("Dispatching CreateClubCommand for User: {UserId}.", userId);
         var result = await _mediator.Send(command);
 
-        return Ok(result);
+        return StatusCode(StatusCodes.Status201Created, result);
     }
 
     /// <summary>
@@ -115,7 +115,7 @@ public class ClubsController(
     /// <response code="403">If the user does not have permission to manage this club.</response>
     [HttpPost("{clubId:guid}/teams")]
     [Authorize(Policy = "ClubAdmin")]
-    [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
@@ -144,7 +144,7 @@ public class ClubsController(
         _logger.LogInformation("Dispatching CreateTeamCommand for Club: {ClubId}.", clubId);
         var result = await _mediator.Send(command);
 
-        return Ok(result);
+        return StatusCode(StatusCodes.Status201Created, result);
     }
 
     /// <summary>
@@ -165,7 +165,7 @@ public class ClubsController(
     /// <response code="409">If a player creation conflict occurs.</response>
     [HttpPost("{clubId:guid}/players")]
     [Authorize(Policy = "ClubAdmin")]
-    [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
@@ -196,6 +196,6 @@ public class ClubsController(
         _logger.LogInformation("Dispatching CreatePlayerCommand for Club: {ClubId}.", clubId);
         var result = await _mediator.Send(command);
 
-        return Ok(result);
+        return StatusCode(StatusCodes.Status201Created, result);
     }
 }
