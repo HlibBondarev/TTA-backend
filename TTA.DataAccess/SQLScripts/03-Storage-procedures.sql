@@ -437,3 +437,100 @@ RETURNS SETOF public.players AS $$BEGIN
     SELECT * FROM public.players 
     WHERE homeclubid = p_club_id;
 END;$$ LANGUAGE plpgsql;
+
+-- =============================================================
+-- TOURNAMENT MANAGEMENT FUNCTIONS
+-- =============================================================
+
+-- 1) Inserts a new tournament or updates an existing one based on its ID.
+-- Validates that the start date precedes the end date.
+-- Check existence of related entities (Foreign Keys).
+-- Authorization: Owner check for updates
+
+CREATE OR REPLACE FUNCTION public.upsert_tournament(
+    p_id UUID,
+    p_sportid UUID,
+    p_configurationid UUID,
+    p_cityid UUID,
+    p_ownerid VARCHAR(64),
+    p_name VARCHAR(100),
+    p_startdate TIMESTAMPTZ,
+    p_enddate TIMESTAMPTZ,
+    p_createdat TIMESTAMPTZ
+)
+RETURNS SETOF public.tournaments AS $$
+BEGIN
+    -- 1. Validation: Check existence of related entities (Foreign Keys)
+    -- Explicitly raising 23503 allows the C# handler to catch it as a NotFoundException
+    IF NOT EXISTS (SELECT 1 FROM public.cities WHERE id = p_cityid) THEN
+        RAISE EXCEPTION 'City with id % not found', p_cityid USING ERRCODE = '23503';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.sports WHERE id = p_sportid) THEN
+        RAISE EXCEPTION 'Sport with id % not found', p_sportid USING ERRCODE = '23503';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE id = p_configurationid) THEN
+        RAISE EXCEPTION 'Sport configuration with id % not found', p_configurationid USING ERRCODE = '23503';
+    END IF;
+
+    -- 2. Validation: Date logic
+    IF p_enddate IS NOT NULL AND p_startdate >= p_enddate THEN
+        RAISE EXCEPTION 'Invalid tournament dates: StartDate (%) must be earlier than EndDate (%).', 
+            p_startdate, p_enddate 
+        USING ERRCODE = '22023'; -- Invalid Parameter Value
+    END IF;
+
+    -- 3. Authorization: Owner check for updates
+    IF EXISTS (SELECT 1 FROM public.tournaments WHERE id = p_id) THEN
+        IF NOT EXISTS (SELECT 1 FROM public.tournaments WHERE id = p_id AND ownerid = p_ownerid) THEN
+            RAISE EXCEPTION 'Access denied: You are not the owner of this tournament.'
+            USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    -- 4. Execution: Upsert operation
+    RETURN QUERY
+    INSERT INTO public.tournaments (
+        id, 
+        sportid, 
+        configurationid, 
+        cityid, 
+        ownerid, 
+        name, 
+        startdate, 
+        enddate, 
+        createdat
+    )
+    VALUES (
+        p_id, 
+        p_sportid, 
+        p_configurationid, 
+        p_cityid, 
+        p_ownerid, 
+        p_name, 
+        p_startdate, 
+        p_enddate, 
+        p_createdat
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        sportid = EXCLUDED.sportid,
+        configurationid = EXCLUDED.configurationid,
+        cityid = EXCLUDED.cityid,
+        name = EXCLUDED.name,
+        startdate = EXCLUDED.startdate,
+        enddate = EXCLUDED.enddate
+        -- ownerid and createdat are preserved (not updated)
+    RETURNING *;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2) Retrieves a single tournament by its unique identifier.
+
+CREATE OR REPLACE FUNCTION public.get_tournament_by_id(p_id UUID)
+RETURNS SETOF public.tournaments AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM public.tournaments WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql;

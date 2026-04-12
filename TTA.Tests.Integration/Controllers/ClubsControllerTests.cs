@@ -4,14 +4,16 @@ using System.Net;
 using System.Net.Http.Json;
 using TTA.Common.Enums;
 using TTA.Tests.Integration.Infrastructure;
+using Xunit.Abstractions;
 
 namespace TTA.Tests.Integration.Controllers;
 
-public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture)
+public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper output)
+    : BaseApiTest(fixture, output)
 {
     #region Create
     [Fact]
-    public async Task Create_ShouldReturnOk_WhenRequestIsValid()
+    public async Task Create_ShouldReturnCreated_WhenRequestIsValid()
     {
         // Arrange
         var cityId = Guid.NewGuid();
@@ -28,7 +30,7 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         var response = await Client.PostAsJsonAsync("/api/clubs", request);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
 
         var resultId = await response.Content.ReadFromJsonAsync<Guid>();
         resultId.Should().NotBeEmpty();
@@ -72,7 +74,7 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
 
     #region CreatePlayer
     [Fact]
-    public async Task CreatePlayer_ShouldReturnOk_WhenUserIsClubAdmin()
+    public async Task CreatePlayer_ShouldReturnCreated_WhenUserIsClubAdmin()
     {
         // Arrange
         var clubId = Guid.NewGuid();
@@ -94,7 +96,7 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/players", request);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
         var resultId = await response.Content.ReadFromJsonAsync<Guid>();
         resultId.Should().NotBeEmpty();
     }
@@ -143,7 +145,7 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
 
     #region CreateTeam
     [Fact]
-    public async Task CreateTeam_ShouldReturnOk_WhenUserIsClubAdmin()
+    public async Task CreateTeam_ShouldReturnCreated_WhenUserIsClubAdmin()
     {
         // Arrange
         var clubId = Guid.NewGuid();
@@ -167,7 +169,7 @@ public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture
         var response = await Client.PostAsJsonAsync($"/api/clubs/{clubId}/teams", request);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
     [Fact]

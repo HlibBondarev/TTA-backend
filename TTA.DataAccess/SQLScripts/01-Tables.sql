@@ -120,20 +120,30 @@ WHERE (isprimary = TRUE AND leftat IS NULL);
 -- 4. TOURNAMENTS & MATCHES
 -- ==========================================
 
-CREATE TABLE tournaments (
+CREATE TABLE public.tournaments (
     id UUID PRIMARY KEY,
-    sportid UUID NOT NULL REFERENCES sports(id),
+    sportid UUID NOT NULL,
     configurationid UUID NOT NULL,
+    cityid UUID NOT NULL REFERENCES public.cities(id),
+    ownerid VARCHAR(64) NOT NULL REFERENCES public.users(id), -- Added Ownership
     name VARCHAR(200) NOT NULL,
     startdate TIMESTAMPTZ NOT NULL,
     enddate TIMESTAMPTZ NULL,
     createdat TIMESTAMPTZ NOT NULL,
+    
+    -- Mandatory constraint: Ensures the configuration belongs to the selected sport
     CONSTRAINT fk_tournaments_sport_config
         FOREIGN KEY (sportid, configurationid) 
-        REFERENCES sportconfigurations (sportid, id),
+        REFERENCES public.sportconfigurations (sportid, id),
+        
+    -- Date integrity check
     CONSTRAINT chk_tournaments_end_after_start 
         CHECK (enddate IS NULL OR enddate >= startdate)
 );
+-- Essential indexes for performance
+CREATE INDEX ix_tournaments_cityid ON public.tournaments (cityid);
+CREATE INDEX ix_tournaments_sportid ON public.tournaments (sportid);
+CREATE INDEX ix_tournaments_ownerid ON public.tournaments (ownerid);
 
 CREATE TABLE matches (
     id UUID PRIMARY KEY,

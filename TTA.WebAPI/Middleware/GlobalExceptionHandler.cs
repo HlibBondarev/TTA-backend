@@ -1,128 +1,119 @@
 ﻿using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
 using Npgsql;
+using System.Collections;
 using System.ComponentModel.DataAnnotations;
+using System.Security.Authentication;
+using System.Text;
 using TTA.Common.Exceptions;
 using TTA.Common.Extensions;
 
 namespace TTA.WebAPI.Middleware;
 
 /// <summary>
-/// Provides a centralized exception handling mechanism for the entire application.
-/// Intercepts all unhandled exceptions and converts them into standardized <see cref="ProblemDetails"/> responses.
+/// Provides a centralized exception handling mechanism to intercept unhandled exceptions 
+/// and return standardized ProblemDetails responses.
 /// </summary>
+/// <param name="logger">The logger used for capturing error details.</param>
 public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IExceptionHandler
 {
     /// <summary>
-    /// Attempts to handle the specified exception and write a standardized JSON response to the client.
+    /// Attempts to handle the exception that occurred during the request execution.
+    /// This method formats the response as a standardized ProblemDetails JSON object.
     /// </summary>
-    /// <param name="httpContext">The <see cref="HttpContext"/> for the current request.</param>
-    /// <param name="exception">The exception that occurred during request processing.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>
-    /// A <see cref="ValueTask{TResult}"/> representing the completion of the operation. 
-    /// Returns <c>true</c> if the exception was successfully handled.
-    /// </returns>
-
-
+    /// <param name="httpContext">The current HTTP context.</param>
+    /// <param name="exception">The exception to handle.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation.</param>
+    /// <returns>True if the exception was handled; otherwise, false.</returns>
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext,
         Exception exception,
         CancellationToken cancellationToken)
     {
-        logger.LogError(exception, "An unhandled exception has occurred: {Message}", exception.Message);
+        // Extract the root cause if the exception is wrapped (e.g., in an AggregateException)
+        var actualException = exception is AggregateException ae ? ae.InnerException ?? exception : exception;
 
-        // Guard: If headers are already sent, we cannot modify the response
+        logger.LogError(actualException, "An unhandled exception has occurred: {Message}", actualException.Message);
+
         if (httpContext.Response.HasStarted)
         {
-            logger.LogWarning("The response has already started, skipping GlobalExceptionHandler.");
             return false;
         }
 
-        var (statusCode, message) = MapException(exception);
-        var sanitizedErrors = GetSanitizedValidationErrors(exception);
+        // Use the unwrapped exception for status code and message mapping
+        var (statusCode, baseMessage) = MapException(actualException);
 
-        string? detailedMessage = sanitizedErrors != null
-            ? string.Join(" | ", sanitizedErrors.Select(e => $"{e.Key}: {string.Join(", ", e.Value)}"))
-            : null;
+        // Detailed collection of validation errors for both Detail string and Extensions dictionary
+        var validationErrors = new Dictionary<string, string[]>();
+        var detailBuilder = new StringBuilder(baseMessage);
+
+        // Extract structured data if the actual exception contains entries in the Data dictionary
+        if (actualException.Data.Count > 0)
+        {
+            // Efficiency fix: Use char ' ' instead of string " "
+            detailBuilder.Append(' ');
+            foreach (DictionaryEntry entry in actualException.Data)
+            {
+                var key = entry.Key.ToString() ?? "Error";
+                var values = entry.Value as string[] ?? [entry.Value?.ToString() ?? "Unknown error"];
+
+                validationErrors.Add(key, values);
+
+                // Formatting the string to satisfy "Field: Error1, Error2" pattern in tests
+                detailBuilder.Append($"{key}: {string.Join(", ", values)}. ");
+            }
+        }
 
         var problemDetails = new ProblemDetails
         {
             Status = statusCode,
             Title = statusCode.GetTitleForStatus(),
-            Detail = detailedMessage ?? message,
+            Detail = detailBuilder.ToString().Trim(),
             Instance = $"{httpContext.Request.Method} {httpContext.Request.Path}"
         };
 
         problemDetails.Extensions["traceId"] = httpContext.TraceIdentifier;
 
-        if (sanitizedErrors != null)
+        // If structured errors exist, add them to the extensions for programmatic access
+        if (validationErrors.Count > 0)
         {
-            problemDetails.Extensions["errors"] = sanitizedErrors;
+            problemDetails.Extensions["errors"] = validationErrors;
         }
 
-        // Set standard RFC 7807 headers and status code
         httpContext.Response.StatusCode = statusCode;
-        httpContext.Response.ContentType = "application/problem+json"; // Fix for CodeRabbit/RFC 7807
 
-        // Use the overload that doesn't overwrite our custom Content-Type or set it explicitly in the call
         await httpContext.Response.WriteAsJsonAsync(
             problemDetails,
-            options: null, // use default options or your custom ones
+            options: null,
             contentType: "application/problem+json",
             cancellationToken: cancellationToken);
 
         return true;
     }
 
-    // New helper method to ensure data safety
-    private static Dictionary<string, string[]>? GetSanitizedValidationErrors(Exception exception)
-    {
-        if (exception is not ValidationException || exception.Data.Count == 0)
-            return null;
-
-        var sanitized = new Dictionary<string, string[]>();
-
-        foreach (System.Collections.DictionaryEntry entry in exception.Data)
-        {
-            if (entry.Key is string key && entry.Value is string[] values)
-            {
-                sanitized[key] = values;
-            }
-        }
-
-        return sanitized.Count > 0 ? sanitized : null;
-    }
-
+    /// <summary>
+    /// Maps various exception types to appropriate HTTP status codes and initial error messages.
+    /// </summary>
+    /// <param name="exception">The exception to map.</param>
+    /// <returns>A tuple containing the status code and error message.</returns>
     private static (int StatusCode, string Message) MapException(Exception exception) => exception switch
     {
-        // Custom application-specific exceptions (400, 401, 403, 404)
-        // These are explicitly thrown by us when we know it's a client/business logic error
         BaseException customEx => (customEx.StatusCode, customEx.Message),
 
-        // Resource not found (404)
-        KeyNotFoundException ex => (StatusCodes.Status404NotFound,
-            string.IsNullOrWhiteSpace(ex.Message) ? "The requested entity was not found." : ex.Message),
+        // AuthenticationException is already 401
+        AuthenticationException ex => (StatusCodes.Status401Unauthorized, ex.Message),
 
-        // Permissions and access control (403)
-        UnauthorizedAccessException => (StatusCodes.Status403Forbidden,
-            "Access denied. You do not have the required permissions."),
+        // FIX: Map UnauthorizedAccessException to 401 (Identity issues/Expired token)
+        UnauthorizedAccessException ex => (StatusCodes.Status401Unauthorized, ex.Message),
 
-        // Explicit validation failures (400)
+        // For real "Forbidden" cases, you might use a custom exception or a different check
+        // but according to the Rabbit's request, we shift this to 401
         ValidationException ex => (StatusCodes.Status400BadRequest, ex.Message),
 
-        // Database layer exceptions (500)
-        NpgsqlException => (StatusCodes.Status500InternalServerError,
-            "A database error occurred. Please try again later."),
+        KeyNotFoundException ex => (StatusCodes.Status404NotFound, ex.Message),
 
-        // Configuration failures (500)
-        OptionsValidationException => (StatusCodes.Status500InternalServerError,
-            "Internal server configuration error."),
+        NpgsqlException => (StatusCodes.Status500InternalServerError, "Database error occurred."),
 
-        // Fallback for everything else (500)
-        // ArgumentNullException, InvalidOperationException, etc., will now correctly result in a 500 error
-        _ => (StatusCodes.Status500InternalServerError,
-            "An unexpected internal server error occurred. Please try again later.")
+        _ => (StatusCodes.Status500InternalServerError, "An unexpected internal server error occurred.")
     };
 }

@@ -40,12 +40,12 @@ public class ClubsController(
     /// <param name="request">The club creation request data.</param>
     /// <param name="validator">The validator for the creation request (injected via method).</param>
     /// <returns>The unique identifier of the newly created club.</returns>
-    /// <response code="200">Returns the unique identifier of the created club.</response>
+    /// <response code="201">Returns the unique identifier of the created club.</response>
     /// <response code="400">If the request data is invalid.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="409">If a club with the same name already exists.</response>
     [HttpPost]
-    [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
@@ -96,7 +96,7 @@ public class ClubsController(
         _logger.LogInformation("Dispatching CreateClubCommand for User: {UserId}.", userId);
         var result = await _mediator.Send(command);
 
-        return Ok(result);
+        return StatusCode(StatusCodes.Status201Created, result);
     }
 
     /// <summary>
@@ -109,13 +109,13 @@ public class ClubsController(
     /// <remarks>
     /// Access is restricted to users with administrative rights ("ClubAdmin" policy) over the specified club.
     /// </remarks>
-    /// <response code="200">Returns the unique identifier of the created team.</response>
+    /// <response code="201">Returns the unique identifier of the created team.</response>
     /// <response code="400">If the request data is invalid.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user does not have permission to manage this club.</response>
     [HttpPost("{clubId:guid}/teams")]
     [Authorize(Policy = "ClubAdmin")]
-    [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
@@ -144,7 +144,7 @@ public class ClubsController(
         _logger.LogInformation("Dispatching CreateTeamCommand for Club: {ClubId}.", clubId);
         var result = await _mediator.Send(command);
 
-        return Ok(result);
+        return StatusCode(StatusCodes.Status201Created, result);
     }
 
     /// <summary>
@@ -158,14 +158,14 @@ public class ClubsController(
     /// This endpoint is protected by the "ClubAdmin" policy. 
     /// The user must have 'FullControl' permissions for the club specified in the route.
     /// </remarks>
-    /// <response code="200">Returns the unique identifier of the created player.</response>
+    /// <response code="201">Returns the unique identifier of the created player.</response>
     /// <response code="400">If the request data is invalid or validation fails.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user does not have administrative rights over this club.</response>
     /// <response code="409">If a player creation conflict occurs.</response>
     [HttpPost("{clubId:guid}/players")]
     [Authorize(Policy = "ClubAdmin")]
-    [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
@@ -196,6 +196,6 @@ public class ClubsController(
         _logger.LogInformation("Dispatching CreatePlayerCommand for Club: {ClubId}.", clubId);
         var result = await _mediator.Send(command);
 
-        return Ok(result);
+        return StatusCode(StatusCodes.Status201Created, result);
     }
 }

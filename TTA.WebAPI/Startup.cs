@@ -118,6 +118,7 @@ public static class Startup
         services.AddScoped<IPlayerRepository, PlayerRepository>();
         services.AddScoped<ITeamRepository, TeamRepository>();
         services.AddScoped<ITeamMembershipRepository, TeamMembershipRepository>();
+        services.AddScoped<ITournamentRepository, TournamentRepository>();
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
