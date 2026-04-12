@@ -63,7 +63,7 @@ public class GlobalExceptionHandlerTests
     [InlineData(typeof(ArgumentNullException), StatusCodes.Status500InternalServerError)]
     [InlineData(typeof(InvalidOperationException), StatusCodes.Status500InternalServerError)]
     [InlineData(typeof(KeyNotFoundException), StatusCodes.Status404NotFound)]
-    [InlineData(typeof(UnauthorizedAccessException), StatusCodes.Status403Forbidden)]
+    [InlineData(typeof(UnauthorizedAccessException), StatusCodes.Status401Unauthorized)]
     public async Task TryHandleAsync_ShouldMapExceptionsToCorrectStatusCodes(Type exceptionType, int expectedStatusCode)
     {
         // Arrange

@@ -100,10 +100,14 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
     {
         BaseException customEx => (customEx.StatusCode, customEx.Message),
 
+        // AuthenticationException is already 401
         AuthenticationException ex => (StatusCodes.Status401Unauthorized, ex.Message),
 
-        UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "Access denied."),
+        // FIX: Map UnauthorizedAccessException to 401 (Identity issues/Expired token)
+        UnauthorizedAccessException ex => (StatusCodes.Status401Unauthorized, ex.Message),
 
+        // For real "Forbidden" cases, you might use a custom exception or a different check
+        // but according to the Rabbit's request, we shift this to 401
         ValidationException ex => (StatusCodes.Status400BadRequest, ex.Message),
 
         KeyNotFoundException ex => (StatusCodes.Status404NotFound, ex.Message),
