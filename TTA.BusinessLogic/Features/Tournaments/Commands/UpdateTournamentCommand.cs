@@ -43,7 +43,6 @@ public static class UpdateTournamentCommandExtensions
         OwnerId = cmd.OwnerId,
         Name = cmd.Name,
         StartDate = cmd.StartDate,
-        EndDate = cmd.EndDate,
-        CreatedAt = DateTime.UtcNow
+        EndDate = cmd.EndDate
     };
 }
