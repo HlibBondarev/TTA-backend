@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TTA.BusinessLogic.Features.Tournaments.DTOs;
 using TTA.BusinessLogic.Features.Tournaments.Queries;
-using TTA.DataAccess.Models;
 using TTA.WebAPI.Authorization;
 using TTA.WebAPI.Extensions;
 
@@ -42,7 +41,7 @@ public class TournamentsController(
     /// <response code="404">If the tournament or associated entities were not found.</response>
     /// <response code="409">If a club with the same name already exists.</response>
     [HttpPost]
-    [ProducesResponseType(typeof(Tournament), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(TournamentResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -84,7 +83,7 @@ public class TournamentsController(
     /// <response code="404">If the tournament or associated entities were not found.</response>
     /// <response code="409">If a club with the same name already exists.</response>
     [HttpPut("{id:guid}")]
-    [ProducesResponseType(typeof(Tournament), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(TournamentResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
@@ -123,7 +122,7 @@ public class TournamentsController(
     /// <response code="404">If the tournament was not found.</response>
     [AllowAnonymous]
     [HttpGet("{id:guid}")]
-    [ProducesResponseType(typeof(Tournament), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(TournamentResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetById([FromRoute] Guid id)
     {
