@@ -18,6 +18,8 @@ public class CreateTournamentRequestValidator : AbstractValidator<CreateTourname
             .NotEmpty()
             .Must(date => date.Date >= DateTime.UtcNow.Date)
             .WithMessage("Tournament cannot start in the past.");
+        // Business Requirement: Allowing StartDate == EndDate for single-day tournaments.
+        // Using >= instead of > to support one-day event durations.
         RuleFor(x => x.EndDate)
             .Must((req, endDate) => !endDate.HasValue || endDate.Value >= req.StartDate)
             .WithMessage("End date must be greater than or equal to the start date.");
