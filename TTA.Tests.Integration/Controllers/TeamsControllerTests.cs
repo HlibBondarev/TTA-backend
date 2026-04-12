@@ -7,6 +7,7 @@ using TTA.BusinessLogic.Features.Teams.DTOs;
 using TTA.Common.Enums;
 using TTA.DataAccess.Enums;
 using TTA.Tests.Integration.Infrastructure;
+using Xunit.Abstractions;
 
 namespace TTA.Tests.Integration.Controllers;
 
@@ -15,16 +16,9 @@ namespace TTA.Tests.Integration.Controllers;
 /// Verifies team membership management, including retrieval, addition, and secure termination.
 /// </summary>
 [Collection("DatabaseCollection")]
-public class TeamsControllerTests : BaseApiTest
+public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper output)
+    : BaseApiTest(fixture, output)
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="TeamsControllerTests"/> class.
-    /// </summary>
-    /// <param name="fixture">The shared database fixture instance.</param>
-    public TeamsControllerTests(DatabaseFixture fixture) : base(fixture)
-    {
-    }
-
     #region Members Management
 
     /// <summary>

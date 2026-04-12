@@ -4,10 +4,12 @@ using System.Net;
 using System.Net.Http.Json;
 using TTA.Common.Enums;
 using TTA.Tests.Integration.Infrastructure;
+using Xunit.Abstractions;
 
 namespace TTA.Tests.Integration.Controllers;
 
-public class ClubsControllerTests(DatabaseFixture fixture) : BaseApiTest(fixture)
+public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper output)
+    : BaseApiTest(fixture, output)
 {
     #region Create
     [Fact]

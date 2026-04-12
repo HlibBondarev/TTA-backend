@@ -158,4 +158,23 @@ public static class SqlStatements
         public const string DeletePlayer =
             "DELETE FROM public.players WHERE id = @p_id";
     }
+
+    /// <summary>
+    /// SQL constants for Tournament-related database operations.
+    /// </summary>
+    public static class ForTournaments
+    {
+        /// <summary>
+        /// SQL to call the upsert function for tournaments and return the resulting record.
+        /// Matches parameters of public.upsert_tournament.
+        /// </summary>
+        public const string UpsertTournament =
+        "SELECT * FROM public.upsert_tournament(@Id, @SportId, @ConfigurationId, @CityId, @OwnerId, @Name, @StartDate, @EndDate, @CreatedAt)";
+
+        /// <summary>
+        /// SQL to retrieve a single tournament record by its ID using public.get_tournament_by_id.
+        /// </summary>
+        public const string GetTournamentById =
+            "SELECT * FROM public.get_tournament_by_id(@p_id)";
+    }
 }

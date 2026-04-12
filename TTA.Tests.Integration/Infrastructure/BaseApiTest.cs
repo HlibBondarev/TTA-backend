@@ -5,7 +5,9 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using TTA.DataAccess.Repository.Base;
+using Xunit.Abstractions;
 
 namespace TTA.Tests.Integration.Infrastructure;
 
@@ -16,32 +18,14 @@ namespace TTA.Tests.Integration.Infrastructure;
 /// </summary>
 public abstract class BaseApiTest : BaseIntegrationTest
 {
-    /// <summary>
-    /// Default HTTP client with pre-configured authentication headers.
-    /// </summary>
     protected readonly HttpClient Client;
-
-    /// <summary>
-    /// The underlying WebApplicationFactory used to create the test server and clients.
-    /// </summary>
     protected readonly WebApplicationFactory<Program> Factory;
-
-    /// <summary>
-    /// Shared test user identifier used across integration tests.
-    /// </summary>
     public const string TestUserId = "auth0|test-user";
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="BaseApiTest"/> class.
-    /// Configures the test server by mocking the database and authentication schemes.
-    /// </summary>
-    /// <param name="fixture">The shared database fixture instance.</param>
-    protected BaseApiTest(DatabaseFixture fixture) : base(fixture)
+    protected BaseApiTest(DatabaseFixture fixture, ITestOutputHelper output) : base(fixture)
     {
-        // Defensive reset to ensure every test class starts with a known auth state
         TestAuthHandler.IsEnabled = true;
 
-        // Build configuration before the host starts to satisfy Auth0ConfigHelper requirements
         var testConfig = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -55,17 +39,20 @@ public abstract class BaseApiTest : BaseIntegrationTest
         Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");
-
-            // Inject the configuration early into the host builder
             builder.UseConfiguration(testConfig);
+
+            builder.ConfigureLogging(logging =>
+            {
+                logging.ClearProviders();
+                // We add a simple action to direct logs to xUnit output
+                logging.AddProvider(new XUnitLoggerProvider(output));
+            });
 
             builder.ConfigureTestServices(services =>
             {
-                // Replace the real database connection factory with the test one
                 services.RemoveAll<IDbConnectionFactory>();
                 services.AddSingleton(Fixture.ConnectionFactory);
 
-                // Configure a custom authentication scheme for testing purposes
                 services.AddAuthentication(options =>
                 {
                     options.DefaultAuthenticateScheme = "TestScheme";
@@ -75,5 +62,23 @@ public abstract class BaseApiTest : BaseIntegrationTest
         });
 
         Client = Factory.CreateClient();
+    }
+}
+
+// Simple internal provider to avoid NuGet dependency issues
+internal class XUnitLoggerProvider(ITestOutputHelper output) : ILoggerProvider
+{
+    public ILogger CreateLogger(string categoryName) => new XUnitLogger(output, categoryName);
+    public void Dispose() { }
+}
+
+internal class XUnitLogger(ITestOutputHelper output, string categoryName) : ILogger
+{
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        try { output.WriteLine($"{logLevel}: {categoryName}[{eventId}] {formatter(state, exception)} {(exception != null ? "\n" + exception : "")}"); }
+        catch { /* Output helper might be disposed */ }
     }
 }
