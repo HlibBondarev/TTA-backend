@@ -37,19 +37,6 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
             return false;
         }
 
-        // If it's a wrapper, get the real exception
-        var actualException = exception;
-        if (exception.InnerException is BaseException)
-        {
-            actualException = exception.InnerException;
-        }
-        else if (exception is AggregateException ae)
-        {
-            actualException = ae.Flatten().InnerException ?? exception;
-        }
-
-        logger.LogError(actualException, "Handling exception: {Message}", actualException.Message);
-
         var (statusCode, baseMessage) = MapException(exception);
 
         // Detailed collection of validation errors for both Detail string and Extensions dictionary
@@ -59,7 +46,7 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
         // Extract structured data if the exception contains entries in the Data dictionary (e.g., ValidationException)
         if (exception.Data.Count > 0)
         {
-            detailBuilder.Append(" ");
+            detailBuilder.Append(' ');
             foreach (DictionaryEntry entry in exception.Data)
             {
                 var key = entry.Key.ToString() ?? "Error";

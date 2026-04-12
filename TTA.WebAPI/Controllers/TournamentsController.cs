@@ -112,21 +112,6 @@ public class TournamentsController(
         var result = await _mediator.Send(command);
 
         return Ok(result);
-        //try
-        //{
-        //    string userId = this.GetUserId(_auth0Settings);
-        //    var command = request.ToCommand(id, userId);
-        //    var result = await _mediator.Send(command);
-        //    return Ok(result);
-        //}
-        //catch (TTA.Common.Exceptions.ForbiddenException)
-        //{
-        //    return Forbid(); // This returns 403
-        //}
-        //catch (TTA.Common.Exceptions.NotFoundException)
-        //{
-        //    return NotFound(); // This returns 404
-        //}
     }
 
     /// <summary>
