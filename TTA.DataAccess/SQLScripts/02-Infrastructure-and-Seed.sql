@@ -110,7 +110,10 @@ INSERT INTO clubs (id, cityid, name, createdat) VALUES
      WHERE c.name = 'Lviv' AND r.name = 'Lviv Oblast' AND co.code = 'UKR' LIMIT 1), 'Dynamo-Amazonky Lviv', NOW()),
 ('11111111-1111-1111-1111-111111111110', 
     (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
-     WHERE c.name = 'Dnipro' AND r.name = 'Dnipropetrovsk Oblast' AND co.code = 'UKR' LIMIT 1), 'My super club', NOW())
+     WHERE c.name = 'Dnipro' AND r.name = 'Dnipropetrovsk Oblast' AND co.code = 'UKR' LIMIT 1), 'My super club', NOW()),
+('11111111-1111-1111-1111-111111111111', 
+    (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
+     WHERE c.name = 'Dnipro' AND r.name = 'Dnipropetrovsk Oblast' AND co.code = 'UKR' LIMIT 1), 'My super club - 2', NOW())
 ON CONFLICT (id) DO NOTHING;
 
 DO $$ 
@@ -125,7 +128,8 @@ BEGIN
     ('22222222-2222-2222-2222-222222222209', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv U-15 (2011)', 2011, 0, NOW()), -- CHANGED: Male -> 0
     ('22222222-2222-2222-2222-222222222204', '11111111-1111-1111-1111-111111111109', v_wp_id, 'Dynamo-Amazonky (Women)', NULL, 1, NOW()), -- CHANGED: Female -> 1
     ('22222222-2222-2222-2222-222222222211', '11111111-1111-1111-1111-111111111107', v_wp_id, 'Kyiv City Selection (Women)', NULL, 1, NOW()), -- CHANGED: Female -> 1
-    ('22222222-2222-2222-2222-222222222215', '11111111-1111-1111-1111-111111111110', v_wp_id, 'My super team U-15 (2011)', 2011, 0, NOW()) -- CHANGED: Male -> 0
+    ('22222222-2222-2222-2222-222222222215', '11111111-1111-1111-1111-111111111110', v_wp_id, 'My super team U-15 (2011)', 2011, 0, NOW()), -- CHANGED: Male -> 0
+    ('22222222-2222-2222-2222-222222222216', '11111111-1111-1111-1111-111111111111', v_wp_id, 'My super team - 2 U-15 (2011)', 2011, 0, NOW()) -- CHANGED: Male -> 0
     ON CONFLICT (id) DO NOTHING;
 END $$;
 
@@ -136,64 +140,197 @@ END $$;
 DO $$ 
 DECLARE 
     v_user_id VARCHAR := 'auth0|69cf7ec5eff8f1358a0b9ae0'; 
+    v_club_id UUID := '11111111-1111-1111-1111-111111111110';
     v_team_id UUID := '22222222-2222-2222-2222-222222222215'; 
-    v_new_club_id UUID := '11111111-1111-1111-1111-111111111110';
+    v_user_id_2 VARCHAR := 'auth0|698b956080889e5401cef7c5'; 
+    v_club_id_2 UUID := '11111111-1111-1111-1111-111111111111';
+    v_team_id_2 UUID := '22222222-2222-2222-2222-222222222216'; 
+    v_user_id_3 VARCHAR := 'auth0|698b9bd69f764e2999518960';
 BEGIN
     -- 1. Ensure user exists
+    -- Note: In a real application, users would be created via the Auth0 integration flow. This is just for seeding purposes.
+    -- Hlib Bondarev
     INSERT INTO public.users (id, email, displayname, createdat)
     VALUES (v_user_id, 'hlib.bondarev@gmail.com', 'Hlib Bondarev', NOW())
     ON CONFLICT (id) DO NOTHING;
+    -- Taras Shevchenko
+    INSERT INTO public.users (id, email, displayname, createdat)
+    VALUES (v_user_id_2, 'user1@example.com', 'Taras Shevchenko', NOW())
+    ON CONFLICT (id) DO NOTHING;
+    -- User without team - Ivan Franko (Admin)
+    INSERT INTO public.users (id, email, displayname, createdat)
+    VALUES (v_user_id_3, 'user2@example.com', 'Ivan Franko', NOW())
+    ON CONFLICT (id) DO NOTHING;
 
-    -- 2. Existing Team Membership (for old tests)
+    -- 2. Existing Team Membership
+    -- for Hlib Bondarev and "My super team U-15 (2011)"
     INSERT INTO public.teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary)
-    SELECT '99999999-9999-9999-9999-999999999901', v_user_id, v_team_id, 0, NOW(), true -- roleinteam: HeadCoach -> 0
+    SELECT '88888888-8888-8888-8888-888888888801', v_user_id, v_team_id, 0, NOW(), true -- roleinteam: HeadCoach -> 0
     WHERE NOT EXISTS (
         SELECT 1 FROM public.teammemberships 
         WHERE userid = v_user_id AND teamid = v_team_id
     );
+    -- for Taras Shevchenko and "My super team - 2 U-15 (2011)"
+    INSERT INTO public.teammemberships (id, userid, teamid, roleinteam, joinedat, isprimary)
+    SELECT '88888888-8888-8888-8888-888888888802', v_user_id_2, v_team_id_2, 0, NOW(), true -- roleinteam: HeadCoach -> 0
+    WHERE NOT EXISTS (
+        SELECT 1 FROM public.teammemberships 
+        WHERE userid = v_user_id_2 AND teamid = v_team_id_2
+    );
 
-    -- 3. Policy for the OLD Team
+    -- 3. Policy for the Clubs & Teams & Global (Admin) - ensuring no duplicates
+
+    -- for Hlib Bondarev and "My super club"
     INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
-    SELECT '99999999-9999-9999-9999-999999999902', v_user_id, 0, 2, v_team_id, NOW() -- role: FullControl -> 0, targettype: Team -> 2
+    SELECT '99999999-9999-9999-9999-999999999900', v_user_id, 0, 1, v_club_id, NOW() -- role: FullControl -> 0, targettype: Club -> 1
+    WHERE NOT EXISTS (
+        SELECT 1 FROM auth.accesspolicies 
+        WHERE userid = v_user_id AND targettype = 1 AND targetid = v_club_id -- targettype: Club -> 1
+    );
+    RAISE NOTICE 'Seed completed: User % granted FullControl over Club %', v_user_id, v_club_id;
+
+    -- for Hlib Bondarev and "My super team U-15 (2011)"
+    INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
+    SELECT '99999999-9999-9999-9999-999999999901', v_user_id, 0, 2, v_team_id, NOW() -- role: FullControl -> 0, targettype: Team -> 2
     WHERE NOT EXISTS (
         SELECT 1 FROM auth.accesspolicies 
         WHERE userid = v_user_id AND targettype = 2 AND targetid = v_team_id -- targettype: Team -> 2
     );
+    RAISE NOTICE 'Seed completed: User % granted FullControl over Team %', v_user_id, v_team_id;
 
-    -- 4. NEW: Policy for "My super club" (FullControl so you can add players)
+    -- for Taras Shevchenko and "My super club - 2 U-15 (2011)"
     INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
-    SELECT 
-        '99999999-9999-9999-9999-999999999910', 
-        v_user_id, 
-        0, -- role: FullControl -> 0
-        1, -- targettype: Club -> 1
-        v_new_club_id, 
-        NOW()
+    SELECT '99999999-9999-9999-9999-999999999902', v_user_id_2, 0, 1, v_club_id_2, NOW() -- role: FullControl -> 0, targettype: Club -> 1
     WHERE NOT EXISTS (
         SELECT 1 FROM auth.accesspolicies 
-        WHERE userid = v_user_id 
-          AND targettype = 1 -- targettype: Club -> 1
-          AND targetid = v_new_club_id
+        WHERE userid = v_user_id_2 AND targettype = 1 AND targetid = v_club_id_2 -- targettype: Club -> 1
     );
+    RAISE NOTICE 'Seed completed: User % granted FullControl over Club %', v_user_id_2, v_club_id_2;
 
-    RAISE NOTICE 'Seed completed: User % granted FullControl over Club %', v_user_id, v_new_club_id;
+    -- for Taras Shevchenko and "My super team - 2 U-15 (2011)"
+    INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
+    SELECT '99999999-9999-9999-9999-999999999903', v_user_id_2, 0, 2, v_team_id_2, NOW() -- role: FullControl -> 0, targettype: Team -> 2
+    WHERE NOT EXISTS (
+        SELECT 1 FROM auth.accesspolicies 
+        WHERE userid = v_user_id_2 AND targettype = 2 AND targetid = v_team_id_2 -- targettype: Team -> 2
+    );
+    RAISE NOTICE 'Seed completed: User % granted FullControl over Team %', v_user_id_2, v_team_id_2;
+
+    -- for Ivan Franko (Admin)
+    INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
+    SELECT '99999999-9999-9999-9999-999999999904', v_user_id_3, 0, 0, NULL, NOW() -- role: FullControl -> 0, targettype: Global -> 0
+    WHERE NOT EXISTS (
+        SELECT 1 FROM auth.accesspolicies 
+        WHERE userid = v_user_id_3 AND targettype = 0 -- targettype: Global -> 0
+    );
+    RAISE NOTICE 'Seed completed: User % granted FullControl over Global', v_user_id_3;
+
 END $$;
 
--- ==========================================
--- 6. PLAYERS (Seed for My super club)
--- ==========================================
+-- ===========================================================
+-- 6. PLAYERS (Seed for "My super club" and "My super club 2")
+-- ===========================================================
 
 DO $$ 
 DECLARE 
     v_club_id uuid := '11111111-1111-1111-1111-111111111110';
+    v_club_id_2 uuid := '11111111-1111-1111-1111-111111111111';
 BEGIN
     INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES 
-    ('33333333-3333-3333-3333-333333333001', v_club_id, 'Олександр', 'Коваленко', '2011-05-15', 0, NOW()), -- CHANGED: Male -> 0
-    ('33333333-3333-3333-3333-333333333002', v_club_id, 'Максим', 'Бондар', '2011-08-22', 0, NOW()), -- CHANGED: Male -> 0
-    ('33333333-3333-3333-3333-333333333003', v_club_id, 'Артем', 'Шевченко', '2012-01-10', 0, NOW()), -- CHANGED: Male -> 0
-    ('33333333-3333-3333-3333-333333333004', v_club_id, 'Дмитро', 'Марченко', '2011-11-30', 0, NOW()), -- CHANGED: Male -> 0
-    ('33333333-3333-3333-3333-333333333005', v_club_id, 'Іван', 'Сидоренко', '2011-03-05', 0, NOW()) -- CHANGED: Male -> 0
+    ('33333333-3333-3333-3333-333333333001', v_club_id, 'Олександр', 'Коваленко', '2011-05-15', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333002', v_club_id, 'Максим', 'Бондар', '2011-08-22', 0, NOW()), 
+    ('33333333-3333-3333-3333-333333333003', v_club_id, 'Артем', 'Шевченко', '2012-01-10', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333004', v_club_id, 'Дмитро', 'Марченко', '2011-11-30', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333005', v_club_id, 'Іван', 'Сидоренко', '2011-03-05', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333006', v_club_id, 'Сергій', 'Кравченко', '2012-07-18', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333007', v_club_id, 'Володимир', 'Григоренко', '2011-09-25', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333008', v_club_id, 'Павло', 'Левченко', '2011-12-12', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333009', v_club_id, 'Юрій', 'Козак', '2012-02-20', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333010', v_club_id, 'Андрій', 'Мельник', '2011-06-30', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333011', v_club_id, 'Олег', 'Федоренко', '2011-04-18', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333012', v_club_id, 'Євген', 'Гончаренко', '2012-09-05', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333013', v_club_id, 'Микола', 'Соловйов', '2011-10-22', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333014', v_club_id, 'Віталій', 'Даниленко', '2011-07-14', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333015', v_club_id, 'Григорій', 'Петренко', '2012-03-28', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333016', v_club_id_2, 'Степан', 'Климченко', '2011-05-10', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333017', v_club_id_2, 'Олексій', 'Грищенко', '2011-08-05', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333018', v_club_id_2, 'Василь', 'Морозенко', '2012-01-20', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333019', v_club_id_2, 'Ігор', 'Ткаченко', '2011-11-15', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333020', v_club_id_2, 'Семен', 'Ковальчук', '2011-03-30', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333021', v_club_id_2, 'Михайло', 'Григорьєв', '2011-09-12', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333022', v_club_id_2, 'Роман', 'Лисенко', '2012-04-25', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333023', v_club_id_2, 'Владислав', 'Кравчук', '2011-06-05', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333024', v_club_id_2, 'Петро', 'Сидоренко', '2011-12-20', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333025', v_club_id_2, 'Остап', 'Григоренко', '2012-02-10', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333026', v_club_id_2, 'Денис', 'Мельник', '2011-07-30', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333027', v_club_id_2, 'Віктор', 'Федоренко', '2011-04-05', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333028', v_club_id_2, 'Єгор', 'Гончаренко', '2012-09-20', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333029', v_club_id_2, 'Марк', 'Соловйов', '2011-10-05', 0, NOW()),
+    ('33333333-3333-3333-3333-333333333030', v_club_id_2, 'Володимир', 'Даниленко', '2011-07-01', 0, NOW())
     ON CONFLICT (id) DO NOTHING;
 
-    RAISE NOTICE 'Seed for 5 players in "My super club" completed successfully.';
+    RAISE NOTICE 'Seed for 30 players in "My super club" and "My super club 2" completed successfully.';
+END $$;
+
+-- ==========================================
+-- TOURNAMENTS
+-- ==========================================
+
+DO $$ 
+DECLARE 
+    -- References from existing seeds
+    v_sport_id UUID := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f'; -- Water Polo
+    v_config_id UUID := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70'; -- Default WP Config
+    v_city_lviv UUID := 'c0000000-0000-0000-0000-000000000001';
+    v_city_kyiv UUID := 'c0000000-0000-0000-0000-000000000002';
+    v_city_dnipro UUID := 'c0000000-0000-0000-0000-000000000005';
+    -- Existing Users
+    v_user_hlib VARCHAR := 'auth0|69cf7ec5eff8f1358a0b9ae0';
+    v_user_taras VARCHAR := 'auth0|698b956080889e5401cef7c5';
+    v_user_ivan VARCHAR := 'auth0|698b9bd69f764e2999518960';
+
+BEGIN
+    -- 1. Tournament for Hlib Bondarev (In 1 month)
+    INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, enddate, createdat)
+    VALUES (
+        gen_random_uuid(), 
+        v_sport_id, 
+        v_config_id, 
+        v_city_lviv, 
+        v_user_hlib, 
+        'Spring Water Polo Cup 2026', 
+        CURRENT_DATE + INTERVAL '1 month', 
+        CURRENT_DATE + INTERVAL '1 month' + INTERVAL '3 days', 
+        NOW()
+    ) ON CONFLICT DO NOTHING;
+
+    -- 2. Tournament for Taras Shevchenko (In 3 months)
+    INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, enddate, createdat)
+    VALUES (
+        gen_random_uuid(), 
+        v_sport_id, 
+        v_config_id, 
+        v_city_kyiv, 
+        v_user_taras, 
+        'Summer Kyiv Invitational', 
+        CURRENT_DATE + INTERVAL '3 months', 
+        CURRENT_DATE + INTERVAL '3 months' + INTERVAL '5 days', 
+        NOW()
+    ) ON CONFLICT DO NOTHING;
+
+    -- 3. Tournament for Ivan Franko (In 6 months)
+    INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, enddate, createdat)
+    VALUES (
+        gen_random_uuid(), 
+        v_sport_id, 
+        v_config_id, 
+        v_city_dnipro, 
+        v_user_ivan, 
+        'Autumn Championship Dnipro', 
+        CURRENT_DATE + INTERVAL '6 months', 
+        CURRENT_DATE + INTERVAL '6 months' + INTERVAL '7 days', 
+        NOW()
+    ) ON CONFLICT DO NOTHING;
+
+    RAISE NOTICE 'Tournaments seeding completed successfully.';
 END $$;
