@@ -111,7 +111,7 @@ public class RostersControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies player removal from a roster.
+    /// Verifies player removal from a roster and ensures the state is updated in the database.
     /// </summary>
     [Fact]
     public async Task RemovePlayer_ShouldReturnNoContent_WhenPlayerExistsInRoster()
@@ -121,14 +121,31 @@ public class RostersControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var tournamentId = Guid.NewGuid();
         var teamId = Guid.NewGuid();
         var playerId = Guid.NewGuid();
+
+        // Seed all dependencies and the roster entry itself
         await SeedRequiredDataForRosterAsync(tournamentId, teamId, playerId, userId);
 
-        // Act
-        // [HttpDelete("{teamId:guid}/{playerId:guid}")]
-        var response = await Client.DeleteAsync($"{GetBaseUrl(tournamentId)}/{teamId}/{playerId}");
+        var deleteUrl = $"{GetBaseUrl(tournamentId)}/{teamId}/{playerId}";
 
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        // Act: Perform the deletion
+        var deleteResponse = await Client.DeleteAsync(deleteUrl);
+
+        // Assert: Immediate response should be 204 No Content
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // Post-condition check: Verify the player is actually gone from the roster
+        // We use the GET endpoint to fetch the current team roster
+        var getRosterUrl = $"{GetBaseUrl(tournamentId)}/{teamId}";
+        var getResponse = await Client.GetAsync(getRosterUrl);
+
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var roster = await getResponse.Content.ReadFromJsonAsync<List<RosterPlayerResponse>>();
+
+        // Assert that the list does not contain the deleted player
+        roster.Should().NotBeNull();
+        roster.Should().NotContain(p => p.PlayerId == playerId,
+            "because the player should have been removed from the tournament roster");
     }
 
     #region Seeding Helpers

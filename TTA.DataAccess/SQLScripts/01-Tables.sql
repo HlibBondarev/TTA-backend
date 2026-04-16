@@ -202,7 +202,6 @@ CREATE TABLE playerrosters (
 -- Indexes to speed up searches
 CREATE INDEX ix_playerrosters_tournament ON playerrosters (tournamentid);
 CREATE INDEX ix_playerrosters_team ON playerrosters (teamid);
-CREATE INDEX ix_playerrosters_lookup ON public.playerrosters (tournamentid, teamid);
 
 CREATE TABLE matchlineups (
     id UUID PRIMARY KEY,
