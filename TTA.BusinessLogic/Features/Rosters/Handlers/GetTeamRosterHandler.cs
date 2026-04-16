@@ -23,12 +23,12 @@ public class GetTeamRosterHandler(
     private readonly ILogger<GetTeamRosterHandler> _logger = logger;
 
     /// <summary>
-    /// Processes the query to fetch and map the roster data.
+    /// Processes the query to fetch and map the roster data to a collection of <see cref="RosterPlayerResponse"/>.
     /// </summary>
     /// <param name="request">The query containing tournament and team identifiers.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A collection of <see cref="RosterPlayerResponse"/> objects.</returns>
-    /// <exception cref="NotFoundException">Thrown if the team does not exist.</exception>
+    /// <returns>A collection of <see cref="RosterPlayerResponse"/> objects representing the team roster.</returns>
+    /// <exception cref="NotFoundException">Thrown when either the tournament or the team with the specified identifiers was not found.</exception>
     public async Task<IEnumerable<RosterPlayerResponse>> Handle(GetTeamRosterQuery request, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Retrieving roster for Team {TeamId} in Tournament {TournamentId}.",
