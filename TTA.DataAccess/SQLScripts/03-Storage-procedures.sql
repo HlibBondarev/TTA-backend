@@ -534,3 +534,116 @@ BEGIN
     SELECT * FROM public.tournaments WHERE id = p_id;
 END;
 $$ LANGUAGE plpgsql;
+
+-- =============================================================
+-- ROSTER MANAGEMENT FUNCTIONS
+-- =============================================================
+/**
+ * Adds or updates a player's assignment in a specific tournament roster.
+ * * Business Logic:
+ * 1. Ensures the jersey number is unique within the specific team for this tournament.
+ * 2. Validates that a player is not already registered for a DIFFERENT team in the same tournament.
+ * (Players can belong to any club, but can only represent one team per tournament).
+ **/
+CREATE OR REPLACE FUNCTION public.upsert_player_to_roster(
+    p_id UUID,
+    p_tournament_id UUID,
+    p_team_id UUID,
+    p_player_id UUID,
+    p_position_id UUID,
+    p_number INT,
+    p_created_at TIMESTAMPTZ
+)
+RETURNS SETOF public.playerrosters AS $$
+BEGIN
+    -- 1. Validation: Ensure jersey number is unique within THIS team for THIS tournament
+    IF EXISTS (
+        SELECT 1 FROM public.playerrosters 
+        WHERE tournamentid = p_tournament_id 
+          AND teamid = p_team_id 
+          AND number = p_number 
+          AND playerid != p_player_id
+    ) THEN
+        RAISE EXCEPTION 'Jersey number % is already taken in this team roster.', p_number USING ERRCODE = '23505';
+    END IF;
+
+    -- 2. Validation: Ensure player is not playing for another team in the same tournament
+    IF EXISTS (
+        SELECT 1 FROM public.playerrosters 
+        WHERE tournamentid = p_tournament_id 
+          AND playerid = p_player_id
+          AND teamid != p_team_id
+    ) THEN
+        RAISE EXCEPTION 'Player is already registered for another team in this tournament.' USING ERRCODE = 'P0001';
+    END IF;
+
+    RETURN QUERY
+    INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, positionid, number, createdat)
+    VALUES (p_id, p_tournament_id, p_team_id, p_player_id, p_position_id, p_number, p_created_at)
+    ON CONFLICT (tournamentid, teamid, playerid) 
+    DO UPDATE SET 
+        positionid = EXCLUDED.positionid,
+        number = EXCLUDED.number
+    RETURNING *;
+END;
+$$ LANGUAGE plpgsql;
+
+/**
+ * Retrieves the full roster for a specific team in a tournament.
+ * Joins with players and position definitions for a complete view.
+ **/
+CREATE OR REPLACE FUNCTION public.get_tournament_team_roster(
+    p_tournament_id UUID,
+    p_team_id UUID
+)
+RETURNS TABLE (
+    id UUID,
+    tournamentid UUID,
+    teamid UUID,
+    playerid UUID,
+    firstname VARCHAR,
+    lastname VARCHAR,
+    positionid UUID,
+    positionname VARCHAR,
+    number INT,
+    createdat TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        r.id,
+        r.tournamentid,
+        r.teamid,
+        r.playerid,
+        p.firstname,
+        p.lastname,
+        r.positionid,
+        pos.name as positionname,
+        r.number,
+        r.createdat
+    FROM public.playerrosters r
+    INNER JOIN public.players p ON r.playerid = p.id
+    INNER JOIN public.playerpositiondefinitions pos ON r.positionid = pos.id
+    WHERE r.tournamentid = p_tournament_id 
+      AND r.teamid = p_team_id
+    ORDER BY r.number ASC;
+END;
+$$ LANGUAGE plpgsql;
+
+/**
+ * Removes a player from a tournament roster.
+ **/
+CREATE OR REPLACE FUNCTION public.remove_player_from_roster(
+    p_tournament_id UUID,
+    p_team_id UUID,
+    p_player_id UUID
+)
+RETURNS VOID AS $$
+BEGIN
+    DELETE FROM public.playerrosters 
+    WHERE 
+        tournamentid = p_tournament_id 
+        AND teamid = p_team_id
+        AND playerid = p_player_id;
+END;
+$$ LANGUAGE plpgsql;

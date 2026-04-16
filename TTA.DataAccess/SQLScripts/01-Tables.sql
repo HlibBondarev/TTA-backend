@@ -188,8 +188,16 @@ CREATE TABLE playerrosters (
     tournamentid UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
     teamid UUID NOT NULL REFERENCES teams(id),
     number INT NOT NULL,
-    positionid UUID NOT NULL REFERENCES playerpositiondefinitions(id)
+    positionid UUID NOT NULL REFERENCES playerpositiondefinitions(id),
+    createdat TIMESTAMPTZ NOT NULL,
+    
+    -- Added unique constraint to support UPSERT operations.
+    CONSTRAINT uix_playerrosters_full_identity UNIQUE (tournamentid, teamid, playerid)
 );
+-- Indexes to speed up searches
+CREATE INDEX ix_playerrosters_tournament ON playerrosters (tournamentid);
+CREATE INDEX ix_playerrosters_team ON playerrosters (teamid);
+
 
 CREATE TABLE matchlineups (
     id UUID PRIMARY KEY,
