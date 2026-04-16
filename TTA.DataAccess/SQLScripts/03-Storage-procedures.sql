@@ -540,7 +540,7 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 /**
  * Adds or updates a player's assignment in a specific tournament roster.
- * Uses atomic DB constraints instead of race-prone IF EXISTS checks.
+ * Includes a safety check to prevent cross-team player movement within the same tournament.
  **/
 CREATE OR REPLACE FUNCTION public.upsert_player_to_roster(
     p_id UUID,
@@ -553,40 +553,33 @@ CREATE OR REPLACE FUNCTION public.upsert_player_to_roster(
 )
 RETURNS SETOF public.playerrosters AS $$
 BEGIN
+    -- Validation: Check if the player is already registered for a DIFFERENT team in this tournament.
+    -- This prevents silent reassignment and allows the C# Handler to catch SQLSTATE P0001.
+    IF EXISTS (
+        SELECT 1 FROM public.playerrosters 
+        WHERE tournamentid = p_tournament_id 
+          AND playerid = p_player_id
+          AND teamid != p_team_id
+    ) THEN
+        RAISE EXCEPTION 'Player is already registered for another team in this tournament.' 
+        USING ERRCODE = 'P0001';
+    END IF;
+
     RETURN QUERY
     INSERT INTO public.playerrosters (
-        id, 
-        tournamentid, 
-        teamid, 
-        playerid, 
-        positionid, 
-        number, 
-        createdat
+        id, tournamentid, teamid, playerid, positionid, number, createdat
     )
     VALUES (
-        p_id, 
-        p_tournament_id, 
-        p_team_id, 
-        p_player_id, 
-        p_position_id, 
-        p_number, 
-        p_created_at
+        p_id, p_tournament_id, p_team_id, p_player_id, p_position_id, p_number, p_created_at
     )
-    -- If (tournamentid, playerid) exists, we try to update
+    -- Handle existing registration for the SAME team (tournamentid, playerid conflict).
     ON CONFLICT (tournamentid, playerid) 
     DO UPDATE SET 
         positionid = EXCLUDED.positionid,
         number = EXCLUDED.number,
-        -- The update only succeeds if the teamid remains the same.
-        -- If someone tries to move a player to another team via this call,
-        -- the uix_playerrosters_tournament_player will naturally handle the policy.
-        teamid = EXCLUDED.teamid
+        createdat = EXCLUDED.createdat
+        -- teamid is not updated as the IF EXISTS check above ensures it remains the same.
     RETURNING *;
-
-    /* Note for C# Handler: 
-       Any violation of 'uix_playerrosters_tournament_team_number' (jersey taken)
-       or trying to assign a player to a second team will throw SQLSTATE 23505.
-    */
 END;
 $$ LANGUAGE plpgsql;
 
