@@ -7,8 +7,8 @@ using TTA.DataAccess.Repository.Api;
 namespace TTA.BusinessLogic.Features.Rosters.Handlers;
 
 /// <summary>
-/// Handles the business logic for removing a player from a tournament roster.
-/// Verifies tournament status and ownership before execution.
+/// Handler for removing a player from a tournament roster.
+/// Validates tournament existence and end date before removing a player.
 /// </summary>
 public class RemovePlayerFromRosterHandler(
     IRosterRepository rosterRepository,
