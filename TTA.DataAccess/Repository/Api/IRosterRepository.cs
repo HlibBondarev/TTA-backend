@@ -29,6 +29,7 @@ public interface IRosterRepository : IEntityRepositoryBase<Guid, PlayerRoster>
     /// Removes a player from a tournament roster.
     /// </summary>
     /// <param name="tournamentId">Tournament identifier.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
     /// <param name="playerId">Player identifier.</param>
     /// <param name="ct">Cancellation token.</param>
     Task RemovePlayerFromRosterAsync(Guid tournamentId, Guid teamId, Guid playerId, CancellationToken ct = default);
