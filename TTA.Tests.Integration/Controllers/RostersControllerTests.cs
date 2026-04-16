@@ -18,7 +18,7 @@ public class RostersControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     /// <summary>
     /// Gets the base URL for roster operations within a tournament.
     /// </summary>
-    private string GetBaseUrl(Guid tournamentId) => $"api/tournaments/{tournamentId}/rosters";
+    private static string GetBaseUrl(Guid tournamentId) => $"api/tournaments/{tournamentId}/rosters";
 
     /// <summary>
     /// Verifies that the system correctly retrieves the roster for a specific team.

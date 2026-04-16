@@ -23,13 +23,13 @@ public class RemovePlayerFromRosterHandler(
     /// Processes the removal request. Ensures the tournament has not yet ended to maintain data integrity.
     /// </summary>
     /// <param name="request">The command containing tournament and player identifiers.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
     /// <exception cref="NotFoundException">Thrown if the tournament does not exist.</exception>
     /// <exception cref="BadRequestException">Thrown if the tournament timeline is already closed.</exception>
-    public async Task Handle(RemovePlayerFromRosterCommand request, CancellationToken ct)
+    public async Task Handle(RemovePlayerFromRosterCommand request, CancellationToken cancellationToken)
     {
-        var tournament = await _tournamentRepository.GetByIdAsync(request.TournamentId, ct);
+        var tournament = await _tournamentRepository.GetByIdAsync(request.TournamentId, cancellationToken);
         if (tournament == null)
         {
             _logger.LogWarning("RemoveRosterItem failed: Tournament {TournamentId} not found.", request.TournamentId);
@@ -42,7 +42,7 @@ public class RemovePlayerFromRosterHandler(
             throw new BadRequestException("Cannot modify rosters of a finished tournament.");
         }
 
-        await _rosterRepository.RemovePlayerFromRosterAsync(request.TournamentId, request.TeamId, request.PlayerId, ct);
+        await _rosterRepository.RemovePlayerFromRosterAsync(request.TournamentId, request.TeamId, request.PlayerId, cancellationToken);
 
         _logger.LogInformation("Player {PlayerId} successfully removed from Tournament {TournamentId}.",
             request.PlayerId, request.TournamentId);
