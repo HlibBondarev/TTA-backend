@@ -53,10 +53,10 @@ public class GetTeamRosterHandler(
             PositionId: row.positionid,
             PositionName: row.positionname,
             Number: row.number
-        ));
+        )).ToList();
 
         _logger.LogInformation("Successfully retrieved {Count} players for Team {TeamId}.",
-            response.Count(), request.TeamId);
+            response.Count, request.TeamId);
 
         return response;
     }

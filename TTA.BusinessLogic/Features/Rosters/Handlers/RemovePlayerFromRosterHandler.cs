@@ -36,7 +36,7 @@ public class RemovePlayerFromRosterHandler(
             throw new NotFoundException($"Tournament with ID {request.TournamentId} was not found.");
         }
 
-        if (tournament.EndDate < DateTime.UtcNow)
+        if (tournament.EndDate <= DateTime.UtcNow)
         {
             _logger.LogWarning("RemoveRosterItem failed: Tournament {TournamentId} has ended.", request.TournamentId);
             throw new BadRequestException("Cannot modify rosters of a finished tournament.");
