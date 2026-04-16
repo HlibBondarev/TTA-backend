@@ -14,10 +14,12 @@ namespace TTA.BusinessLogic.Features.Rosters.Handlers;
 public class GetTeamRosterHandler(
     IRosterRepository rosterRepository,
     ITeamRepository teamRepository,
+    ITournamentRepository tournamentRepository,
     ILogger<GetTeamRosterHandler> logger) : IRequestHandler<GetTeamRosterQuery, IEnumerable<RosterPlayerResponse>>
 {
     private readonly IRosterRepository _rosterRepository = rosterRepository;
     private readonly ITeamRepository _teamRepository = teamRepository;
+    private readonly ITournamentRepository _tournamentRepository = tournamentRepository;
     private readonly ILogger<GetTeamRosterHandler> _logger = logger;
 
     /// <summary>
@@ -32,7 +34,15 @@ public class GetTeamRosterHandler(
         _logger.LogInformation("Retrieving roster for Team {TeamId} in Tournament {TournamentId}.",
             request.TeamId, request.TournamentId);
 
-        // 1. Check if team exists (optional, but good for precise 404 vs empty list)
+        // 1. Validate Tournament existence
+        var tournament = await _tournamentRepository.GetByIdAsync(request.TournamentId, cancellationToken);
+        if (tournament == null)
+        {
+            _logger.LogWarning("GetTeamRoster failed: Tournament {TournamentId} not found.", request.TournamentId);
+            throw new NotFoundException($"Tournament with ID {request.TournamentId} was not found.");
+        }
+
+        // 2. Check if team exists (optional, but good for precise 404 vs empty list)
         var team = await _teamRepository.GetByIdAsync(request.TeamId, cancellationToken);
         if (team == null)
         {
@@ -40,11 +50,11 @@ public class GetTeamRosterHandler(
             throw new NotFoundException($"Team with ID {request.TeamId} was not found.");
         }
 
-        // 2. Fetch data from repository
+        // 3. Fetch data from repository
         // We use dynamic results from Dapper to avoid creating an intermediate persistence model
         var rawRoster = await _rosterRepository.GetTeamRosterAsync(request.TournamentId, request.TeamId, cancellationToken);
 
-        // 3. Map dynamic rows to structured DTOs
+        // 4. Map dynamic rows to structured DTOs
         var response = rawRoster.Select(row => new RosterPlayerResponse(
             Id: row.id,
             PlayerId: row.playerid,
