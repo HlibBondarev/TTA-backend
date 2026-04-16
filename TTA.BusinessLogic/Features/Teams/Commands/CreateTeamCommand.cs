@@ -6,8 +6,13 @@ using TTA.DataAccess.Models;
 namespace TTA.BusinessLogic.Features.Teams.Commands;
 
 /// <summary>
-/// Command to create a new team, associated with a specific club.
+/// Command to create a new team associated with a specific club.
 /// </summary>
+/// <param name="ClubId">The unique identifier of the club that will own this team.</param>
+/// <param name="Name">The official name of the team.</param>
+/// <param name="SportId">The unique identifier of the sport type the team competes in.</param>
+/// <param name="MinBirthYear">The minimum birth year allowed for team members (optional age restriction).</param>
+/// <param name="Gender">The gender category for the team (e.g., Male, Female, Mixed).</param>
 public record CreateTeamCommand(
     Guid ClubId,
     string Name,

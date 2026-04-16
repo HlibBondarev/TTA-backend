@@ -188,8 +188,21 @@ CREATE TABLE playerrosters (
     tournamentid UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
     teamid UUID NOT NULL REFERENCES teams(id),
     number INT NOT NULL,
-    positionid UUID NOT NULL REFERENCES playerpositiondefinitions(id)
+    positionid UUID NOT NULL REFERENCES playerpositiondefinitions(id),
+    createdat TIMESTAMPTZ NOT NULL,
+    
+    -- CONSTRAINT 1: Ensures a player is registered ONLY ONCE per tournament (across all teams).
+    -- This prevents the same player from representing different teams in one tournament.
+    CONSTRAINT uix_playerrosters_tournament_player UNIQUE (tournamentid, playerid),
+    
+    -- CONSTRAINT 2: Ensures jersey numbers are unique within a single team for a specific tournament.
+    -- This handles the race-condition duplicate issue identified by the analysis.
+    CONSTRAINT uix_playerrosters_tournament_team_number UNIQUE (tournamentid, teamid, number)
 );
+
+-- Indexes to speed up searches
+CREATE INDEX ix_playerrosters_tournament ON playerrosters (tournamentid);
+CREATE INDEX ix_playerrosters_team ON playerrosters (teamid);
 
 CREATE TABLE matchlineups (
     id UUID PRIMARY KEY,

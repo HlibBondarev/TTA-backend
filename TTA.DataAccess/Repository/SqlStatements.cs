@@ -177,4 +177,30 @@ public static class SqlStatements
         public const string GetTournamentById =
             "SELECT * FROM public.get_tournament_by_id(@p_id)";
     }
+
+    /// <summary>
+    /// Contains SQL command constants for invoking PostgreSQL storage functions related to Rosters.
+    /// </summary>
+    public static class ForRosters
+    {
+        /// <summary>
+        /// SQL to call the upsert function for tournament rosters.
+        /// Matches parameters of public.upsert_player_to_roster.
+        /// </summary>
+        public const string UpsertPlayerToRoster =
+            "SELECT * FROM public.upsert_player_to_roster(@Id, @TournamentId, @TeamId, @PlayerId, @PositionId, @Number, @CreatedAt)";
+
+        /// <summary>
+        /// SQL to retrieve the team roster for a specific tournament.
+        /// Calls public.get_tournament_team_roster.
+        /// </summary>
+        public const string GetTournamentTeamRoster =
+            "SELECT * FROM public.get_tournament_team_roster(@TournamentId, @TeamId)";
+
+        /// <summary>
+        /// SQL to remove a player from a specific tournament roster by tournament and player IDs.
+        /// </summary>
+        public const string RemovePlayerFromRoster =
+            "SELECT public.remove_player_from_roster(@TournamentId, @TeamId, @PlayerId)";
+    }
 }

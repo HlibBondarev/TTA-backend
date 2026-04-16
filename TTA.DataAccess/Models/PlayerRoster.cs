@@ -10,4 +10,5 @@ public class PlayerRoster : IKeyedEntity<Guid>
     public Guid TeamId { get; set; }
     public int Number { get; set; }
     public Guid PositionId { get; set; }
+    public DateTime CreatedAt { get; set; }
 }
