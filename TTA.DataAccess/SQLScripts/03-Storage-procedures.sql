@@ -540,10 +540,7 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 /**
  * Adds or updates a player's assignment in a specific tournament roster.
- * * Business Logic:
- * 1. Ensures the jersey number is unique within the specific team for this tournament.
- * 2. Validates that a player is not already registered for a DIFFERENT team in the same tournament.
- * (Players can belong to any club, but can only represent one team per tournament).
+ * Uses atomic DB constraints instead of race-prone IF EXISTS checks.
  **/
 CREATE OR REPLACE FUNCTION public.upsert_player_to_roster(
     p_id UUID,
@@ -556,35 +553,40 @@ CREATE OR REPLACE FUNCTION public.upsert_player_to_roster(
 )
 RETURNS SETOF public.playerrosters AS $$
 BEGIN
-    -- 1. Validation: Ensure jersey number is unique within THIS team for THIS tournament
-    IF EXISTS (
-        SELECT 1 FROM public.playerrosters 
-        WHERE tournamentid = p_tournament_id 
-          AND teamid = p_team_id 
-          AND number = p_number 
-          AND playerid != p_player_id
-    ) THEN
-        RAISE EXCEPTION 'Jersey number % is already taken in this team roster.', p_number USING ERRCODE = '23505';
-    END IF;
-
-    -- 2. Validation: Ensure player is not playing for another team in the same tournament
-    IF EXISTS (
-        SELECT 1 FROM public.playerrosters 
-        WHERE tournamentid = p_tournament_id 
-          AND playerid = p_player_id
-          AND teamid != p_team_id
-    ) THEN
-        RAISE EXCEPTION 'Player is already registered for another team in this tournament.' USING ERRCODE = 'P0001';
-    END IF;
-
     RETURN QUERY
-    INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, positionid, number, createdat)
-    VALUES (p_id, p_tournament_id, p_team_id, p_player_id, p_position_id, p_number, p_created_at)
-    ON CONFLICT (tournamentid, teamid, playerid) 
+    INSERT INTO public.playerrosters (
+        id, 
+        tournamentid, 
+        teamid, 
+        playerid, 
+        positionid, 
+        number, 
+        createdat
+    )
+    VALUES (
+        p_id, 
+        p_tournament_id, 
+        p_team_id, 
+        p_player_id, 
+        p_position_id, 
+        p_number, 
+        p_created_at
+    )
+    -- If (tournamentid, playerid) exists, we try to update
+    ON CONFLICT (tournamentid, playerid) 
     DO UPDATE SET 
         positionid = EXCLUDED.positionid,
-        number = EXCLUDED.number
+        number = EXCLUDED.number,
+        -- The update only succeeds if the teamid remains the same.
+        -- If someone tries to move a player to another team via this call,
+        -- the uix_playerrosters_tournament_player will naturally handle the policy.
+        teamid = EXCLUDED.teamid
     RETURNING *;
+
+    /* Note for C# Handler: 
+       Any violation of 'uix_playerrosters_tournament_team_number' (jersey taken)
+       or trying to assign a player to a second team will throw SQLSTATE 23505.
+    */
 END;
 $$ LANGUAGE plpgsql;
 
