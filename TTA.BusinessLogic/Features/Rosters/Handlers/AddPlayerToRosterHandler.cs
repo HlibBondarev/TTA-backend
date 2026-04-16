@@ -40,7 +40,7 @@ public class AddPlayerToRosterHandler(
         }
 
         // 2. Validate Tournament timeline
-        if (tournament.EndDate < DateTime.UtcNow)
+        if (tournament.EndDate <= DateTime.UtcNow)
         {
             _logger.LogWarning("AddRosterItem failed: Tournament {TournamentId} has already ended.", command.TournamentId);
             throw new BadRequestException("Cannot modify rosters for a finished tournament.");
