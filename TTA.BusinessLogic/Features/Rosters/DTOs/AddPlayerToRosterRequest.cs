@@ -5,7 +5,6 @@ namespace TTA.BusinessLogic.Features.Rosters.DTOs;
 /// <summary>
 /// Data transfer object for adding a player to a tournament roster.
 /// </summary>
-/// <param name="TeamId">The unique identifier of the team the player is representing.</param>
 /// <param name="PlayerId">The unique identifier of the player being assigned.</param>
 /// <param name="PositionId">The unique identifier of the assigned player position.</param>
 /// <param name="Number">The jersey number assigned to the player (e.g., 0-99).</param>
