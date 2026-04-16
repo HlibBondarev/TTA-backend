@@ -192,12 +192,16 @@ CREATE TABLE playerrosters (
     createdat TIMESTAMPTZ NOT NULL,
     
     -- Added unique constraint to support UPSERT operations.
-    CONSTRAINT uix_playerrosters_full_identity UNIQUE (tournamentid, teamid, playerid)
+    -- CONSTRAINT 1: Ensures a player cannot be registered multiple times for the same team in one tournament.
+    CONSTRAINT uix_playerrosters_player_identity UNIQUE (tournamentid, teamid, playerid),
+    -- CONSTRAINT 2: Ensures jersey numbers are unique within a single team for a specific tournament.
+    -- This prevents race conditions where two different players could be assigned the same number simultaneously.
+    CONSTRAINT uix_playerrosters_jersey_number UNIQUE (tournamentid, teamid, number)
 );
 -- Indexes to speed up searches
 CREATE INDEX ix_playerrosters_tournament ON playerrosters (tournamentid);
 CREATE INDEX ix_playerrosters_team ON playerrosters (teamid);
-
+CREATE INDEX ix_playerrosters_lookup ON public.playerrosters (tournamentid, teamid);
 
 CREATE TABLE matchlineups (
     id UUID PRIMARY KEY,
