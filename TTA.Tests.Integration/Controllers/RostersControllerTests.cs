@@ -256,18 +256,35 @@ public class RostersControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
-        const string countrySql = "INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING RETURNING id";
-        using var countryCmd = new NpgsqlCommand(countrySql, conn);
-        var countryIdObj = await countryCmd.ExecuteScalarAsync();
-        int countryId = countryIdObj != null ? (int)countryIdObj : 1;
 
-        const string regionSql = "INSERT INTO public.regions (countryid, name) VALUES (@cid, 'Integration Region') ON CONFLICT DO NOTHING RETURNING id";
+        // FIX: Use 'DO UPDATE SET name = EXCLUDED.name' to ensure 'RETURNING id' 
+        // always returns the ID, even if the record already exists.
+        const string countrySql = @"
+            INSERT INTO public.countries (name, code) 
+            VALUES ('Ukraine', 'UA') 
+            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name 
+            RETURNING id";
+
+        using var countryCmd = new NpgsqlCommand(countrySql, conn);
+        var countryId = (int)(await countryCmd.ExecuteScalarAsync())!;
+
+        const string regionSql = @"
+            INSERT INTO public.regions (countryid, name) 
+            VALUES (@cid, 'Integration Region') 
+            ON CONFLICT (countryid, name) DO UPDATE SET name = EXCLUDED.name 
+            RETURNING id";
+
         using var regionCmd = new NpgsqlCommand(regionSql, conn);
         regionCmd.Parameters.AddWithValue("cid", countryId);
-        var regionIdObj = await regionCmd.ExecuteScalarAsync();
-        int regionId = regionIdObj != null ? (int)regionIdObj : 1;
+        var regionId = (int)(await regionCmd.ExecuteScalarAsync())!;
 
-        const string citySql = "INSERT INTO public.cities (id, regionid, name) VALUES (@id, @rid, 'Integration City') ON CONFLICT DO NOTHING";
+        // For City, we use Guid and 'ON CONFLICT DO NOTHING' is fine 
+        // since we already have the cityId from the test Arrange block.
+        const string citySql = @"
+            INSERT INTO public.cities (id, regionid, name) 
+            VALUES (@id, @rid, 'Integration City') 
+            ON CONFLICT (id) DO NOTHING";
+
         using var cityCmd = new NpgsqlCommand(citySql, conn);
         cityCmd.Parameters.AddWithValue("id", cityId);
         cityCmd.Parameters.AddWithValue("rid", regionId);
