@@ -288,12 +288,15 @@ DECLARE
     v_user_hlib VARCHAR := 'auth0|69cf7ec5eff8f1358a0b9ae0';
     v_user_taras VARCHAR := 'auth0|698b956080889e5401cef7c5';
     v_user_ivan VARCHAR := 'auth0|698b9bd69f764e2999518960';
+    v_tournament_hlib UUID := 'c0000000-0000-0000-1111-000000000001';
+    v_tournament_taras UUID := 'c0000000-0000-0000-1111-000000000002';
+    v_tournament_ivan UUID := 'c0000000-0000-0000-1111-000000000003';
 
 BEGIN
     -- 1. Tournament for Hlib Bondarev (In 1 month)
     INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, enddate, createdat)
     VALUES (
-        gen_random_uuid(), 
+        v_tournament_hlib, 
         v_sport_id, 
         v_config_id, 
         v_city_lviv, 
@@ -307,7 +310,7 @@ BEGIN
     -- 2. Tournament for Taras Shevchenko (In 3 months)
     INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, enddate, createdat)
     VALUES (
-        gen_random_uuid(), 
+        v_tournament_taras, 
         v_sport_id, 
         v_config_id, 
         v_city_kyiv, 
@@ -321,7 +324,7 @@ BEGIN
     -- 3. Tournament for Ivan Franko (In 6 months)
     INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, enddate, createdat)
     VALUES (
-        gen_random_uuid(), 
+        v_tournament_ivan, 
         v_sport_id, 
         v_config_id, 
         v_city_dnipro, 
@@ -333,4 +336,50 @@ BEGIN
     ) ON CONFLICT DO NOTHING;
 
     RAISE NOTICE 'Tournaments seeding completed successfully.';
+END $$;
+
+-- ==============================================================================================================================
+-- 6. PLAYERROSTERS (Seed for Hlib Bondarev's tournament, teams - "My super team U-15 (2011)" and "My super team - 2 U-15 (2011)"
+-- ==============================================================================================================================
+
+DO $$ 
+DECLARE 
+    v_tournament_id uuid := 'c0000000-0000-0000-1111-000000000001'; -- Spring Water Polo Cup 2026
+    v_team_id uuid := '22222222-2222-2222-2222-222222222215';
+    v_team_id_2 uuid := '22222222-2222-2222-2222-222222222216';
+BEGIN
+    INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES 
+    ('33333333-3333-3333-0000-333333333001', '33333333-3333-3333-3333-333333333001', v_tournament_id, v_team_id, 1, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', NOW()),
+    ('33333333-3333-3333-0000-333333333002', '33333333-3333-3333-3333-333333333002', v_tournament_id, v_team_id, 2, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', NOW()),
+    ('33333333-3333-3333-0000-333333333003', '33333333-3333-3333-3333-333333333003', v_tournament_id, v_team_id, 3, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', NOW()),
+    ('33333333-3333-3333-0000-333333333004', '33333333-3333-3333-3333-333333333004', v_tournament_id, v_team_id, 4, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', NOW()),
+    ('33333333-3333-3333-0000-333333333005', '33333333-3333-3333-3333-333333333005', v_tournament_id, v_team_id, 5, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', NOW()),
+    ('33333333-3333-3333-0000-333333333006', '33333333-3333-3333-3333-333333333006', v_tournament_id, v_team_id, 6, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', NOW()),
+    ('33333333-3333-3333-0000-333333333007', '33333333-3333-3333-3333-333333333007', v_tournament_id, v_team_id, 7, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', NOW()),
+    ('33333333-3333-3333-0000-333333333008', '33333333-3333-3333-3333-333333333008', v_tournament_id, v_team_id, 8, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', NOW()),
+    ('33333333-3333-3333-0000-333333333009', '33333333-3333-3333-3333-333333333009', v_tournament_id, v_team_id, 9, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', NOW()),
+    ('33333333-3333-3333-0000-333333333010', '33333333-3333-3333-3333-333333333010', v_tournament_id, v_team_id, 10, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', NOW()),
+    ('33333333-3333-3333-0000-333333333011', '33333333-3333-3333-3333-333333333011', v_tournament_id, v_team_id, 11, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', NOW()),
+    ('33333333-3333-3333-0000-333333333012', '33333333-3333-3333-3333-333333333012', v_tournament_id, v_team_id, 12, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', NOW()),
+    ('33333333-3333-3333-0000-333333333013', '33333333-3333-3333-3333-333333333013', v_tournament_id, v_team_id, 13, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', NOW()),
+    ('33333333-3333-3333-0000-333333333014', '33333333-3333-3333-3333-333333333014', v_tournament_id, v_team_id, 14, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', NOW()),
+    ('33333333-3333-3333-0000-333333333015', '33333333-3333-3333-3333-333333333015', v_tournament_id, v_team_id, 15, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', NOW()),
+    ('33333333-3333-3333-0000-333333333016', '33333333-3333-3333-3333-333333333016', v_tournament_id, v_team_id_2, 1, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', NOW()),
+    ('33333333-3333-3333-0000-333333333017', '33333333-3333-3333-3333-333333333017', v_tournament_id, v_team_id_2, 2, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', NOW()),
+    ('33333333-3333-3333-0000-333333333018', '33333333-3333-3333-3333-333333333018', v_tournament_id, v_team_id_2, 3, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', NOW()),
+    ('33333333-3333-3333-0000-333333333019', '33333333-3333-3333-3333-333333333019', v_tournament_id, v_team_id_2, 4, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', NOW()),
+    ('33333333-3333-3333-0000-333333333020', '33333333-3333-3333-3333-333333333020', v_tournament_id, v_team_id_2, 5, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', NOW()),
+    ('33333333-3333-3333-0000-333333333021', '33333333-3333-3333-3333-333333333021', v_tournament_id, v_team_id_2, 6, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', NOW()),
+    ('33333333-3333-3333-0000-333333333022', '33333333-3333-3333-3333-333333333022', v_tournament_id, v_team_id_2, 7, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', NOW()),
+    ('33333333-3333-3333-0000-333333333023', '33333333-3333-3333-3333-333333333023', v_tournament_id, v_team_id_2, 8, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', NOW()),
+    ('33333333-3333-3333-0000-333333333024', '33333333-3333-3333-3333-333333333024', v_tournament_id, v_team_id_2, 9, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', NOW()),
+    ('33333333-3333-3333-0000-333333333025', '33333333-3333-3333-3333-333333333025', v_tournament_id, v_team_id_2, 10, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', NOW()),
+    ('33333333-3333-3333-0000-333333333026', '33333333-3333-3333-3333-333333333026', v_tournament_id, v_team_id_2, 11, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', NOW()),
+    ('33333333-3333-3333-0000-333333333027', '33333333-3333-3333-3333-333333333027', v_tournament_id, v_team_id_2, 12, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', NOW()),
+    ('33333333-3333-3333-0000-333333333028', '33333333-3333-3333-3333-333333333028', v_tournament_id, v_team_id_2, 13, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', NOW()),
+    ('33333333-3333-3333-0000-333333333029', '33333333-3333-3333-3333-333333333029', v_tournament_id, v_team_id_2, 14, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', NOW()),
+    ('33333333-3333-3333-0000-333333333030', '33333333-3333-3333-3333-333333333030', v_tournament_id, v_team_id_2, 15, '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', NOW())
+    ON CONFLICT (id) DO NOTHING;
+
+    RAISE NOTICE 'Seed for 30 players for "Spring Water Polo Cup 2026" (Bondarev) tournament, teams - "My super team U-15 (2011)" and "My super team - 2 U-15 (2011)"';
 END $$;
