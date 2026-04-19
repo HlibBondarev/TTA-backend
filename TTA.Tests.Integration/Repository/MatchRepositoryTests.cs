@@ -154,7 +154,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
         return (tournamentId, homeTeamId, guestTeamId);
     }
 
-    private async Task<Guid> SeedTeamAndRosterAsync(System.Data.IDbConnection conn, Guid clubId, Guid sportId, Guid tournamentId, string name)
+    private async static Task<Guid> SeedTeamAndRosterAsync(System.Data.IDbConnection conn, Guid clubId, Guid sportId, Guid tournamentId, string name)
     {
         var teamId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @c, @s, @n, 0, NOW())",
