@@ -14,7 +14,7 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, Club>(connectionFactory), IClubRepository
 {
     /// <inheritdoc />
-    public async Task<bool> HasExistingClubOwnershipAsync(string userId, CancellationToken ct)
+    public async Task<bool> HasExistingClubOwnershipAsync(string userId, CancellationToken cancellationToken)
     {
         var parameters = new DynamicParameters();
         parameters.Add("UserId", userId);
@@ -22,12 +22,12 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
         return await ExecuteQueryInTransaction<bool>(
             SqlStatements.ForClubs.CheckUserOwnsAnyClub,
             parameters,
-            ct: ct
+            cancellationToken: cancellationToken
         );
     }
 
     /// <inheritdoc />
-    public async Task<bool> HasClubOwnershipAsync(string userId, Guid clubId, CancellationToken ct)
+    public async Task<bool> HasClubOwnershipAsync(string userId, Guid clubId, CancellationToken cancellationToken)
     {
         var parameters = new DynamicParameters();
         parameters.Add("UserId", userId);
@@ -38,7 +38,7 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
         var result = await ExecuteQueryInTransaction<int?>(
             SqlStatements.ForAccessPolicies.GetUserPermission,
             parameters,
-            ct: ct
+            cancellationToken: cancellationToken
         );
 
         // FullControl (0) means the user owns the club.
@@ -47,7 +47,7 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
-    public async Task<Guid> CreateWithOwnershipAsync(Club club, string userId, string userEmail, string userName, CancellationToken ct)
+    public async Task<Guid> CreateWithOwnershipAsync(Club club, string userId, string userEmail, string userName, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(club);
 
@@ -71,7 +71,7 @@ public class ClubRepository(IDbConnectionFactory connectionFactory)
         return await ExecuteQueryInTransaction<Guid>(
             SqlStatements.ForClubs.CreateClubWithOwnership,
             parameters,
-            ct: ct
+            cancellationToken: cancellationToken
         );
     }
 }

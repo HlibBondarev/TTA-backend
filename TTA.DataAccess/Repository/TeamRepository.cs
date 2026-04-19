@@ -14,7 +14,7 @@ public class TeamRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, Team>(connectionFactory), ITeamRepository
 {
     /// <inheritdoc />
-    public async Task<Team> CreateTeamAsync(Team team, CancellationToken ct = default)
+    public async Task<Team> CreateTeamAsync(Team team, CancellationToken cancellationToken = default)
     {
         // No manual parameter mapping needed. 
         // Dapper maps all properties of the 'team' object (including Enum as int)
@@ -23,11 +23,11 @@ public class TeamRepository(IDbConnectionFactory connectionFactory)
             team,
             SqlStatements.ForTeams.UpsertTeam,
             new DynamicParameters(team),
-            ct);
+            cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<Team>> GetByClubIdAsync(Guid clubId, CancellationToken ct = default)
+    public async Task<IEnumerable<Team>> GetByClubIdAsync(Guid clubId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_club_id", clubId);
@@ -36,12 +36,12 @@ public class TeamRepository(IDbConnectionFactory connectionFactory)
         return await GetByPropValues(
             SqlStatements.ForTeams.GetTeamsByClub,
             parameters,
-            ct);
+            cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<Team?> GetByIdAsync(Guid id, CancellationToken ct = default)
+    public async Task<Team?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        return await GetById(id, SqlStatements.ForTeams.GetTeamById, ct);
+        return await GetById(id, SqlStatements.ForTeams.GetTeamById, cancellationToken);
     }
 }

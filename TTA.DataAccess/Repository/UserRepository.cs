@@ -14,13 +14,13 @@ public class UserRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<string, User>(connectionFactory), IUserRepository
 {
     /// <inheritdoc />
-    public async Task<User?> GetByIdAsync(string id, CancellationToken ct)
+    public async Task<User?> GetByIdAsync(string id, CancellationToken cancellationToken)
     {
-        return await GetById(id, SqlStatements.ForUsers.GetUserById, ct);
+        return await GetById(id, SqlStatements.ForUsers.GetUserById, cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<User>> GetByEmailAsync(string email, CancellationToken ct = default)
+    public async Task<IEnumerable<User>> GetByEmailAsync(string email, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_email", email);
@@ -29,6 +29,6 @@ public class UserRepository(IDbConnectionFactory connectionFactory)
         return await GetByPropValues(
             SqlStatements.ForUsers.GetUsersByEmail,
             parameters,
-            ct);
+            cancellationToken);
     }
 }

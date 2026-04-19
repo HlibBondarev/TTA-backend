@@ -13,21 +13,21 @@ public class RosterRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, PlayerRoster>(connectionFactory), IRosterRepository
 {
     /// <inheritdoc />
-    public async Task<PlayerRoster> UpsertRosterItemAsync(PlayerRoster roster, CancellationToken ct = default)
+    public async Task<PlayerRoster> UpsertRosterItemAsync(PlayerRoster roster, CancellationToken cancellationToken = default)
     {
-        return await CreateOrUpdate(roster, SqlStatements.ForRosters.UpsertPlayerToRoster, null, ct);
+        return await CreateOrUpdate(roster, SqlStatements.ForRosters.UpsertPlayerToRoster, null, cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<dynamic>> GetTeamRosterAsync(Guid tournamentId, Guid teamId, CancellationToken ct = default)
+    public async Task<IEnumerable<dynamic>> GetTeamRosterAsync(Guid tournamentId, Guid teamId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("TournamentId", tournamentId);
         parameters.Add("TeamId", teamId);
 
-        using var connection = await OpenConnectionAsync(ct);
+        using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.QueryAsync<dynamic>(new CommandDefinition(
-            SqlStatements.ForRosters.GetTournamentTeamRoster, parameters, cancellationToken: ct));
+            SqlStatements.ForRosters.GetTournamentTeamRoster, parameters, cancellationToken: cancellationToken));
     }
 
     /// <inheritdoc />
@@ -35,15 +35,15 @@ public class RosterRepository(IDbConnectionFactory connectionFactory)
         Guid tournamentId,
         Guid teamId,
         Guid playerId,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("TournamentId", tournamentId);
         parameters.Add("TeamId", teamId);
         parameters.Add("PlayerId", playerId);
 
-        using var connection = await OpenConnectionAsync(ct);
+        using var connection = await OpenConnectionAsync(cancellationToken);
         await connection.ExecuteAsync(new CommandDefinition(
-            SqlStatements.ForRosters.RemovePlayerFromRoster, parameters, cancellationToken: ct));
+            SqlStatements.ForRosters.RemovePlayerFromRoster, parameters, cancellationToken: cancellationToken));
     }
 }

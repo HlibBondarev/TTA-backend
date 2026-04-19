@@ -26,7 +26,7 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
         var result = await ExecuteQueryInTransaction<int?>(
             SqlStatements.ForAccessPolicies.GetUserPermission,
             parameters,
-            ct: ct
+            cancellationToken: ct
         );
 
         return result.HasValue ? (AppRole)result.Value : null;

@@ -6,7 +6,7 @@ namespace TTA.BusinessLogic.Features.Tournaments.Commands;
 
 /// <summary>
 /// Command to create a tournament.
-/// Returns the persisted <see cref="Tournament"/> entity.
+/// Returns the persisted <see cref="Tournament"/> entity Id.
 /// </summary>
 /// <param name="SportId">The unique identifier of the sport associated with this tournament.</param>
 /// <param name="ConfigurationId">The specific ruleset/configuration ID for this tournament.</param>
