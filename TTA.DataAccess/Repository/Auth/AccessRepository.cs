@@ -14,7 +14,7 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
         string userId,
         TargetScope targetScope,
         Guid? targetId,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("UserId", userId);
@@ -26,23 +26,23 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
         var result = await ExecuteQueryInTransaction<int?>(
             SqlStatements.ForAccessPolicies.GetUserPermission,
             parameters,
-            cancellationToken: ct
+            cancellationToken: cancellationToken
         );
 
         return result.HasValue ? (AppRole)result.Value : null;
     }
 
     /// <inheritdoc />
-    public async Task<AccessPolicy> AddAccessAsync(AccessPolicy accessPolicy, CancellationToken ct = default)
+    public async Task<AccessPolicy> AddAccessAsync(AccessPolicy accessPolicy, CancellationToken cancellationToken = default)
     {
-        return await CreateOrUpdate(accessPolicy, SqlStatements.ForAccessPolicies.UpsertAccessPolicy, null, ct);
+        return await CreateOrUpdate(accessPolicy, SqlStatements.ForAccessPolicies.UpsertAccessPolicy, null, cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<AccessPolicy> RemoveAccessAsync(AccessPolicy accessPolicy, CancellationToken ct = default)
+    public async Task<AccessPolicy> RemoveAccessAsync(AccessPolicy accessPolicy, CancellationToken cancellationToken = default)
     {
         // Logic: The caller must set accessPolicy.ExpiresAt = DateTime.UtcNow
-        return await CreateOrUpdate(accessPolicy, SqlStatements.ForAccessPolicies.UpsertAccessPolicy, null, ct);
+        return await CreateOrUpdate(accessPolicy, SqlStatements.ForAccessPolicies.UpsertAccessPolicy, null, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -50,7 +50,7 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
         AccessPolicy accessPolicy,
         System.Data.IDbConnection connection,
         System.Data.IDbTransaction transaction,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters(accessPolicy);
 
@@ -60,14 +60,14 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
             parameters,
             connection,
             transaction,
-            ct);
+            cancellationToken);
     }
 
     /// <inheritdoc />
     public async Task<AccessPolicy?> GetActiveTeamPolicyAsync(
         string userId,
         Guid teamId,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("UserId", userId);
@@ -78,7 +78,7 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
         var results = await GetByPropValues(
             SqlStatements.ForAccessPolicies.GetActiveTeamPolicy,
             parameters,
-            ct);
+            cancellationToken);
 
         return results.FirstOrDefault();
     }
