@@ -401,3 +401,40 @@ BEGIN
 
     RAISE NOTICE 'Seed for 30 players for "Spring Water Polo Cup 2026" (Bondarev) tournament, teams - "My super team U-15 (2011)" and "My super team - 2 U-15 (2011)"';
 END $$;
+
+-- ====================================================================================================================================================
+-- 9. MATCHES (Seed for Hlib Bondarev's tournament - 'Spring Water Polo Cup 2026', match: "My super team U-15 (2011)" - "My super team - 2 U-15 (2011)"
+-- ====================================================================================================================================================
+DO $$ 
+DECLARE 
+    v_tournament_id uuid;
+    v_team_id uuid := '22222222-2222-2222-2222-222222222215';
+    v_team_id_2 uuid := '22222222-2222-2222-2222-222222222216';
+    v_match_number_1 VARCHAR := 'A-1';
+    v_match_number_2 VARCHAR := 'A-2';
+BEGIN
+
+    SELECT id INTO v_tournament_id
+    FROM public.tournaments
+    WHERE name = 'Spring Water Polo Cup 2026';
+    IF v_tournament_id IS NULL THEN
+        RAISE EXCEPTION 'Tournament "Spring Water Polo Cup 2026" not found; ensure the tournaments seed ran first.';
+    END IF;
+
+    -- Insert match into the matches table using a subquery to ensure idempotency.
+    -- This checks both the (tournament, home_team) and (tournament, guest_team) unique constraints.
+    INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, matchnumber, venue, temperature, homescore, guestscore, createdat)
+    SELECT id, tourn_id, ht_id, gt_id, scheduled, m_number, venue, temper, hmscore, gtscore, created
+    FROM (VALUES
+    ('33333333-3333-0000-0000-333333333001'::UUID, v_tournament_id, v_team_id, v_team_id_2, CURRENT_DATE + INTERVAL '1 month', v_match_number_1, 'Central Arena', 25, 14, 10, NOW()),
+    ('33333333-3333-0000-0000-333333333002'::UUID, v_tournament_id, v_team_id_2, v_team_id, CURRENT_DATE + INTERVAL '1 month' + INTERVAL '1 day', v_match_number_2, 'MiKomp', 26, 15, 16, NOW())
+    ) AS seed(id, tourn_id, ht_id, gt_id, scheduled, m_number, venue, temper, hmscore, gtscore, created)
+    WHERE EXISTS (
+        SELECT 1 FROM public.playerrosters pr
+        WHERE (pr.tournamentid = seed.tourn_id AND pr.teamid = seed.ht_id) -- Constraint 1
+           OR (pr.tournamentid = seed.tourn_id AND pr.teamid = seed.gt_id) -- Constraint 2
+    )
+    AND NOT EXISTS (SELECT 1 FROM public.matches WHERE id = seed.id); -- Primary Key Check
+
+    RAISE NOTICE 'Seed a match for "Spring Water Polo Cup 2026" (Bondarev) tournament, teams - "My super team U-15 (2011)" and "My super team - 2 U-15 (2011)"';
+END $$;
