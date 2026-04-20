@@ -44,9 +44,13 @@ public class ScheduleMatchHandler(
         }
 
         // 2. Validate that ScheduledAt is within the tournament's active dates.
-        if (command.ScheduledAt < tournament.StartDate || (tournament.EndDate.HasValue && command.ScheduledAt > tournament.EndDate.Value))
+        // Comparison is done using .Date to allow matches in single-day tournaments.
+        if (command.ScheduledAt.Date < tournament.StartDate.Date ||
+            (tournament.EndDate.HasValue && command.ScheduledAt.Date > tournament.EndDate.Value.Date))
         {
-            _logger.LogWarning("Creation rejected: ScheduledAt {ScheduledAt} is outside the tournament date range for tournament {TournamentId}.", command.ScheduledAt, command.TournamentId);
+            _logger.LogWarning("Creation rejected: ScheduledAt {ScheduledAt} is outside the tournament date range for tournament {TournamentId}.",
+                command.ScheduledAt, command.TournamentId);
+
             throw new ConflictException("Scheduled date must be within the tournament's active dates.");
         }
 
