@@ -19,6 +19,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
         _repository = new MatchRepository(fixture.ConnectionFactory);
     }
 
+    private static readonly string[] ExpectedMatchNumbers = { "M-01", "M-02" };
+
     #region UpsertMatchAsync Tests
 
     /// <summary>
@@ -141,19 +143,26 @@ public class MatchRepositoryTests : BaseIntegrationTest
         resultsList.Should().HaveCount(2, "matches from other tournaments must be excluded from the result");
 
         // Verify each returned match belongs to the correct tournament
-        // We cast dynamic to IDictionary to avoid expression tree issues with FluentAssertions
         foreach (var item in resultsList)
         {
             var dict = (IDictionary<string, object>)item;
 
-            // Accessing tournamentId (checking both cases due to potential DB driver naming conventions)
-            var returnedId = dict.ContainsKey("tournamentid") ? (Guid)dict["tournamentid"] : (Guid)dict["TournamentId"];
+            // Use TryGetValue to avoid double lookup (Sonar finding #1)
+            if (!dict.TryGetValue("tournamentid", out var returnedIdObj) &&
+                !dict.TryGetValue("TournamentId", out returnedIdObj))
+            {
+                throw new KeyNotFoundException("The expected TournamentId key was not found in the returned dynamic object.");
+            }
+
+            var returnedId = (Guid)returnedIdObj;
             returnedId.Should().Be(context.TournamentId);
         }
 
         // Verify that the specific match numbers are present
-        var matchNumbers = resultsList.Select(x => (string)((IDictionary<string, object>)x)["matchnumber"]);
-        matchNumbers.Should().Contain(new[] { "M-01", "M-02" });
+        var matchNumbers = resultsList.Select(x => (string)((IDictionary<string, object>)x)["matchnumber"]).ToList();
+
+        // Fix: Use the static readonly field (Sonar finding #2)
+        matchNumbers.Should().Contain(ExpectedMatchNumbers);
         matchNumbers.Should().NotContain("NOISE-01");
     }
 

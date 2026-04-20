@@ -207,6 +207,8 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
+    /// <summary>
+    /// Verifies that scheduling a match fails with 400 BadRequest when ScheduledAt is outside the tournament date range.
     /// This test seeds valid teams and rosters to ensure the failure is specifically due to the date range validation
     /// triggered by the request validator.
     /// </summary>
