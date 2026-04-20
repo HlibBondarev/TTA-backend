@@ -191,16 +191,34 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
 
     /// <summary>
     /// Verifies that scheduling fails if the user is not the owner of the tournament.
+    /// Seeds valid teams and rosters first to ensure the request passes initial validation
+    /// and reaches the ownership authorization check.
     /// </summary>
     [Fact]
     public async Task ScheduleMatch_ShouldReturnForbidden_WhenUserIsNotOwner()
     {
         // Arrange
-        var otherOwner = "auth0|stranger";
+        var otherOwner = "auth0|stranger-danger";
+        // Create tournament owned by someone else
         var context = await SetupTournamentContextAsync(otherOwner);
-        var request = new ScheduleMatchRequest(Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow.AddDays(1), "M1", "Venue");
+
+        // Seed valid teams and rosters for THIS tournament
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Foreign Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Foreign Guest Team");
+        await SeedRosterAsync(context.TournamentId, homeTeamId);
+        await SeedRosterAsync(context.TournamentId, guestTeamId);
+
+        // Request contains valid team IDs, so it passes DTO/existence validation
+        var request = new ScheduleMatchRequest(
+            HomeTeamId: homeTeamId,
+            GuestTeamId: guestTeamId,
+            ScheduledAt: DateTime.UtcNow.AddDays(1),
+            MatchNumber: "FORBIDDEN-1",
+            Venue: "Private Arena"
+        );
 
         // Act
+        // Current user (TestUserId) tries to modify otherOwner's tournament
         var response = await Client.PostAsJsonAsync($"{BaseUrl}/{context.TournamentId}/matches", request);
 
         // Assert
