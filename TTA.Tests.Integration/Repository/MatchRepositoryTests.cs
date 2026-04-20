@@ -111,45 +111,110 @@ public class MatchRepositoryTests : BaseIntegrationTest
         results.Should().HaveCount(2);
     }
 
+    /// <summary>
+    /// Verifies that GetByTournamentIdAsync correctly filters matches by the specified tournament ID.
+    /// Seeds matches in multiple tournaments to ensure isolation and uses unique user IDs 
+    /// to avoid primary key constraint violations.
+    /// </summary>
+    [Fact]
+    public async Task GetByTournamentIdAsync_ShouldReturnOnlyMatchesInTargetTournament()
+    {
+        // Arrange
+        // 1. Setup the target tournament context
+        var context = await SeedMatchEnvironmentAsync();
+        var match1 = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId, "M-01");
+        var match2 = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId, "M-02");
+
+        await _repository.UpsertMatchAsync(match1, CancellationToken.None);
+        await _repository.UpsertMatchAsync(match2, CancellationToken.None);
+
+        // 2. Setup a second tournament to verify that its matches are NOT returned
+        var noiseContext = await SeedMatchEnvironmentAsync();
+        var noiseMatch = CreateMatchModel(noiseContext.TournamentId, noiseContext.HomeTeamId, noiseContext.GuestTeamId, "NOISE-01");
+        await _repository.UpsertMatchAsync(noiseMatch, CancellationToken.None);
+
+        // Act
+        var rawResults = await _repository.GetByTournamentIdAsync(context.TournamentId, CancellationToken.None);
+        var resultsList = rawResults.ToList();
+
+        // Assert
+        resultsList.Should().HaveCount(2, "matches from other tournaments must be excluded from the result");
+
+        // Verify each returned match belongs to the correct tournament
+        // We cast dynamic to IDictionary to avoid expression tree issues with FluentAssertions
+        foreach (var item in resultsList)
+        {
+            var dict = (IDictionary<string, object>)item;
+
+            // Accessing tournamentId (checking both cases due to potential DB driver naming conventions)
+            var returnedId = dict.ContainsKey("tournamentid") ? (Guid)dict["tournamentid"] : (Guid)dict["TournamentId"];
+            returnedId.Should().Be(context.TournamentId);
+        }
+
+        // Verify that the specific match numbers are present
+        var matchNumbers = resultsList.Select(x => (string)((IDictionary<string, object>)x)["matchnumber"]);
+        matchNumbers.Should().Contain(new[] { "M-01", "M-02" });
+        matchNumbers.Should().NotContain("NOISE-01");
+    }
+
     #endregion
 
     #region Helpers
 
     /// <summary>
-    /// Seeds all necessary entities to satisfy foreign key constraints for a match.
-    /// Matches require: User -> City -> Sport -> Config -> Tournament -> Teams -> Rosters[cite: 26, 27].
+    /// Seeds all necessary entities with unique names and valid codes.
+    /// Ensures country codes do not exceed the 3-character database limit (varchar(3)).
     /// </summary>
     private async Task<(Guid TournamentId, Guid HomeTeamId, Guid GuestTeamId)> SeedMatchEnvironmentAsync()
     {
         using var conn = Fixture.ConnectionFactory.CreateConnection();
 
-        // 1. Geography & Auth
-        var userId = "auth0|test-match-owner";
-        await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
-            new { id = userId, e = "owner@match.com", n = "Owner" });
+        // Generate a unique 8-char suffix for names
+        var suffix = Guid.NewGuid().ToString()[..8];
+        // Generate a unique 3-char code for the country to satisfy varchar(3) constraint
+        var shortCode = Guid.NewGuid().ToString()[..3].ToUpper();
 
-        var countryId = await conn.ExecuteScalarAsync<int>("INSERT INTO public.countries (name, code, createdat) VALUES ('MatchCountry', 'MTC', NOW()) RETURNING id");
-        var regionId = await conn.ExecuteScalarAsync<int>("INSERT INTO public.regions (countryid, name) VALUES (@c, 'MatchRegion') RETURNING id", new { c = countryId });
+        // 1. Geography & Auth
+        var userId = $"auth0|{Guid.NewGuid()}";
+        await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
+            new { id = userId, e = $"owner_{suffix}@test.com", n = $"Owner {suffix}" });
+
+        var countryId = await conn.ExecuteScalarAsync<int>(
+            "INSERT INTO public.countries (name, code, createdat) VALUES (@n, @c, NOW()) RETURNING id",
+            new { n = $"Country_{suffix}", c = shortCode });
+
+        var regionId = await conn.ExecuteScalarAsync<int>(
+            "INSERT INTO public.regions (countryid, name) VALUES (@c, @n) RETURNING id",
+            new { c = countryId, n = $"Region_{suffix}" });
+
         var cityId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.cities (id, regionid, name) VALUES (@id, @r, 'MatchCity')", new { id = cityId, r = regionId });
+        await conn.ExecuteAsync("INSERT INTO public.cities (id, regionid, name) VALUES (@id, @r, @n)",
+            new { id = cityId, r = regionId, n = $"City_{suffix}" });
 
         // 2. Sport & Tournament
         var sportId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.sports (id, name) VALUES (@id, 'MatchSport')", new { id = sportId });
+        await conn.ExecuteAsync("INSERT INTO public.sports (id, name) VALUES (@id, @n)",
+            new { id = sportId, n = $"Sport_{suffix}" });
+
         var configId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) VALUES (@id, @s, false, 2, 45, 'Large', 20, 11)",
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
+            VALUES (@id, @s, false, 2, 45, 'Large', 20, 11)",
             new { id = configId, s = sportId });
 
         var tournamentId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) VALUES (@id, @s, @cfg, @ct, @o, 'Test Tourney', NOW(), NOW())",
-            new { id = tournamentId, s = sportId, cfg = configId, ct = cityId, o = userId });
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
+            VALUES (@id, @s, @cfg, @ct, @o, @n, NOW(), NOW())",
+            new { id = tournamentId, s = sportId, cfg = configId, ct = cityId, o = userId, n = $"Tourney_{suffix}" });
 
-        // 3. Teams & Mandatory Registration (The upsert_match function checks playerrosters[cite: 27])
+        // 3. Teams & Rosters
         var clubId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @c, 'MatchClub', NOW())", new { id = clubId, c = cityId });
+        await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @c, @n, NOW())",
+            new { id = clubId, c = cityId, n = $"Club_{suffix}" });
 
-        var homeTeamId = await SeedTeamAndRosterAsync(conn, clubId, sportId, tournamentId, "Home Team");
-        var guestTeamId = await SeedTeamAndRosterAsync(conn, clubId, sportId, tournamentId, "Guest Team");
+        var homeTeamId = await SeedTeamAndRosterAsync(conn, clubId, sportId, tournamentId, $"Home_{suffix}");
+        var guestTeamId = await SeedTeamAndRosterAsync(conn, clubId, sportId, tournamentId, $"Guest_{suffix}");
 
         return (tournamentId, homeTeamId, guestTeamId);
     }
@@ -174,7 +239,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
         return teamId;
     }
 
-    private static Match CreateMatchModel(Guid tournamentId, Guid homeId, Guid guestId)
+    private static Match CreateMatchModel(Guid tournamentId, Guid homeId, Guid guestId, string matchNumber = "M-TEST")
     {
         return new Match
         {
@@ -182,6 +247,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
             TournamentId = tournamentId,
             HomeTeamId = homeId,
             GuestTeamId = guestId,
+            MatchNumber = matchNumber, // Added this field
             ScheduledAt = DateTime.UtcNow.AddHours(2),
             Venue = "Main Arena",
             CreatedAt = DateTime.UtcNow
