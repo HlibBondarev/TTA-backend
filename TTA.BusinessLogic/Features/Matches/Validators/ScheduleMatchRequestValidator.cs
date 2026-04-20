@@ -14,10 +14,8 @@ public class ScheduleMatchRequestValidator : AbstractValidator<ScheduleMatchRequ
             .NotEmpty().WithMessage("The home team must be selected.");
 
         RuleFor(x => x.GuestTeamId)
-            .NotEmpty().WithMessage("The guest team must be selected.");
-
-        RuleFor(x => x.GuestTeamId)
-            .NotEmpty().WithMessage("The guest team must be selected.")
+            .NotEmpty()
+            .WithMessage("The guest team must be selected.")
             .Must((req, guestTeamId) => guestTeamId != req.HomeTeamId)
             .WithMessage("The guest team must be different from the home team.");
 
