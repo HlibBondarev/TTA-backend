@@ -93,27 +93,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies retrieval of all matches associated with a specific tournament.
-    /// </summary>
-    [Fact]
-    public async Task GetByTournamentIdAsync_ShouldReturnAllMatchesInTournament()
-    {
-        // Arrange
-        var context = await SeedMatchEnvironmentAsync();
-        var match1 = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
-        var match2 = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
-
-        await _repository.UpsertMatchAsync(match1, CancellationToken.None);
-        await _repository.UpsertMatchAsync(match2, CancellationToken.None);
-
-        // Act
-        var results = await _repository.GetByTournamentIdAsync(context.TournamentId, CancellationToken.None);
-
-        // Assert
-        results.Should().HaveCount(2);
-    }
-
-    /// <summary>
     /// Verifies that GetByTournamentIdAsync correctly filters matches by the specified tournament ID.
     /// Seeds matches in multiple tournaments to ensure isolation and uses unique user IDs 
     /// to avoid primary key constraint violations.
@@ -228,7 +207,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
         return (tournamentId, homeTeamId, guestTeamId);
     }
 
-    private async static Task<Guid> SeedTeamAndRosterAsync(System.Data.IDbConnection conn, Guid clubId, Guid sportId, Guid tournamentId, string name)
+    private static async Task<Guid> SeedTeamAndRosterAsync(System.Data.IDbConnection conn, Guid clubId, Guid sportId, Guid tournamentId, string name)
     {
         var teamId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @c, @s, @n, 0, NOW())",

@@ -54,22 +54,27 @@ public class ScheduleMatchRequestValidatorTests
 
     /// <summary>
     /// Verifies that scheduling a match in the past triggers a validation error.
+    /// Updated to match the new error message from the validator.
     /// </summary>
     [Fact]
     public void Should_Have_Error_When_ScheduledAt_Is_In_Past()
     {
         // Arrange
         var request = new ScheduleMatchRequest(
-            Guid.NewGuid(), Guid.NewGuid(),
-            DateTime.UtcNow.AddHours(-1),
-            "M1", "Venue");
+            HomeTeamId: Guid.NewGuid(),
+            GuestTeamId: Guid.NewGuid(),
+            ScheduledAt: DateTime.UtcNow.AddHours(-1),
+            MatchNumber: "M1",
+            Venue: "Venue"
+        );
 
         // Act
         var result = _validator.TestValidate(request);
 
         // Assert
+        // Fixed: The error message must match exactly what is defined in the validator
         result.ShouldHaveValidationErrorFor(x => x.ScheduledAt)
-            .WithErrorMessage("The match must be scheduled for a future date and time.");
+            .WithErrorMessage("Match must be scheduled in the future.");
     }
 
     /// <summary>

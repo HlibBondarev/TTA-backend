@@ -20,8 +20,10 @@ public class ScheduleMatchRequestValidator : AbstractValidator<ScheduleMatchRequ
             .WithMessage("The guest team must be different from the home team.");
 
         RuleFor(x => x.ScheduledAt)
-            .NotEmpty().WithMessage("The scheduled date and time is required.")
-            .GreaterThan(DateTime.UtcNow).WithMessage("The match must be scheduled for a future date and time.");
+            .NotEmpty()
+            // Evaluate clock at validation time to prevent stale UTC values
+            .GreaterThan(_ => DateTime.UtcNow)
+            .WithMessage("Match must be scheduled in the future.");
 
         RuleFor(x => x.MatchNumber)
             .MaximumLength(50).WithMessage("Match number cannot exceed 50 characters.");

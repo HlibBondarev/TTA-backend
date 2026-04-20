@@ -16,7 +16,7 @@ public class ScheduleMatchHandler(
     ITournamentRepository tournamentRepository,
     ILogger<ScheduleMatchHandler> logger) : IRequestHandler<ScheduleMatchCommand, Guid>
 {
-    private readonly IMatchRepository _repository = matchRepository;
+    private readonly IMatchRepository _matchRepository = matchRepository;
     private readonly ITournamentRepository _tournamentRepository = tournamentRepository;
     private readonly ILogger<ScheduleMatchHandler> _logger = logger;
 
@@ -54,7 +54,8 @@ public class ScheduleMatchHandler(
             throw new ConflictException("Scheduled date must be within the tournament's active dates.");
         }
 
-        // TODO: Additional validation can be added here - check if HomeTeamId and GuestTeamId are valid and registered for the tournament.
+        // Note: Team membership and registration is enforced by the 'upsert_match' 
+        // stored procedure (P0001) and the FluentValidation layer.
 
         // 3. Log the creation attempt
         _logger.LogInformation("Processing creation for match: {MatchNumber} in tournament {TournamentId}",
@@ -65,7 +66,7 @@ public class ScheduleMatchHandler(
         try
         {
             // 5. Persistence via repository
-            var result = await _repository.UpsertMatchAsync(match, cancellationToken);
+            var result = await _matchRepository.UpsertMatchAsync(match, cancellationToken);
             _logger.LogInformation("Successfully created match {MatchNumber} with ID = {MatchId} in tournament {TournamentId}", result.MatchNumber, result.Id, result.TournamentId);
 
             return result.Id;
