@@ -682,7 +682,7 @@ CREATE OR REPLACE FUNCTION public.upsert_match(
     p_scheduled_at TIMESTAMPTZ,
     p_match_number VARCHAR,
     p_venue VARCHAR,
-    p_temperature DOUBLE PRECISION,
+    p_temperature FLOAT,
     p_home_score INT,
     p_guest_score INT,
     p_created_at TIMESTAMPTZ
