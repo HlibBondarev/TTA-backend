@@ -207,21 +207,36 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
-    /// <summary>
-    /// Verifies that scheduling a match outside the tournament dates returns a Bad Request or Conflict status.
-    /// Note: If validation happens at the API layer (Request level), it returns 400.
+    /// This test seeds valid teams and rosters to ensure the failure is specifically due to the date range validation
+    /// triggered by the request validator.
     /// </summary>
     [Fact]
     public async Task ScheduleMatch_ShouldReturnBadRequest_WhenDateIsOutsideTournamentRange()
     {
         // Arrange
+        // Setup a valid tournament context to get existing IDs
         var context = await SetupTournamentContextAsync(TestUserId);
-        var request = new ScheduleMatchRequest(Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow.AddDays(-5), "M1", "Venue");
+
+        // Seed actual teams and rosters to ensure the test doesn't fail on foreign key constraints
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team Alpha");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team Beta");
+        await SeedRosterAsync(context.TournamentId, homeTeamId);
+        await SeedRosterAsync(context.TournamentId, guestTeamId);
+
+        // Create a request with a date clearly outside the tournament range (e.g., 5 days in the past)
+        var request = new ScheduleMatchRequest(
+            HomeTeamId: homeTeamId,
+            GuestTeamId: guestTeamId,
+            ScheduledAt: DateTime.UtcNow.AddDays(-5),
+            MatchNumber: "M-VAL-001",
+            Venue: "Test Venue"
+        );
 
         // Act
         var response = await Client.PostAsJsonAsync($"{BaseUrl}/{context.TournamentId}/matches", request);
 
         // Assert
+        // Expecting BadRequest (400) as the FluentValidation catches this before the handler
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
