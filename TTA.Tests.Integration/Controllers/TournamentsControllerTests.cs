@@ -409,18 +409,23 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         return teamId;
     }
 
+    /// <summary>
+    /// Seeds a player roster for a specific team in a tournament.
+    /// Ensures player positions are reused if they already exist for the given sport.
+    /// </summary>
     private async Task SeedRosterAsync(Guid tournamentId, Guid teamId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
+
         var playerId = Guid.NewGuid();
-        var posId = Guid.NewGuid();
         var now = DateTime.UtcNow;
 
-        // Added birthdate parameter as requested by the DB schema
+        // 1. Seed the player
         const string playerSql = @"
             INSERT INTO public.players (id, homeclubid, firstname, lastname, gender, birthdate, createdat) 
-            VALUES (@id, (SELECT clubid FROM teams WHERE id=@tId), 'F', 'L', 0, @birth, @now)";
+            VALUES (@id, (SELECT clubid FROM teams WHERE id=@tId), 'John', 'Doe', 0, @birth, @now)";
+
         using (var cmd = new NpgsqlCommand(playerSql, conn))
         {
             cmd.Parameters.AddWithValue("id", playerId);
@@ -430,15 +435,42 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
             await cmd.ExecuteNonQueryAsync();
         }
 
-        const string posSql = "INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) SELECT @id, sportid, 'Pos', 'P' FROM teams WHERE id=@tId";
-        using (var cmd = new NpgsqlCommand(posSql, conn))
+        // 2. Get or Create Player Position
+        // First, try to find an existing position for this sport
+        const string findPosSql = @"
+            SELECT id FROM public.playerpositiondefinitions 
+            WHERE sportid = (SELECT sportid FROM public.teams WHERE id = @tId) 
+            AND name = 'Forward' LIMIT 1";
+
+        Guid posId;
+        using (var cmd = new NpgsqlCommand(findPosSql, conn))
         {
-            cmd.Parameters.AddWithValue("id", posId);
             cmd.Parameters.AddWithValue("tId", teamId);
-            await cmd.ExecuteNonQueryAsync();
+            var result = await cmd.ExecuteScalarAsync();
+            posId = result != null ? (Guid)result : Guid.Empty;
         }
 
-        const string rosterSql = "INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, positionid, number, createdat) VALUES (@id, @tourId, @teamId, @pId, @posId, 10, @now)";
+        // If not found, insert a new one
+        if (posId == Guid.Empty)
+        {
+            posId = Guid.NewGuid();
+            const string insertPosSql = @"
+                INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
+                SELECT @id, sportid, 'Forward', 'FW' FROM public.teams WHERE id = @tId";
+
+            using (var cmd = new NpgsqlCommand(insertPosSql, conn))
+            {
+                cmd.Parameters.AddWithValue("id", posId);
+                cmd.Parameters.AddWithValue("tId", teamId);
+                await cmd.ExecuteNonQueryAsync();
+            }
+        }
+
+        // 3. Seed the roster entry using the found-or-created posId
+        const string rosterSql = @"
+            INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, positionid, number, createdat) 
+            VALUES (@id, @tourId, @teamId, @pId, @posId, 10, @now)";
+
         using (var cmd = new NpgsqlCommand(rosterSql, conn))
         {
             cmd.Parameters.AddWithValue("id", Guid.NewGuid());
