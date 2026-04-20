@@ -241,25 +241,51 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
     }
 
     /// <summary>
-    /// Verifies that anyone can retrieve matches for a specific tournament.
+    /// Verifies that any user can retrieve matches for a specific tournament.
+    /// This test ensures the returned collection is not empty and validates the integrity 
+    /// of the returned match data against the seeded values.
     /// </summary>
     [Fact]
     public async Task GetMatches_ShouldReturnOk_WhenTournamentExists()
     {
         // Arrange
+        // Create a valid tournament context (Tournament, City, Sport)
         var context = await SetupTournamentContextAsync(TestUserId);
+
+        // Seed teams and get their IDs
         var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
         var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
 
-        await SeedMatchAsync(context.TournamentId, homeTeamId, guestTeamId);
+        // Define specific data to seed and verify later
+        var scheduledAt = DateTime.UtcNow.AddDays(1);
+        var matchNumber = "M-FINAL-99";
+
+        // Seed a match with controlled parameters
+        await SeedMatchAsync(context.TournamentId, homeTeamId, guestTeamId, scheduledAt, matchNumber);
 
         // Act
+        // Send request to retrieve all matches for the tournament
         var response = await Client.GetAsync($"{BaseUrl}/{context.TournamentId}/matches");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+
         var matches = await response.Content.ReadFromJsonAsync<IEnumerable<MatchWithDetailsResponse>>();
+
+        // Comprehensive validation of the returned data
         matches.Should().NotBeNull();
+        matches.Should().NotBeEmpty("The response should contain the seeded match.");
+        matches.Should().HaveCount(1, "Only one match was seeded for this tournament.");
+
+        var actualMatch = matches!.First();
+
+        // Verify property-level integrity
+        actualMatch.HomeTeamId.Should().Be(homeTeamId);
+        actualMatch.GuestTeamId.Should().Be(guestTeamId);
+        actualMatch.MatchNumber.Should().Be(matchNumber);
+
+        // Verify date with 1-second precision to handle database storage differences
+        actualMatch.ScheduledAt.Should().BeCloseTo(scheduledAt, TimeSpan.FromSeconds(1));
     }
 
     #endregion
@@ -393,10 +419,24 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         }
     }
 
-    private async Task SeedMatchAsync(Guid tournamentId, Guid homeId, Guid guestId)
+    /// <summary>
+    /// Seeds a match record into the database for integration testing.
+    /// </summary>
+    /// <param name="tournamentId">The ID of the tournament the match belongs to.</param>
+    /// <param name="homeId">The ID of the home team.</param>
+    /// <param name="guestId">The ID of the guest team.</param>
+    /// <param name="scheduledAt">Optional: The scheduled date/time. Defaults to UtcNow.</param>
+    /// <param name="matchNumber">Optional: The match identifier. Defaults to "M-TEST".</param>
+    private async Task SeedMatchAsync(
+        Guid tournamentId,
+        Guid homeId,
+        Guid guestId,
+        DateTime? scheduledAt = null,
+        string matchNumber = "M-TEST")
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
+
         const string sql = @"
             INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, matchnumber, createdat) 
             VALUES (@id, @tId, @hId, @gId, @date, @num, @created)";
@@ -406,9 +446,12 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         cmd.Parameters.AddWithValue("tId", tournamentId);
         cmd.Parameters.AddWithValue("hId", homeId);
         cmd.Parameters.AddWithValue("gId", guestId);
-        cmd.Parameters.AddWithValue("date", DateTime.UtcNow);
-        cmd.Parameters.AddWithValue("num", "M-TEST");
+        // Use provided value or default to current UTC time
+        cmd.Parameters.AddWithValue("date", scheduledAt ?? DateTime.UtcNow);
+        // Use provided match number or default to "M-TEST"
+        cmd.Parameters.AddWithValue("num", matchNumber);
         cmd.Parameters.AddWithValue("created", DateTime.UtcNow);
+
         await cmd.ExecuteNonQueryAsync();
     }
 
