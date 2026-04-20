@@ -14,15 +14,15 @@ public class ScheduleMatchRequestValidator : AbstractValidator<ScheduleMatchRequ
             .NotEmpty().WithMessage("The home team must be selected.");
 
         RuleFor(x => x.GuestTeamId)
+            .Cascade(CascadeMode.Stop)
             .NotEmpty()
-            .WithMessage("The guest team must be selected.")
-            .Must((req, guestTeamId) => guestTeamId != req.HomeTeamId)
+            .Must((request, guestId) => guestId != request.HomeTeamId)
             .WithMessage("The guest team must be different from the home team.");
 
         RuleFor(x => x.ScheduledAt)
+            .Cascade(CascadeMode.Stop)
             .NotEmpty()
-            // Evaluate clock at validation time to prevent stale UTC values
-            .GreaterThan(_ => DateTime.UtcNow)
+            .GreaterThan(DateTime.UtcNow)
             .WithMessage("Match must be scheduled in the future.");
 
         RuleFor(x => x.MatchNumber)

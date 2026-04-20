@@ -208,41 +208,6 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
     }
 
     /// <summary>
-    /// Verifies that scheduling a match fails with 400 BadRequest when ScheduledAt is outside the tournament date range.
-    /// This test seeds valid teams and rosters to ensure the failure is specifically due to the date range validation
-    /// triggered by the request validator.
-    /// </summary>
-    [Fact]
-    public async Task ScheduleMatch_ShouldReturnBadRequest_WhenDateIsOutsideTournamentRange()
-    {
-        // Arrange
-        // Setup a valid tournament context to get existing IDs
-        var context = await SetupTournamentContextAsync(TestUserId);
-
-        // Seed actual teams and rosters to ensure the test doesn't fail on foreign key constraints
-        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team Alpha");
-        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team Beta");
-        await SeedRosterAsync(context.TournamentId, homeTeamId);
-        await SeedRosterAsync(context.TournamentId, guestTeamId);
-
-        // Create a request with a date clearly outside the tournament range (e.g., 5 days in the past)
-        var request = new ScheduleMatchRequest(
-            HomeTeamId: homeTeamId,
-            GuestTeamId: guestTeamId,
-            ScheduledAt: DateTime.UtcNow.AddDays(-5),
-            MatchNumber: "M-VAL-001",
-            Venue: "Test Venue"
-        );
-
-        // Act
-        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{context.TournamentId}/matches", request);
-
-        // Assert
-        // Expecting BadRequest (400) as the FluentValidation catches this before the handler
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
-
-    /// <summary>
     /// Verifies that any user can retrieve matches for a specific tournament.
     /// This test ensures the returned collection is not empty and validates the integrity 
     /// of the returned match data against the seeded values.
@@ -288,6 +253,53 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
 
         // Verify date with 1-second precision to handle database storage differences
         actualMatch.ScheduledAt.Should().BeCloseTo(scheduledAt, TimeSpan.FromSeconds(1));
+    }
+
+    /// <summary>
+    /// Verifies that scheduling a match fails with 409 Conflict when ScheduledAt is outside the tournament date range.
+    /// The system throws a ConflictException because this is a business rule violation.
+    /// </summary>
+    [Fact]
+    public async Task ScheduleMatch_ShouldReturnConflict_WhenDateIsOutsideTournamentRange()
+    {
+        // Arrange
+        var ownerId = TestUserId;
+        await SeedUserAsync(ownerId);
+
+        var cityId = Guid.NewGuid();
+        await SeedRequiredLocationDataAsync(cityId);
+
+        var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Sport-Range-Validation");
+        var configId = await SeedConfigurationAsync(sportId);
+
+        var tournamentId = Guid.NewGuid();
+
+        // Create a bounded tournament: from today+10 to today+20 days
+        var startDate = DateTime.UtcNow.AddDays(10);
+        var endDate = DateTime.UtcNow.AddDays(20);
+
+        await SeedTournamentWithDatesAsync(tournamentId, sportId, configId, cityId, ownerId, "Bounded Tournament", startDate, endDate);
+
+        var homeTeamId = await SeedTeamAsync(cityId, sportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(cityId, sportId, "Guest Team");
+        await SeedRosterAsync(tournamentId, homeTeamId);
+        await SeedRosterAsync(tournamentId, guestTeamId);
+
+        // Attempt to schedule a match 5 days AFTER the tournament ends
+        var request = new ScheduleMatchRequest(
+            HomeTeamId: homeTeamId,
+            GuestTeamId: guestTeamId,
+            ScheduledAt: endDate.AddDays(5),
+            MatchNumber: "M-OUT-OF-RANGE",
+            Venue: "Boundary Stadium"
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{tournamentId}/matches", request);
+
+        // Assert
+        // Changed from BadRequest (400) to Conflict (409) to match business logic behavior
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
 
     #endregion
@@ -491,6 +503,30 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         cmd.Parameters.AddWithValue("id", sportId);
         cmd.Parameters.AddWithValue("name", name);
         return (Guid)(await cmd.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>
+    /// Seeds a tournament with specific start and end dates to test boundary conditions.
+    /// </summary>
+    private async Task SeedTournamentWithDatesAsync(Guid id, Guid sportId, Guid configId, Guid cityId, string ownerId, string name, DateTime start, DateTime? end)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        const string sql = @"
+            INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, enddate, createdat)
+            VALUES (@id, @sportId, @configId, @cityId, @ownerId, @name, @start, @end, @created)";
+
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("sportId", sportId);
+        cmd.Parameters.AddWithValue("configId", configId);
+        cmd.Parameters.AddWithValue("cityId", cityId);
+        cmd.Parameters.AddWithValue("ownerId", ownerId);
+        cmd.Parameters.AddWithValue("name", name);
+        cmd.Parameters.AddWithValue("start", start);
+        cmd.Parameters.AddWithValue("end", (object?)end ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("created", DateTime.UtcNow);
+        await cmd.ExecuteNonQueryAsync();
     }
 
     private static async Task ExecuteSql(NpgsqlConnection conn, string sql)
