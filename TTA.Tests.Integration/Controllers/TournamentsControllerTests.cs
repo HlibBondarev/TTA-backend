@@ -2,6 +2,7 @@
 using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
+using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.Tournaments.DTOs;
 using TTA.DataAccess.Models;
 using TTA.Tests.Integration.Infrastructure;
@@ -11,13 +12,14 @@ namespace TTA.Tests.Integration.Controllers;
 
 /// <summary>
 /// Integration tests for the <see cref="TTA.WebAPI.Controllers.TournamentsController"/>.
-/// Covers end-to-end scenarios including authentication and database persistence.
+/// Covers end-to-end scenarios including authentication, database persistence, and match-related operations.
 /// </summary>
-// Update the primary constructor to include ITestOutputHelper
 public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelper output)
     : BaseApiTest(fixture, output)
 {
     private const string BaseUrl = "/api/tournaments";
+
+    #region Tournament CRUD Tests
 
     /// <summary>
     /// Verifies that an anonymous user can retrieve a tournament by ID.
@@ -152,13 +154,189 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
-    #region Helpers
+    #endregion
+
+    #region Match Association Tests
 
     /// <summary>
-    /// Seeds a user record into the database to satisfy foreign key constraints.
+    /// Verifies that a tournament owner can successfully schedule a match.
     /// </summary>
-    /// <param name="userId">The unique identifier of the user (e.g., Auth0 ID).</param>
-    /// <returns>The seeded user identifier.</returns>
+    [Fact]
+    public async Task ScheduleMatch_ShouldReturnCreated_WhenUserIsOwnerAndDataIsValid()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+
+        await SeedRosterAsync(context.TournamentId, homeTeamId);
+        await SeedRosterAsync(context.TournamentId, guestTeamId);
+
+        var request = new ScheduleMatchRequest(
+            HomeTeamId: homeTeamId,
+            GuestTeamId: guestTeamId,
+            ScheduledAt: DateTime.UtcNow.AddDays(1),
+            MatchNumber: "M-101",
+            Venue: "Central Arena"
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{context.TournamentId}/matches", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var matchId = await response.Content.ReadFromJsonAsync<Guid>();
+        matchId.Should().NotBeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that scheduling fails if the user is not the owner of the tournament.
+    /// Seeds valid teams and rosters first to ensure the request passes initial validation
+    /// and reaches the ownership authorization check.
+    /// </summary>
+    [Fact]
+    public async Task ScheduleMatch_ShouldReturnForbidden_WhenUserIsNotOwner()
+    {
+        // Arrange
+        var otherOwner = "auth0|stranger-danger";
+        // Create tournament owned by someone else
+        var context = await SetupTournamentContextAsync(otherOwner);
+
+        // Seed valid teams and rosters for THIS tournament
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Foreign Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Foreign Guest Team");
+        await SeedRosterAsync(context.TournamentId, homeTeamId);
+        await SeedRosterAsync(context.TournamentId, guestTeamId);
+
+        // Request contains valid team IDs, so it passes DTO/existence validation
+        var request = new ScheduleMatchRequest(
+            HomeTeamId: homeTeamId,
+            GuestTeamId: guestTeamId,
+            ScheduledAt: DateTime.UtcNow.AddDays(1),
+            MatchNumber: "FORBIDDEN-1",
+            Venue: "Private Arena"
+        );
+
+        // Act
+        // Current user (TestUserId) tries to modify otherOwner's tournament
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{context.TournamentId}/matches", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// Verifies that any user can retrieve matches for a specific tournament.
+    /// This test ensures the returned collection is not empty and validates the integrity 
+    /// of the returned match data against the seeded values.
+    /// </summary>
+    [Fact]
+    public async Task GetMatches_ShouldReturnOk_WhenTournamentExists()
+    {
+        // Arrange
+        // Create a valid tournament context (Tournament, City, Sport)
+        var context = await SetupTournamentContextAsync(TestUserId);
+
+        // Seed teams and get their IDs
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+
+        // Define specific data to seed and verify later
+        var scheduledAt = DateTime.UtcNow.AddDays(1);
+        var matchNumber = "M-FINAL-99";
+
+        // Seed a match with controlled parameters
+        await SeedMatchAsync(context.TournamentId, homeTeamId, guestTeamId, scheduledAt, matchNumber);
+
+        // Act
+        // Send request to retrieve all matches for the tournament
+        var response = await Client.GetAsync($"{BaseUrl}/{context.TournamentId}/matches");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var matches = await response.Content.ReadFromJsonAsync<IEnumerable<MatchWithDetailsResponse>>();
+
+        // Comprehensive validation of the returned data
+        matches.Should().NotBeNull();
+        matches.Should().NotBeEmpty("The response should contain the seeded match.");
+        matches.Should().HaveCount(1, "Only one match was seeded for this tournament.");
+
+        var actualMatch = matches!.First();
+
+        // Verify property-level integrity
+        actualMatch.HomeTeamId.Should().Be(homeTeamId);
+        actualMatch.GuestTeamId.Should().Be(guestTeamId);
+        actualMatch.MatchNumber.Should().Be(matchNumber);
+
+        // Verify date with 1-second precision to handle database storage differences
+        actualMatch.ScheduledAt.Should().BeCloseTo(scheduledAt, TimeSpan.FromSeconds(1));
+    }
+
+    /// <summary>
+    /// Verifies that scheduling a match fails with 409 Conflict when ScheduledAt is outside the tournament date range.
+    /// The system throws a ConflictException because this is a business rule violation.
+    /// </summary>
+    [Fact]
+    public async Task ScheduleMatch_ShouldReturnConflict_WhenDateIsOutsideTournamentRange()
+    {
+        // Arrange
+        var ownerId = TestUserId;
+        await SeedUserAsync(ownerId);
+
+        var cityId = Guid.NewGuid();
+        await SeedRequiredLocationDataAsync(cityId);
+
+        var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Sport-Range-Validation");
+        var configId = await SeedConfigurationAsync(sportId);
+
+        var tournamentId = Guid.NewGuid();
+
+        // Create a bounded tournament: from today+10 to today+20 days
+        var startDate = DateTime.UtcNow.AddDays(10);
+        var endDate = DateTime.UtcNow.AddDays(20);
+
+        await SeedTournamentWithDatesAsync(tournamentId, sportId, configId, cityId, ownerId, "Bounded Tournament", startDate, endDate);
+
+        var homeTeamId = await SeedTeamAsync(cityId, sportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(cityId, sportId, "Guest Team");
+        await SeedRosterAsync(tournamentId, homeTeamId);
+        await SeedRosterAsync(tournamentId, guestTeamId);
+
+        // Attempt to schedule a match 5 days AFTER the tournament ends
+        var request = new ScheduleMatchRequest(
+            HomeTeamId: homeTeamId,
+            GuestTeamId: guestTeamId,
+            ScheduledAt: endDate.AddDays(5),
+            MatchNumber: "M-OUT-OF-RANGE",
+            Venue: "Boundary Stadium"
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{tournamentId}/matches", request);
+
+        // Assert
+        // Changed from BadRequest (400) to Conflict (409) to match business logic behavior
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    #endregion
+
+    #region Helpers
+
+    private async Task<(Guid TournamentId, Guid CityId, Guid SportId)> SetupTournamentContextAsync(string ownerId)
+    {
+        await SeedUserAsync(ownerId);
+        var cityId = Guid.NewGuid();
+        await SeedRequiredLocationDataAsync(cityId);
+        var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Sport-" + Guid.NewGuid());
+        var configId = await SeedConfigurationAsync(sportId);
+        var tournamentId = Guid.NewGuid();
+        await SeedTournamentAsync(tournamentId, sportId, configId, cityId, ownerId, "Tourney-" + Guid.NewGuid());
+
+        return (tournamentId, cityId, sportId);
+    }
+
     private async Task<string> SeedUserAsync(string userId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -178,9 +356,6 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         return (string)(await cmd.ExecuteScalarAsync())!;
     }
 
-    /// <summary>
-    /// Seeds a tournament record directly into the database for testing.
-    /// </summary>
     private async Task SeedTournamentAsync(Guid id, Guid sportId, Guid configId, Guid cityId, string ownerId, string name)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -202,19 +377,154 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         await cmd.ExecuteNonQueryAsync();
     }
 
+    private async Task<Guid> SeedTeamAsync(Guid cityId, Guid sportId, string name)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        var teamId = Guid.NewGuid();
+        var clubId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+
+        const string clubSql = "INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cId, @name, @now)";
+        using (var cmd = new NpgsqlCommand(clubSql, conn))
+        {
+            cmd.Parameters.AddWithValue("id", clubId);
+            cmd.Parameters.AddWithValue("cId", cityId);
+            cmd.Parameters.AddWithValue("name", "Club-" + name);
+            cmd.Parameters.AddWithValue("now", now);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        const string teamSql = "INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @cId, @sId, @name, 0, @now)";
+        using (var cmd = new NpgsqlCommand(teamSql, conn))
+        {
+            cmd.Parameters.AddWithValue("id", teamId);
+            cmd.Parameters.AddWithValue("cId", clubId);
+            cmd.Parameters.AddWithValue("sId", sportId);
+            cmd.Parameters.AddWithValue("name", name);
+            cmd.Parameters.AddWithValue("now", now);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        return teamId;
+    }
+
     /// <summary>
-    /// Seeds sport configuration data required for foreign key constraints.
+    /// Seeds a player roster for a specific team in a tournament.
+    /// Ensures player positions are reused if they already exist for the given sport.
     /// </summary>
+    private async Task SeedRosterAsync(Guid tournamentId, Guid teamId)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var playerId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+
+        // 1. Seed the player
+        const string playerSql = @"
+            INSERT INTO public.players (id, homeclubid, firstname, lastname, gender, birthdate, createdat) 
+            VALUES (@id, (SELECT clubid FROM teams WHERE id=@tId), 'John', 'Doe', 0, @birth, @now)";
+
+        using (var cmd = new NpgsqlCommand(playerSql, conn))
+        {
+            cmd.Parameters.AddWithValue("id", playerId);
+            cmd.Parameters.AddWithValue("tId", teamId);
+            cmd.Parameters.AddWithValue("birth", new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+            cmd.Parameters.AddWithValue("now", now);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        // 2. Get or Create Player Position
+        // First, try to find an existing position for this sport
+        const string findPosSql = @"
+            SELECT id FROM public.playerpositiondefinitions 
+            WHERE sportid = (SELECT sportid FROM public.teams WHERE id = @tId) 
+            AND name = 'Forward' LIMIT 1";
+
+        Guid posId;
+        using (var cmd = new NpgsqlCommand(findPosSql, conn))
+        {
+            cmd.Parameters.AddWithValue("tId", teamId);
+            var result = await cmd.ExecuteScalarAsync();
+            posId = result != null ? (Guid)result : Guid.Empty;
+        }
+
+        // If not found, insert a new one
+        if (posId == Guid.Empty)
+        {
+            posId = Guid.NewGuid();
+            const string insertPosSql = @"
+                INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
+                SELECT @id, sportid, 'Forward', 'FW' FROM public.teams WHERE id = @tId";
+
+            using (var cmd = new NpgsqlCommand(insertPosSql, conn))
+            {
+                cmd.Parameters.AddWithValue("id", posId);
+                cmd.Parameters.AddWithValue("tId", teamId);
+                await cmd.ExecuteNonQueryAsync();
+            }
+        }
+
+        // 3. Seed the roster entry using the found-or-created posId
+        const string rosterSql = @"
+            INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, positionid, number, createdat) 
+            VALUES (@id, @tourId, @teamId, @pId, @posId, 10, @now)";
+
+        using (var cmd = new NpgsqlCommand(rosterSql, conn))
+        {
+            cmd.Parameters.AddWithValue("id", Guid.NewGuid());
+            cmd.Parameters.AddWithValue("tourId", tournamentId);
+            cmd.Parameters.AddWithValue("teamId", teamId);
+            cmd.Parameters.AddWithValue("pId", playerId);
+            cmd.Parameters.AddWithValue("posId", posId);
+            cmd.Parameters.AddWithValue("now", now);
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+
+    /// <summary>
+    /// Seeds a match record into the database for integration testing.
+    /// </summary>
+    /// <param name="tournamentId">The ID of the tournament the match belongs to.</param>
+    /// <param name="homeId">The ID of the home team.</param>
+    /// <param name="guestId">The ID of the guest team.</param>
+    /// <param name="scheduledAt">Optional: The scheduled date/time. Defaults to UtcNow.</param>
+    /// <param name="matchNumber">Optional: The match identifier. Defaults to "M-TEST".</param>
+    private async Task SeedMatchAsync(
+        Guid tournamentId,
+        Guid homeId,
+        Guid guestId,
+        DateTime? scheduledAt = null,
+        string matchNumber = "M-TEST")
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        const string sql = @"
+            INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, matchnumber, createdat) 
+            VALUES (@id, @tId, @hId, @gId, @date, @num, @created)";
+
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", Guid.NewGuid());
+        cmd.Parameters.AddWithValue("tId", tournamentId);
+        cmd.Parameters.AddWithValue("hId", homeId);
+        cmd.Parameters.AddWithValue("gId", guestId);
+        // Use provided value or default to current UTC time
+        cmd.Parameters.AddWithValue("date", scheduledAt ?? DateTime.UtcNow);
+        // Use provided match number or default to "M-TEST"
+        cmd.Parameters.AddWithValue("num", matchNumber);
+        cmd.Parameters.AddWithValue("created", DateTime.UtcNow);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
     private async Task<Guid> SeedConfigurationAsync(Guid sportId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         var configId = Guid.NewGuid();
-        const string sql = @"
-            INSERT INTO public.sportconfigurations 
-            (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            VALUES (@id, @sid, false, 2, 45, 'Standard', 25, 11)";
-
+        const string sql = "INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) VALUES (@id, @sid, false, 2, 45, 'Standard', 25, 11)";
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", configId);
         cmd.Parameters.AddWithValue("sid", sportId);
@@ -222,26 +532,18 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         return configId;
     }
 
-    /// <summary>
-    /// Seeds basic location data (Country -> Region -> City).
-    /// </summary>
     private async Task SeedRequiredLocationDataAsync(Guid cityId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
-
         await ExecuteSql(conn, "INSERT INTO public.countries (id, name, code) VALUES (1, 'Ukraine', 'UA') ON CONFLICT DO NOTHING");
         await ExecuteSql(conn, "INSERT INTO public.regions (id, name, countryid) VALUES (1, 'Test Region', 1) ON CONFLICT DO NOTHING");
-
         const string citySql = "INSERT INTO public.cities (id, name, regionid) VALUES (@id, 'Test City', 1) ON CONFLICT DO NOTHING";
         using var cmd = new NpgsqlCommand(citySql, conn);
         cmd.Parameters.AddWithValue("id", cityId);
         await cmd.ExecuteNonQueryAsync();
     }
 
-    /// <summary>
-    /// Seeds a sport definition.
-    /// </summary>
     private async Task<Guid> SeedSportDataAsync(Guid sportId, string name)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -254,8 +556,29 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
     }
 
     /// <summary>
-    /// Utility to execute raw SQL.
+    /// Seeds a tournament with specific start and end dates to test boundary conditions.
     /// </summary>
+    private async Task SeedTournamentWithDatesAsync(Guid id, Guid sportId, Guid configId, Guid cityId, string ownerId, string name, DateTime start, DateTime? end)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        const string sql = @"
+            INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, enddate, createdat)
+            VALUES (@id, @sportId, @configId, @cityId, @ownerId, @name, @start, @end, @created)";
+
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("sportId", sportId);
+        cmd.Parameters.AddWithValue("configId", configId);
+        cmd.Parameters.AddWithValue("cityId", cityId);
+        cmd.Parameters.AddWithValue("ownerId", ownerId);
+        cmd.Parameters.AddWithValue("name", name);
+        cmd.Parameters.AddWithValue("start", start);
+        cmd.Parameters.AddWithValue("end", (object?)end ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("created", DateTime.UtcNow);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
     private static async Task ExecuteSql(NpgsqlConnection conn, string sql)
     {
         using var cmd = new NpgsqlCommand(sql, conn);

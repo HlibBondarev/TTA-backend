@@ -16,7 +16,7 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, TeamMembership>(connectionFactory), ITeamMembershipRepository
 {
     /// <inheritdoc />
-    public async Task<TeamMembership> CreateMembershipWithPolicyAsync(TeamMembership membership, AppRole appRole, CancellationToken ct = default)
+    public async Task<TeamMembership> CreateMembershipWithPolicyAsync(TeamMembership membership, AppRole appRole, CancellationToken cancellationToken = default)
     {
         // We only add AppRole; other params are mapped from the membership entity automatically by BaseRepository
         var parameters = new DynamicParameters();
@@ -26,11 +26,11 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
             membership,
             SqlStatements.ForTeamMemberships.UpsertMembershipWithPolicy,
             parameters,
-            ct);
+            cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<string?> GetMembersJsonAsync(Guid teamId, CancellationToken ct = default)
+    public async Task<string?> GetMembersJsonAsync(Guid teamId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_team_id", teamId);
@@ -38,13 +38,13 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
         return await GetDataInJson(
             SqlStatements.ForTeamMemberships.GetMembersJson,
             parameters,
-            ct);
+            cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<TeamMembership> TerminateMembershipAsync(TeamMembership teamMembership, CancellationToken ct = default)
+    public async Task<TeamMembership> TerminateMembershipAsync(TeamMembership teamMembership, CancellationToken cancellationToken = default)
     {
-        return await CreateOrUpdate(teamMembership, SqlStatements.ForTeamMemberships.UpsertMembership, null, ct);
+        return await CreateOrUpdate(teamMembership, SqlStatements.ForTeamMemberships.UpsertMembership, null, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -52,7 +52,7 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
         TeamMembership teamMembership,
         System.Data.IDbConnection connection,
         System.Data.IDbTransaction transaction,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters(teamMembership);
 
@@ -62,18 +62,18 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
             parameters,
             connection,
             transaction,
-            ct);
+            cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<TeamMembership>> GetActiveMembershipsByEmailAsync(Guid teamId, string userEmail, CancellationToken ct = default)
+    public async Task<IEnumerable<TeamMembership>> GetActiveMembershipsByEmailAsync(Guid teamId, string userEmail, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("TeamId", teamId);
         parameters.Add("UserEmail", userEmail);
 
         // Using GetByPropValues from the base repository to handle multiple rows
-        return await GetByPropValues(SqlStatements.ForTeamMemberships.GetActiveByEmail, parameters, ct);
+        return await GetByPropValues(SqlStatements.ForTeamMemberships.GetActiveByEmail, parameters, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -81,7 +81,7 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
         Guid teamId,
         string userEmail,
         TeamRole teamRole,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("TeamId", teamId);
@@ -89,7 +89,7 @@ public class TeamMembershipRepository(IDbConnectionFactory connectionFactory)
         parameters.Add("RoleInTeam", (int)teamRole);
 
         // Using GetByPropValues from the base repository and returning the first match
-        var results = await GetByPropValues(SqlStatements.ForTeamMemberships.GetActiveByEmailAndRole, parameters, ct);
+        var results = await GetByPropValues(SqlStatements.ForTeamMemberships.GetActiveByEmailAndRole, parameters, cancellationToken);
         return results.FirstOrDefault();
     }
 }

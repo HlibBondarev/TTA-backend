@@ -13,18 +13,18 @@ public class TournamentRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, Tournament>(connectionFactory), ITournamentRepository
 {
     /// <inheritdoc />
-    public async Task<Tournament> CreateOrUpdate(Tournament entity, CancellationToken ct = default)
+    public async Task<Tournament> CreateOrUpdate(Tournament entity, CancellationToken cancellationToken = default)
     {
         // Reusing the base CreateOrUpdate logic by passing the specific SQL statement for tournaments.
         return await base.CreateOrUpdate(
             entity,
             SqlStatements.ForTournaments.UpsertTournament,
             null,
-            ct);
+            cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<Tournament?> GetByIdAsync(Guid id, CancellationToken ct = default)
+    public async Task<Tournament?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         using var connection = GetConnection();
 
@@ -35,7 +35,7 @@ public class TournamentRepository(IDbConnectionFactory connectionFactory)
             new CommandDefinition(
                 SqlStatements.ForTournaments.GetTournamentById,
                 parameters,
-                cancellationToken: ct)
+                cancellationToken: cancellationToken)
         );
     }
 }

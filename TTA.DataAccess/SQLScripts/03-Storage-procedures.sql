@@ -1,11 +1,11 @@
 ﻿-- =============================================================
 -- AUTHENTICATION & AUTHORIZATION STORED FUNCTIONS & PROCEDURES
 -- =============================================================
-
--- 1) Retrieves the effective user role for a specific target or global scope.
--- Returns an INTEGER mapping to C# AppRole (0: FullControl, 1: Editor, 2: Viewer).
--- Logic: Checks direct policies first, then derives team-level access
-
+/**********************************************************************************
+ * Retrieves the effective user role for a specific target or global scope.
+ * Returns an INTEGER mapping to C# AppRole (0: FullControl, 1: Editor, 2: Viewer).
+ * Logic: Checks direct policies first, then derives team-level access
+ **********************************************************************************/
 CREATE OR REPLACE FUNCTION auth.get_user_permission(
     p_user_id VARCHAR(64),
     p_target_type INT, -- 0: Global, 1: Club, 2: Team
@@ -56,8 +56,10 @@ BEGIN
     RETURN v_role;
 END;$$ LANGUAGE plpgsql;
 
--- 2) Universal upsert for access policies. 
--- To revoke access, we call this with p_expiresat = CURRENT_TIMESTAMP.
+/**********************************************************************
+ * Universal upsert for access policies. 
+ * To revoke access, we call this with p_expiresat = CURRENT_TIMESTAMP.
+ **********************************************************************/
 CREATE OR REPLACE FUNCTION auth.upsert_access_policy(
     p_id UUID,
     p_userid VARCHAR(64),
@@ -78,8 +80,10 @@ BEGIN
     RETURNING *;
 END;$$ LANGUAGE plpgsql;
 
--- Retrieves an active access policy for a specific user within a specific team.
--- An active policy is one where expiresat is either NULL or in the future.
+/*******************************************************************************
+ * Retrieves an active access policy for a specific user within a specific team.
+ * An active policy is one where expiresat is either NULL or in the future.
+ *******************************************************************************/
 CREATE OR REPLACE FUNCTION auth.get_active_team_policy(
     p_user_id VARCHAR(64),
     p_team_id UUID
@@ -97,9 +101,9 @@ END;$$ LANGUAGE plpgsql;
 -- ==========================================
 -- GEOGRAPHY & USERS
 -- ==========================================
-
--- 1) Retrieve a single user by ID
-
+/*******************************
+ * Retrieve a single user by ID
+ *******************************/
 CREATE OR REPLACE FUNCTION public.get_user_by_id(p_id TEXT)
 RETURNS SETOF public.users AS $$BEGIN
     RETURN QUERY
@@ -107,8 +111,9 @@ RETURNS SETOF public.users AS $$BEGIN
     WHERE id = p_id;
 END;$$ LANGUAGE plpgsql;
 
--- 2) Retrieves all users with a specific email.
-
+/********************************************
+ * Retrieves all users with a specific email.
+ ********************************************/
 CREATE OR REPLACE FUNCTION public.get_users_by_email(p_email TEXT)
 RETURNS SETOF public.users AS $$
 BEGIN
@@ -121,10 +126,10 @@ $$ LANGUAGE plpgsql;
 -- ====================================================
 -- ORGANIZATIONS (CLUBS) STORED FUNCTIONS & PROCEDURES
 -- ====================================================
-
--- 1) Atomic function to ensure user existence and create a club with ownership.
--- Maintains strict 'one club per owner' rule via unique constraint validation.
-
+/******************************************************************************
+ * Atomic function to ensure user existence and create a club with ownership.
+ * Maintains strict 'one club per owner' rule via unique constraint validation.
+ ******************************************************************************/
 CREATE OR REPLACE FUNCTION auth.create_club_with_ownership(
     p_id UUID,
     p_cityid UUID,
@@ -164,8 +169,9 @@ EXCEPTION
 END;
 $$ LANGUAGE plpgsql;
 
--- 2) Checks if a user already owns any club to enforce "one club per user" rule.
-
+/******************************************************************************
+ * Checks if a user already owns any club to enforce "one club per user" rule.
+ ******************************************************************************/
 CREATE OR REPLACE FUNCTION auth.check_user_owns_any_club(
     p_user_id TEXT
 )
@@ -183,9 +189,9 @@ END;$$ LANGUAGE plpgsql;
 -- ====================================================
 -- TEAM MANAGEMENT STORED FUNCTIONS & PROCEDURES
 -- ====================================================
-
--- 1) Upserts a team record and returns the updated entity.
-
+/********************************************************
+ * Upserts a team record and returns the updated entity.
+ ********************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_team(
     p_id UUID,
     p_clubid UUID,
@@ -216,8 +222,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 2) Retrieves all teams associated with a specific club.
-
+/*******************************************************
+ * Retrieves all teams associated with a specific club.
+ *******************************************************/
 CREATE OR REPLACE FUNCTION public.get_teams_by_club(p_club_id UUID)
 RETURNS SETOF public.teams AS $$
 BEGIN
@@ -228,29 +235,35 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 3) Retrieve a single team by ID
-
+/*******************************
+ * Retrieve a single team by ID
+ *******************************/
 CREATE OR REPLACE FUNCTION public.get_team_by_id(p_id UUID)
 RETURNS SETOF public.teams AS $$BEGIN
     RETURN QUERY
     SELECT * FROM public.teams WHERE id = p_id;
 END;$$ LANGUAGE plpgsql;
 
--- ==========================================
+-- ===============================================================================
 -- TEAM MEMBERSHIP STORED FUNCTIONS
--- ==========================================
-
--- Enforce Business Rule 1 at the DB level to prevent concurrent-insert races.
--- This ensures only one active role of a specific type exists per user in a team.
+-- ===============================================================================
+/*********************************************************************************
+ * Enforce Business Rule 1 at the DB level to prevent concurrent-insert races.
+ * This ensures only one active role of a specific type exists per user in a team.
+ *********************************************************************************/
 CREATE UNIQUE INDEX IF NOT EXISTS uix_teammemberships_active_role_per_team 
 ON public.teammemberships (teamid, userid, roleinteam) 
 WHERE (leftat IS NULL);
 
--- 1) Upserts a team membership with strict integrity checks:
--- a. Prevents duplicate active roles for the same user in a team.
--- b. Ensures only one membership is marked as 'isprimary' for the user across all teams.
--- c. Uses p_approle to maintain a matching record in auth.accesspolicies for standard lookups.
-
+/**********************************************************************************************
+ * Upsert function for team memberships with integrated access policy management.
+ * Enforces strict integrity rules to maintain consistent team roles and permissions.
+ * This is the single source of truth for all membership changes, including terminations.
+ * Business Rules Enforced:
+ * a. Prevents duplicate active roles for the same user in a team.
+ * b. Ensures only one membership is marked as 'isprimary' for the user across all teams.
+ * c. Uses p_approle to maintain a matching record in auth.accesspolicies for standard lookups.
+ **********************************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_team_membership_with_policy(
     p_id UUID,
     p_teamid UUID,
@@ -306,8 +319,9 @@ BEGIN
     RETURN QUERY SELECT * FROM public.teammemberships WHERE id = p_id;
 END;$$ LANGUAGE plpgsql;
 
--- 2) Retrieves all active members of a specific team in json-format.
-
+/*****************************************************************
+ * Retrieves all active members of a specific team in json-format.
+ *****************************************************************/
 CREATE OR REPLACE FUNCTION public.get_team_members_json(p_team_id UUID)
 RETURNS TEXT AS $$
 BEGIN
@@ -331,8 +345,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 2) Returns all active memberships for a user in a specific team.
--- A user can have multiple roles (e.g., Player and Captain).
+/***************************************************************
+ * Returns all active memberships for a user in a specific team.
+ * A user can have multiple roles (e.g., Player and Captain).
+ ***************************************************************/
 CREATE OR REPLACE FUNCTION public.get_active_memberships_by_email(
     p_team_id UUID,
     p_email VARCHAR(255)
@@ -347,7 +363,9 @@ BEGIN
       AND m.leftat IS NULL;
 END;$$ LANGUAGE plpgsql;
 
--- 3) Returns a specific active membership for a user in a team by their role.
+/**************************************************************************
+ * Returns a specific active membership for a user in a team by their role.
+ **************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_active_membership_by_email_and_role(
     p_team_id UUID,
     p_email VARCHAR(255),
@@ -364,7 +382,9 @@ BEGIN
       AND m.leftat IS NULL;
 END;$$ LANGUAGE plpgsql;
 
--- 4) Universal upsert for memberships (handles creation, updating and termination via p_leftat)
+/********************************************************************************************
+ * Universal upsert for memberships (handles creation, updating and termination via p_leftat)
+ ********************************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_team_membership(
     p_id UUID,
     p_userid VARCHAR(64),
@@ -389,17 +409,18 @@ END;$$ LANGUAGE plpgsql;
 -- ====================================================
 -- PLAYERS STORED FUNCTIONS & PROCEDURES
 -- ====================================================
-
--- 1) Retrieve a single player by ID
-
+/*********************************
+ * Retrieve a single player by ID
+ *********************************/
 CREATE OR REPLACE FUNCTION public.get_player_by_id(p_id UUID)
 RETURNS SETOF public.players AS $$BEGIN
     RETURN QUERY
     SELECT * FROM public.players WHERE id = p_id;
 END;$$ LANGUAGE plpgsql;
 
--- 2) Upsert function for players: inserts a new player or updates existing one based on ID.
-
+/*******************************************************************************************
+ * Upsert function for players: inserts a new player or updates existing one based on ID.
+ *******************************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_player(
     p_id UUID,
     p_homeclubid UUID,
@@ -411,7 +432,7 @@ CREATE OR REPLACE FUNCTION public.upsert_player(
 )
 RETURNS SETOF public.players AS $$
 BEGIN
-    -- 1. Validate gender input
+    -- Validate gender input
     IF p_gender NOT IN (0, 1) THEN
         RAISE EXCEPTION 'Invalid gender value: %. Expected 0 (Male) or 1 (Female).', p_gender 
         USING ERRCODE = '22023';
@@ -429,7 +450,9 @@ BEGIN
     RETURNING *;
 END;$$ LANGUAGE plpgsql;
 
--- 3) Retrieves all players associated with a specific club.
+/*********************************************************
+ * Retrieves all players associated with a specific club.
+ *********************************************************/
 
 CREATE OR REPLACE FUNCTION public.get_players_by_club(p_club_id UUID)
 RETURNS SETOF public.players AS $$BEGIN
@@ -441,12 +464,12 @@ END;$$ LANGUAGE plpgsql;
 -- =============================================================
 -- TOURNAMENT MANAGEMENT FUNCTIONS
 -- =============================================================
-
--- 1) Inserts a new tournament or updates an existing one based on its ID.
--- Validates that the start date precedes the end date.
--- Check existence of related entities (Foreign Keys).
--- Authorization: Owner check for updates
-
+/*************************************************************************
+ * Inserts a new tournament or updates an existing one based on its ID.
+ * Validates that the start date precedes the end date.
+ * Check existence of related entities (Foreign Keys).
+ * Authorization: Owner check for updates
+ *************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_tournament(
     p_id UUID,
     p_sportid UUID,
@@ -525,8 +548,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 2) Retrieves a single tournament by its unique identifier.
-
+/**********************************************************
+ * Retrieves a single tournament by its unique identifier.
+ **********************************************************/
 CREATE OR REPLACE FUNCTION public.get_tournament_by_id(p_id UUID)
 RETURNS SETOF public.tournaments AS $$
 BEGIN
@@ -538,10 +562,10 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 -- ROSTER MANAGEMENT FUNCTIONS
 -- =============================================================
-/**
+/*******************************************************************************************
  * Adds or updates a player's assignment in a specific tournament roster.
  * Includes a safety check to prevent cross-team player movement within the same tournament.
- **/
+ *******************************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_player_to_roster(
     p_id UUID,
     p_tournament_id UUID,
@@ -583,10 +607,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-/**
+/******************************************************************
  * Retrieves the full roster for a specific team in a tournament.
  * Joins with players and position definitions for a complete view.
- **/
+ ******************************************************************/
 CREATE OR REPLACE FUNCTION public.get_tournament_team_roster(
     p_tournament_id UUID,
     p_team_id UUID
@@ -625,9 +649,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-/**
+/********************************************
  * Removes a player from a tournament roster.
- **/
+ ********************************************/
 CREATE OR REPLACE FUNCTION public.remove_player_from_roster(
     p_tournament_id UUID,
     p_team_id UUID,
@@ -640,5 +664,149 @@ BEGIN
         tournamentid = p_tournament_id 
         AND teamid = p_team_id
         AND playerid = p_player_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =============================================================
+-- MATCH MANAGEMENT FUNCTIONS
+-- =============================================================
+/***************************************************************************************************
+ * Upserts a match record with referential integrity checks.
+ * Validates tournament existence and ensures both teams are registered in the tournament's rosters.
+ ***************************************************************************************************/
+CREATE OR REPLACE FUNCTION public.upsert_match(
+    p_id UUID,
+    p_tournament_id UUID,
+    p_home_team_id UUID,
+    p_guest_team_id UUID,
+    p_scheduled_at TIMESTAMPTZ,
+    p_match_number VARCHAR,
+    p_venue VARCHAR,
+    p_temperature FLOAT,
+    p_home_score INT,
+    p_guest_score INT,
+    p_created_at TIMESTAMPTZ
+)
+RETURNS SETOF public.matches AS $$
+BEGIN
+    -- 1. Validate Tournament existence
+    IF NOT EXISTS (SELECT 1 FROM public.tournaments WHERE id = p_tournament_id) THEN
+        RAISE EXCEPTION 'Tournament with ID % not found.', p_tournament_id USING ERRCODE = 'P0002';
+    END IF;
+
+    -- 2. Validate that both teams are participants of the tournament (check playerrosters)
+    IF NOT EXISTS (SELECT 1 FROM public.playerrosters WHERE tournamentid = p_tournament_id AND teamid = p_home_team_id) THEN
+        RAISE EXCEPTION 'Home team % is not registered for this tournament.', p_home_team_id USING ERRCODE = 'P0001';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.playerrosters WHERE tournamentid = p_tournament_id AND teamid = p_guest_team_id) THEN
+        RAISE EXCEPTION 'Guest team % is not registered for this tournament.', p_guest_team_id USING ERRCODE = 'P0001';
+    END IF;
+
+    RETURN QUERY
+    INSERT INTO public.matches (
+        id, tournamentid, hometeamid, guestteamid, scheduledat, 
+        matchnumber, venue, temperature, homescore, guestscore, createdat
+    )
+    VALUES (
+        p_id, p_tournament_id, p_home_team_id, p_guest_team_id, p_scheduled_at, 
+        p_match_number, p_venue, p_temperature, p_home_score, p_guest_score, p_created_at
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        tournamentid = EXCLUDED.tournamentid,
+        hometeamid = EXCLUDED.hometeamid,
+        guestteamid = EXCLUDED.guestteamid,
+        scheduledat = EXCLUDED.scheduledat,
+        matchnumber = EXCLUDED.matchnumber,
+        venue = EXCLUDED.venue,
+        temperature = EXCLUDED.temperature,
+        homescore = EXCLUDED.homescore,
+        guestscore = EXCLUDED.guestscore
+    RETURNING *;
+END;
+$$ LANGUAGE plpgsql;
+
+/********************************************************************************************
+ * Retrieves all matches for a tournament with joined metadata (tournament name, team names).
+ ********************************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_tournament_matches(p_tournament_id UUID)
+RETURNS TABLE (
+    id UUID,
+    tournamentid UUID,
+    tournamentname VARCHAR,
+    hometeamid UUID,
+    hometeamname VARCHAR,
+    guestteamid UUID,
+    guestteamname VARCHAR,
+    scheduledat TIMESTAMPTZ,
+    matchnumber VARCHAR,
+    venue VARCHAR,
+    temperature DOUBLE PRECISION,
+    homescore INT,
+    guestscore INT,
+    createdat TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        m.id, m.tournamentid, t.name as tournamentname,
+        m.hometeamid, ht.name as hometeamname,
+        m.guestteamid, gt.name as guestteamname,
+        m.scheduledat, m.matchnumber, m.venue, m.temperature, m.homescore, m.guestscore, m.createdat
+    FROM public.matches m
+    INNER JOIN public.tournaments t ON m.tournamentid = t.id
+    INNER JOIN public.teams ht ON m.hometeamid = ht.id
+    INNER JOIN public.teams gt ON m.guestteamid = gt.id
+    WHERE m.tournamentid = p_tournament_id
+    ORDER BY m.scheduledat ASC;
+END;
+$$ LANGUAGE plpgsql;
+
+/************************************************************************************************
+ * Retrieves a single match by its unique identifier.
+ * Returns only columns defined in the public.matches table to match the Match entity structure.
+ ************************************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_by_id(p_id UUID)
+RETURNS SETOF public.matches AS $$
+BEGIN
+    RETURN QUERY
+    SELECT m.*
+    FROM public.matches m
+    WHERE m.id = p_id;
+END;
+$$ LANGUAGE plpgsql;
+
+/************************************************************************************************
+ * Retrieves a single match by its unique identifier with joined metadata (Team and Tournament names).
+ ************************************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_with_details_by_id(p_id UUID)
+RETURNS TABLE (
+    id UUID,
+    tournamentid UUID,
+    tournamentname VARCHAR,
+    hometeamid UUID,
+    hometeamname VARCHAR,
+    guestteamid UUID,
+    guestteamname VARCHAR,
+    scheduledat TIMESTAMPTZ,
+    matchnumber VARCHAR,
+    venue VARCHAR,
+    temperature DOUBLE PRECISION,
+    homescore INT,
+    guestscore INT,
+    createdat TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        m.id, m.tournamentid, t.name as tournamentname,
+        m.hometeamid, ht.name as hometeamname,
+        m.guestteamid, gt.name as guestteamname,
+        m.scheduledat, m.matchnumber, m.venue, m.temperature, m.homescore, m.guestscore, m.createdat
+    FROM public.matches m
+    INNER JOIN public.tournaments t ON m.tournamentid = t.id
+    INNER JOIN public.teams ht ON m.hometeamid = ht.id
+    INNER JOIN public.teams gt ON m.guestteamid = gt.id
+    WHERE m.id = p_id;
 END;
 $$ LANGUAGE plpgsql;

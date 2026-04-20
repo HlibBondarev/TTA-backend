@@ -14,7 +14,7 @@ public class PlayerRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, Player>(connectionFactory), IPlayerRepository
 {
     /// <inheritdoc />
-    public async Task<Player> CreatePlayerAsync(Player player, CancellationToken ct)
+    public async Task<Player> CreatePlayerAsync(Player player, CancellationToken cancellationToken)
     {
         // No manual parameter mapping needed for Gender. 
         // Dapper maps all properties of the 'player' object (including Enum as int)
@@ -23,21 +23,21 @@ public class PlayerRepository(IDbConnectionFactory connectionFactory)
             player,
             SqlStatements.ForPlayers.UpsertPlayer,
             new DynamicParameters(player),
-            ct);
+            cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<Player>> GetByClubIdAsync(Guid clubId, CancellationToken ct)
+    public async Task<IEnumerable<Player>> GetByClubIdAsync(Guid clubId, CancellationToken cancellationToken)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_club_id", clubId);
 
-        return await GetByPropValues(SqlStatements.ForPlayers.GetPlayersByClub, parameters, ct);
+        return await GetByPropValues(SqlStatements.ForPlayers.GetPlayersByClub, parameters, cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<Player?> GetByIdAsync(Guid id, CancellationToken ct)
+    public async Task<Player?> GetByIdAsync(Guid id, CancellationToken cancellationToken)
     {
-        return await GetById(id, SqlStatements.ForPlayers.GetPlayerById, ct);
+        return await GetById(id, SqlStatements.ForPlayers.GetPlayerById, cancellationToken);
     }
 }

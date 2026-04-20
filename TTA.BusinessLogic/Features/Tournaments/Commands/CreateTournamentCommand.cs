@@ -5,9 +5,11 @@ using TTA.DataAccess.Models;
 namespace TTA.BusinessLogic.Features.Tournaments.Commands;
 
 /// <summary>
-/// Command to create a tournament.
-/// Returns the persisted <see cref="Tournament"/> entity.
+/// Command to create a new tournament.
 /// </summary>
+/// <returns>
+/// A <see cref="TournamentResponse"/> containing the details of the newly created tournament.
+/// </returns>
 /// <param name="SportId">The unique identifier of the sport associated with this tournament.</param>
 /// <param name="ConfigurationId">The specific ruleset/configuration ID for this tournament.</param>
 /// <param name="CityId">The unique identifier of the city where the tournament is hosted.</param>

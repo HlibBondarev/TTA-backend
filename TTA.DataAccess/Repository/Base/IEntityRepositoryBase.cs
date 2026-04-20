@@ -21,32 +21,36 @@ public interface IEntityRepositoryBase<TKey, TEntity>
     /// <param name="entity">The entity containing data to be saved.</param>
     /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="additionalParams">Optional extra parameters to pass to the function.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The entity as returned by the database function after the operation.</returns>
-    Task<TEntity> CreateOrUpdate(TEntity entity, string sqlText, DynamicParameters? additionalParams = null, CancellationToken ct = default);
+    Task<TEntity> CreateOrUpdate(
+        TEntity entity,
+        string sqlText,
+        DynamicParameters? additionalParams = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves a single entity by its unique identifier using a database function.
     /// </summary>
     /// <param name="id">The unique identifier of the entity.</param>
     /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task<TEntity?> GetById(TKey id, string sqlText, CancellationToken ct = default);
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<TEntity?> GetById(TKey id, string sqlText, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves all entities of type <typeparamref name="TEntity"/> from the specified function.
     /// </summary>
     /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task<IEnumerable<TEntity>> GetAll(string sqlText, CancellationToken ct = default);
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IEnumerable<TEntity>> GetAll(string sqlText, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves entities based on specific property values.
     /// </summary>
     /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="parameters">Dynamic parameters for the search criteria.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task<IEnumerable<TEntity>> GetByPropValues(string sqlText, DynamicParameters parameters, CancellationToken ct = default);
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IEnumerable<TEntity>> GetByPropValues(string sqlText, DynamicParameters parameters, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Executes a function and returns the result as a JSON string.
@@ -54,41 +58,41 @@ public interface IEntityRepositoryBase<TKey, TEntity>
     /// </summary>
     /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="parameters">Dynamic parameters for the function.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task<string?> GetDataInJson(string sqlText, DynamicParameters parameters, CancellationToken ct = default);
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<string?> GetDataInJson(string sqlText, DynamicParameters parameters, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Checks if an entity exists by its unique identifier.
     /// </summary>
     /// <param name="id">The unique identifier of the entity.</param>
     /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task<bool> Exists(TKey id, string sqlText, CancellationToken ct = default);
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<bool> Exists(TKey id, string sqlText, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Checks if an entity exists based on custom criteria.
     /// </summary>
     /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="parameters">Dynamic parameters for the search criteria.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task<bool> Exists(string sqlText, DynamicParameters parameters, CancellationToken ct = default);
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<bool> Exists(string sqlText, DynamicParameters parameters, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Deletes an entity by its identifier within a transaction.
     /// </summary>
     /// <param name="id">The unique identifier of the entity to delete.</param>
     /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns><c>true</c> if the entity was successfully deleted; otherwise, <c>false</c>.</returns>
-    Task<bool> Delete(TKey id, string sqlText, CancellationToken ct = default);
+    Task<bool> Delete(TKey id, string sqlText, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Executes a non-query command (like an update or complex action) within a transaction.
     /// </summary>
     /// <param name="procName">The name of the PostgreSQL function.</param>
     /// <param name="parameters">Dynamic parameters for the command.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task ExecuteCommandInTransaction(string procName, DynamicParameters parameters, CancellationToken ct = default);
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task ExecuteCommandInTransaction(string procName, DynamicParameters parameters, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Executes a query that returns a scalar result of type <typeparamref name="T"/> within a transaction.
@@ -96,20 +100,19 @@ public interface IEntityRepositoryBase<TKey, TEntity>
     /// <typeparam name="T">The type of the result (e.g., long, int, string).</typeparam>
     /// <param name="sqlText">The sql text of the PostgreSQL function.</param>
     /// <param name="parameters">Dynamic parameters for the query.</param>
-    /// <param name="commandType">Type of Command for the query.</param>
-    /// <param name="ct">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task<T> ExecuteQueryInTransaction<T>(
         string sqlText,
         DynamicParameters parameters,
-        CancellationToken ct = default);
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Opens and returns a new database connection asynchronously.
     /// The caller is responsible for disposing of the connection.
     /// </summary>
-    /// <param name="ct">A token to monitor for cancellation requests.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A task that represents the asynchronous operation, containing the opened <see cref="IDbConnection"/>.</returns>
-    Task<IDbConnection> OpenConnectionAsync(CancellationToken ct = default);
+    Task<IDbConnection> OpenConnectionAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Executes a command using a shared database connection and an active transaction.
@@ -119,12 +122,12 @@ public interface IEntityRepositoryBase<TKey, TEntity>
     /// <param name="parameters">The dynamic parameters for the command.</param>
     /// <param name="connection">An existing and open <see cref="IDbConnection"/>.</param>
     /// <param name="transaction">An active <see cref="IDbTransaction"/> associated with the provided connection.</param>
-    /// <param name="ct">A token to monitor for cancellation requests.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
     Task ExecuteCommandAsync(
         string sqlText,
         DynamicParameters parameters,
         IDbConnection connection,
         IDbTransaction transaction,
-        CancellationToken ct = default);
+        CancellationToken cancellationToken = default);
 }

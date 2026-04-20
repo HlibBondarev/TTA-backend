@@ -203,4 +203,34 @@ public static class SqlStatements
         public const string RemovePlayerFromRoster =
             "SELECT public.remove_player_from_roster(@TournamentId, @TeamId, @PlayerId)";
     }
+
+    /// <summary>
+    /// Contains SQL command constants for invoking PostgreSQL storage functions related to Matches.
+    /// </summary>
+    public static class ForMatches
+    {
+        /// <summary>
+        /// SQL to call the upsert function for matches.
+        /// </summary>
+        public const string UpsertMatch =
+            "SELECT * FROM public.upsert_match(@Id, @TournamentId, @HomeTeamId, @GuestTeamId, @ScheduledAt, @MatchNumber, @Venue, @Temperature, @HomeScore, @GuestScore, @CreatedAt)";
+
+        /// <summary>
+        /// SQL to retrieve a match by its unique identifier.
+        /// </summary>
+        public const string GetMatchById =
+            "SELECT * FROM public.get_match_by_id(@p_id)";
+
+        /// <summary>
+        /// SQL to retrieve all matches for a specific tournament.
+        /// </summary>
+        public const string GetTournamentMatches =
+            "SELECT * FROM public.get_tournament_matches(@p_tournament_id)";
+
+        /// <summary>
+        /// SQL to call the storage function that returns match details by ID.
+        /// </summary>
+        public const string GetMatchWithDetailsById =
+            "SELECT * FROM public.get_match_with_details_by_id(@p_id)";
+    }
 }

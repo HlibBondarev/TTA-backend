@@ -2,6 +2,8 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TTA.BusinessLogic.Features.Matches.DTOs;
+using TTA.BusinessLogic.Features.Matches.Queries;
 using TTA.BusinessLogic.Features.Tournaments.DTOs;
 using TTA.BusinessLogic.Features.Tournaments.Queries;
 using TTA.WebAPI.Authorization;
@@ -135,6 +137,93 @@ public class TournamentsController(
         {
             return NotFound();
         }
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Schedules a new match.
+    /// </summary>
+    /// <param name="request">The match creation request data.</param>
+    /// <param name="validator">The validator for the creation request.</param>
+    /// <returns>The newly created match entity.</returns>
+    /// <response code="201">Returns the created match.</response>
+    /// <response code="400">If the request data is invalid or validation fails.</response>
+    /// <response code="401">If the user is not authenticated.</response>
+    /// <response code="403">If the user does not have sufficient permissions.</response>
+    /// <response code="404">If the tournament, teams or associated entities were not found.</response>
+    /// <response code="409">If ScheduledAt is not within the tournament's active dates.</response>
+    [HttpPost("{tournamentId:guid}/matches")]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> ScheduleMatch(
+        [FromRoute] Guid tournamentId,
+        [FromBody] ScheduleMatchRequest request,
+        [FromServices] IValidator<ScheduleMatchRequest> validator)
+    {
+        _logger.LogInformation("Executing Create action for match in tournament with ID: {TournamentId}.", tournamentId);
+
+        // 1) Validate the incoming request
+        var validationResult = await validator.ValidateAsync(request);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation failed for ScheduleMatchRequest in tournament with ID: {TournamentId}. Errors: {Errors}.", tournamentId, validationResult.Errors);
+            return BadRequest(validationResult.Errors);
+        }
+
+        // 2) Check the User access rights
+        string userId = this.GetUserId(_auth0Settings);
+        var query = new GetTournamentByIdQuery(tournamentId);
+        var currentTournament = await _mediator.Send(query);
+
+        if (currentTournament == null)
+        {
+            return NotFound();
+        }
+
+        if (currentTournament.OwnerId != userId)
+        {
+            _logger.LogWarning("User {UserId} attempted to create a match in tournament {TournamentId} without sufficient permissions.", userId, tournamentId);
+            return Forbid();
+        }
+
+        // 3) Map the request to a command and send it to the mediator
+        var command = request.ToCommand(tournamentId);
+        var result = await _mediator.Send(command);
+
+        return StatusCode(StatusCodes.Status201Created, result);
+    }
+
+    /// <summary>
+    /// Retrieves all matches scheduled for a specific tournament.
+    /// </summary>
+    /// <param name="tournamentId">The unique identifier of the tournament.</param>
+    /// <returns>A list of matches with full details.</returns>
+    /// <response code="200">Returns the list of matches.</response>
+    /// <response code="404">If the tournament was not found.</response>
+    [AllowAnonymous]
+    [HttpGet("{tournamentId:guid}/matches")]
+    [ProducesResponseType(typeof(IEnumerable<MatchWithDetailsResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetMatches([FromRoute] Guid tournamentId)
+    {
+        _logger.LogInformation("Executing GetMatches action for tournament {TournamentId}.", tournamentId);
+
+        // Check if tournament exists first
+        var tournamentQuery = new GetTournamentByIdQuery(tournamentId);
+        var tournament = await _mediator.Send(tournamentQuery);
+
+        if (tournament == null)
+        {
+            return NotFound();
+        }
+
+        var query = new GetTournamentMatchesQuery(tournamentId);
+        var result = await _mediator.Send(query);
 
         return Ok(result);
     }

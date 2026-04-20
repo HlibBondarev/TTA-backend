@@ -120,6 +120,7 @@ public static class Startup
         services.AddScoped<ITeamMembershipRepository, TeamMembershipRepository>();
         services.AddScoped<ITournamentRepository, TournamentRepository>();
         services.AddScoped<IRosterRepository, RosterRepository>();
+        services.AddScoped<IMatchRepository, MatchRepository>();
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
