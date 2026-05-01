@@ -943,27 +943,56 @@ RETURNS INT AS $$
 DECLARE
     v_inserted_count INT;
     v_tournamentid UUID;
+    v_lineup_limit INT;
+    v_current_count INT;
+    v_roster_count INT;
 BEGIN
-    -- Resolve tournament ID directly from the match record to ensure roster scope validity
-    SELECT tournamentid INTO v_tournamentid FROM public.matches WHERE id = p_matchid;
+    -- 1. Resolve tournament ID and verify team participation
+    SELECT tournamentid INTO v_tournamentid 
+    FROM public.matches 
+    WHERE id = p_matchid AND (hometeamid = p_teamid OR guestteamid = p_teamid);
 
-    -- Perform bulk insert from roster
+    IF v_tournamentid IS NULL THEN
+        RAISE EXCEPTION 'Team % does not belong to match % or match not found.', p_teamid, p_matchid 
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 2. Get lineup limit for the match
+    SELECT sc.lineuplimit INTO v_lineup_limit
+    FROM public.matches m
+    JOIN public.tournaments t ON m.tournamentid = t.id
+    JOIN public.sportconfigurations sc ON t.configurationid = sc.id
+    WHERE m.id = p_matchid;
+
+    -- 3. Calculate how many players we want to add vs how many we can
+    SELECT COUNT(*) INTO v_roster_count
+    FROM public.playerrosters pr
+    WHERE pr.teamid = p_teamid AND pr.tournamentid = v_tournamentid
+    AND NOT EXISTS ( -- Only count players not already in the lineup
+        SELECT 1 FROM public.matchlineups ml 
+        WHERE ml.matchid = p_matchid AND ml.playerrosterid = pr.id
+    );
+
+    SELECT COUNT(*) INTO v_current_count
+    FROM public.matchlineups ml
+    JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    WHERE ml.matchid = p_matchid AND pr.teamid = p_teamid;
+
+    IF (v_current_count + v_roster_count) > v_lineup_limit THEN
+        RAISE EXCEPTION 'Adding % players would exceed the lineup limit (%) for this team.', v_roster_count, v_lineup_limit
+        USING ERRCODE = 'P0003';
+    END IF;
+
+    -- 4. Perform efficient bulk insert
     INSERT INTO public.matchlineups (
         id, matchid, playerrosterid, number, isinstartinglineup, positionid
     )
     SELECT 
-        gen_random_uuid(), 
-        p_matchid, 
-        pr.id, 
-        pr.number, 
-        FALSE, 
-        pr.positionid 
+        gen_random_uuid(), p_matchid, pr.id, pr.number, FALSE, pr.positionid 
     FROM public.playerrosters pr
     WHERE pr.teamid = p_teamid AND pr.tournamentid = v_tournamentid
-    -- This prevents errors if the roster is partially or fully copied multiple times
     ON CONFLICT (matchid, playerrosterid) DO NOTHING;
 
-    -- Capture the number of new records created
     GET DIAGNOSTICS v_inserted_count = ROW_COUNT;
     RETURN v_inserted_count;
 END;$$ LANGUAGE plpgsql;
