@@ -57,4 +57,12 @@ public interface IMatchLineupRepository : IEntityRepositoryBase<Guid, MatchLineu
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A dynamic object containing enriched lineup details if found; otherwise, null.</returns>
     Task<dynamic?> GetMatchLineupByIdWithDetailsAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Verifies if there are any game events (goals, cards, etc.) linked to a specific match lineup item.
+    /// </summary>
+    /// <param name="id">The unique identifier of the match lineup entry.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task that represents the asynchronous operation. The task result contains true if linked events exist; otherwise, false.</returns>
+    Task<bool> HasLinkedEventsAsync(Guid id, CancellationToken cancellationToken = default);
 }

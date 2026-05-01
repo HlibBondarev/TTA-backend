@@ -1035,3 +1035,17 @@ BEGIN
     JOIN public.playerpositiondefinitions ppd ON ml.positionid = ppd.id
     WHERE ml.id = p_id;
 END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Checks if a specific match lineup entry has any associated game events.
+ * This is a safety check used to prevent data inconsistency before deletion.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.check_match_lineup_has_events(p_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 
+        FROM public.gameevents 
+        WHERE matchlineupid = p_id
+    );
+END;$$ LANGUAGE plpgsql;

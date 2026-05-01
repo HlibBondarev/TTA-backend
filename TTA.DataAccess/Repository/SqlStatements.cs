@@ -277,5 +277,10 @@ public static class SqlStatements
         /// Executes the function to retrieve a match lineup entry with enriched player and position data.
         /// </summary>
         public const string GetByIdWithDetails = @"SELECT * FROM public.get_match_lineup_details_by_id(@p_id);";
+
+        /// <summary>
+        /// Executes the function to check if a lineup entry is linked to any game events.
+        /// </summary>
+        public const string CheckHasEvents = "SELECT public.check_match_lineup_has_events(@p_id);";
     }
 }

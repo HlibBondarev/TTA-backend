@@ -81,4 +81,19 @@ public class MatchLineupRepository(IDbConnectionFactory connectionFactory)
             parameters,
             cancellationToken: cancellationToken));
     }
+
+    /// <inheritdoc />
+    public async Task<bool> HasLinkedEventsAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_id", id);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+
+        // Using ExecuteScalarAsync to retrieve the boolean result from the storage function
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            SqlStatements.ForMatchLineups.CheckHasEvents,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
 }

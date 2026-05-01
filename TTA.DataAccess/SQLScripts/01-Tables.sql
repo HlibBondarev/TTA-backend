@@ -250,7 +250,8 @@ CREATE TABLE gameevents (
     id UUID PRIMARY KEY,
     matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
     -- Linked to match protocol. NULL allowed for team-wide events (e.g., timeouts)
-    matchlineupid UUID NULL REFERENCES matchlineups(id) ON DELETE SET NULL,
+    -- Refactored: Use ON DELETE RESTRICT to prevent losing attribution to events
+    matchlineupid UUID NULL REFERENCES matchlineups(id) ON DELETE RESTRICT,
     eventdefinitionid UUID NOT NULL REFERENCES eventdefinitions(id),
     periodnumber INT NOT NULL,
     eventtimestamp TIMESTAMPTZ NOT NULL,

@@ -224,6 +224,69 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
 
     #endregion
 
+    #region Validation Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchLineupRepository.HasLinkedEventsAsync"/> returns true
+    /// when there are game events associated with the specific lineup entry.
+    /// </summary>
+    [Fact]
+    public async Task HasLinkedEventsAsync_ShouldReturnTrue_WhenEventsExist()
+    {
+        // Arrange
+        var (matchId, playerRosterId, positionId) = await SeedMatchLineupRequirementsAsync();
+        var lineupId = Guid.NewGuid();
+
+        await _repository.UpsertLineupItemAsync(new MatchLineup
+        {
+            Id = lineupId,
+            MatchId = matchId,
+            PlayerRosterId = playerRosterId,
+            PositionId = positionId,
+            Number = 10,
+            IsInStartingLineup = true
+        });
+
+        // Seed a game event linked to this lineup item using corrected schema
+        await SeedGameEventAsync(matchId, lineupId);
+
+        // Act
+        var result = await _repository.HasLinkedEventsAsync(lineupId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchLineupRepository.HasLinkedEventsAsync"/> returns false
+    /// when no game events are linked to the specific lineup entry.
+    /// </summary>
+    [Fact]
+    public async Task HasLinkedEventsAsync_ShouldReturnFalse_WhenNoEventsExist()
+    {
+        // Arrange
+        var (matchId, playerRosterId, positionId) = await SeedMatchLineupRequirementsAsync();
+        var lineupId = Guid.NewGuid();
+
+        await _repository.UpsertLineupItemAsync(new MatchLineup
+        {
+            Id = lineupId,
+            MatchId = matchId,
+            PlayerRosterId = playerRosterId,
+            PositionId = positionId,
+            Number = 10,
+            IsInStartingLineup = true
+        });
+
+        // Act
+        var result = await _repository.HasLinkedEventsAsync(lineupId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    #endregion
+
     #region Seeding Helpers
 
     private async Task<(Guid MatchId, Guid PlayerRosterId, Guid PositionId)> SeedMatchLineupRequirementsAsync()
@@ -318,6 +381,66 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
         }
 
         return (matchId, teamId, count);
+    }
+
+    /// <summary>
+    /// Seeds a game event record linked to a match lineup entry using the exact database schema.
+    /// Ensures all mandatory foreign keys (sportid, eventdefinitionid) are valid.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="lineupId">The unique identifier of the match lineup entry.</param>
+    private async Task SeedGameEventAsync(Guid matchId, Guid lineupId)
+    {
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // 1. Retrieve existing sportId from the match to maintain referential integrity
+        var matchData = await conn.QuerySingleAsync<dynamic>(
+            "SELECT tournamentid FROM public.matches WHERE id = @id",
+            new { id = matchId });
+
+        Guid tournamentId = matchData.tournamentid;
+        Guid sportId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT sportid FROM public.tournaments WHERE id = @tid",
+            new { tid = tournamentId });
+
+        // 2. Insert a valid event definition following the provided DDL
+        var eventDefId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+        INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) 
+        VALUES (@id, @sportid, @name, @shortname, @ispositive, now()) 
+        ON CONFLICT (id) DO NOTHING",
+            new
+            {
+                id = eventDefId,
+                sportid = sportId,
+                name = "Goal",
+                shortname = "G",
+                ispositive = true
+            });
+
+        // 3. Insert the game event with correct column names and types
+        await conn.ExecuteAsync(@"
+        INSERT INTO public.gameevents (
+            id, 
+            matchid, 
+            matchlineupid, 
+            eventdefinitionid, 
+            periodnumber, 
+            eventtimestamp, 
+            isleadtogoal, 
+            createdat
+        ) 
+        VALUES (@id, @mid, @lid, @edid, @period, @timestamp, @isLead, now())",
+            new
+            {
+                id = Guid.NewGuid(),
+                mid = matchId,
+                lid = lineupId,
+                edid = eventDefId,
+                period = 1,
+                timestamp = DateTimeOffset.UtcNow,
+                isLead = false
+            });
     }
 
     #endregion
