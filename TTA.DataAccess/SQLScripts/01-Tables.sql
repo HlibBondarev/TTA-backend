@@ -272,6 +272,10 @@ CREATE TABLE playerpresences (
         CHECK (timeout IS NULL OR timeout >= timein)
 );
 
+-- Indices for playerpresences to optimize joins and integrity checks
+CREATE INDEX ix_playerpresences_matchid ON playerpresences(matchid);
+CREATE INDEX ix_playerpresences_matchlineupid ON playerpresences(matchlineupid);
+
 CREATE INDEX ix_gameevents_matchid ON gameevents(matchid);
 CREATE INDEX ix_gameevents_matchlineupid ON gameevents(matchlineupid);
 
