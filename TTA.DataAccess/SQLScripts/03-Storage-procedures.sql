@@ -997,7 +997,7 @@ RETURNS TABLE (
 BEGIN
     RETURN QUERY
     SELECT 
-        ml.id, ml.matchid, pr.teami, ml.playerrosteridd,
+        ml.id, ml.matchid, pr.teamid, ml.playerrosterid,
         p.firstname, p.lastname, ml.number, ml.isinstartinglineup,
         ml.positionid, ppd.name
     FROM public.matchlineups ml
