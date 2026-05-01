@@ -115,7 +115,7 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
     public async Task<bool> Delete(TKey id, string sqlText, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_id", id);
+        parameters.Add(KeyParamName, id);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
