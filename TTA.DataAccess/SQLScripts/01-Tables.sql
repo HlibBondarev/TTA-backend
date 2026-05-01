@@ -207,11 +207,21 @@ CREATE INDEX ix_playerrosters_team ON playerrosters (teamid);
 CREATE TABLE matchlineups (
     id UUID PRIMARY KEY,
     matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
-    playerid UUID NOT NULL REFERENCES players(id),
-    number INT NOT NULL,
-    isinstartinglineup BOOLEAN NOT NULL,
-    positionid UUID NOT NULL REFERENCES playerpositiondefinitions(id)
+    -- Linked to tournament roster instead of general players table
+    playerrosterid UUID NOT NULL REFERENCES playerrosters(id) ON DELETE CASCADE,
+    number INT NOT NULL, -- Jersey number for this specific match
+    isinstartinglineup BOOLEAN NOT NULL DEFAULT false,
+    positionid UUID NOT NULL REFERENCES playerpositiondefinitions(id),
+    
+    -- Ensures a player cannot be added to the same match lineup more than once
+    CONSTRAINT uix_matchlineups_match_player UNIQUE (matchid, playerrosterid)
 );
+
+-- Index for fast lookup of all players in a specific match
+CREATE INDEX ix_matchlineups_matchid ON public.matchlineups (matchid);
+
+-- Index for checking player participation across different matches
+CREATE INDEX ix_matchlineups_playerrosterid ON public.matchlineups (playerrosterid);
 
 -- ==========================================
 -- 6. TTA ENGINE (EVENTS & TIME)
@@ -239,7 +249,8 @@ CREATE TABLE timeanchors (
 CREATE TABLE gameevents (
     id UUID PRIMARY KEY,
     matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
-    playerid UUID NULL REFERENCES players(id),
+    -- Linked to match protocol. NULL allowed for team-wide events (e.g., timeouts)
+    matchlineupid UUID NULL REFERENCES matchlineups(id) ON DELETE SET NULL,
     eventdefinitionid UUID NOT NULL REFERENCES eventdefinitions(id),
     periodnumber INT NOT NULL,
     eventtimestamp TIMESTAMPTZ NOT NULL,
@@ -248,19 +259,20 @@ CREATE TABLE gameevents (
     createdat TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX ix_gameevents_matchid ON gameevents(matchid);
-CREATE INDEX ix_gameevents_playerid ON gameevents(playerid);
-
 CREATE TABLE playerpresences (
     id UUID PRIMARY KEY,
     matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
-    playerid UUID NOT NULL REFERENCES players(id),
+    -- Updated to track match-specific protocol ID
+    matchlineupid UUID NOT NULL REFERENCES matchlineups(id) ON DELETE CASCADE,
     periodnumber INT NOT NULL,
     timein TIMESTAMPTZ NOT NULL,
     timeout TIMESTAMPTZ NULL,
     CONSTRAINT chk_playerpresences_timeout_after_timein 
         CHECK (timeout IS NULL OR timeout >= timein)
 );
+
+CREATE INDEX ix_gameevents_matchid ON gameevents(matchid);
+CREATE INDEX ix_gameevents_matchlineupid ON gameevents(matchlineupid);
 
 CREATE TABLE auth.accesspolicies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 

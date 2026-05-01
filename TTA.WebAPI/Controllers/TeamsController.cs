@@ -78,6 +78,7 @@ public class TeamsController(
     /// </summary>
     /// <param name="teamId">The unique identifier of the team.</param>
     /// <param name="request">The termination details including user email and role.</param>
+    /// <param name="validator">The request validator.</param>
     /// <returns>No content if successful.</returns>
     /// <response code="204">If the membership was successfully terminated.</response>
     /// <response code="404">If the active membership was not found for the given email and role.</response>
@@ -87,10 +88,18 @@ public class TeamsController(
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> TerminateMember(
         [FromRoute] Guid teamId,
-        [FromBody] TerminateMembershipRequest request)
+        [FromBody] TerminateMembershipRequest request,
+        [FromServices] IValidator<TerminateMembershipRequest> validator)
     {
         _logger.LogInformation("Executing TerminateMember action for Team {TeamId}, User {Email}.",
             teamId, request.UserEmail.MaskEmail());
+
+        var validationResult = await validator.ValidateAsync(request);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation failed for TerminateMembershipRequest: {Errors}.", validationResult.Errors);
+            return BadRequest(validationResult.Errors);
+        }
 
         // Mapping route data and request DTO to the command
         var command = new TerminateMembershipCommand(

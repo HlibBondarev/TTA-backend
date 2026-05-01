@@ -118,7 +118,7 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         await SeedMembershipAsync(Guid.NewGuid(), teamId, victimUserId, (int)TeamRole.Player);
         await SeedAccessPolicyAsync(victimUserId, (int)TargetScope.Team, teamId, (int)AppRole.Viewer);
 
-        var request = new TerminateMembershipRequest(victimEmail, TeamRole.Player, DateTime.UtcNow);
+        var request = new TerminateMembershipRequest(victimEmail, TeamRole.Player, DateTime.UtcNow.AddHours(1));
 
         // Act
         var httpRequest = new HttpRequestMessage(HttpMethod.Delete, $"/api/teams/{teamId}/members/terminate")

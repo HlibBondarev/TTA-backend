@@ -5,12 +5,12 @@ using TTA.BusinessLogic.Features.Rosters.Validators;
 namespace TTA.BusinessLogic.Tests.Features.Rosters.Validators;
 
 /// <summary>
-/// Unit tests for <see cref="AddPlayerToRosterValidator"/> ensuring all 
+/// Unit tests for <see cref="AddPlayerToRosterRequestValidator"/> ensuring all 
 /// business rules for roster requests are strictly enforced.
 /// </summary>
 public class AddPlayerToRosterValidatorTests
 {
-    private readonly AddPlayerToRosterValidator _validator = new();
+    private readonly AddPlayerToRosterRequestValidator _validator = new();
 
     /// <summary>
     /// Verifies that a valid request passes all validation rules.

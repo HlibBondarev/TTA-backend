@@ -810,3 +810,199 @@ BEGIN
     WHERE m.id = p_id;
 END;
 $$ LANGUAGE plpgsql;
+
+-- =============================================================
+-- MATCHLINEUP MANAGEMENT FUNCTIONS
+-- =============================================================
+/**********************************************************************************
+ * Upserts a player into the match lineup with full business rule validation.
+ * * Validations:
+ * 1. SQLSTATE 'P0001': Ensures player belongs to one of the teams in the match.
+ * 2. SQLSTATE 'P0003': Validates team lineup limit for the match configuration.
+ * 3. SQLSTATE '23505': Managed by database unique constraint on (matchid, playerrosterid).
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.upsert_match_lineup(
+    p_id UUID,
+    p_matchid UUID,
+    p_playerrosterid UUID,
+    p_number INT,
+    p_isinstartinglineup BOOLEAN,
+    p_positionid UUID
+)
+RETURNS SETOF public.matchlineups AS $$
+DECLARE
+    v_sport_id UUID;
+    v_lineup_limit INT;
+    v_current_count INT;
+    v_team_id UUID;
+    v_final_id UUID := COALESCE(p_id, gen_random_uuid());
+BEGIN
+    -- 1. Resolve the team ID from the tournament roster
+    SELECT teamid INTO v_team_id FROM public.playerrosters WHERE id = p_playerrosterid;
+
+    -- 2. Validation: Ensure the player belongs to either the Home or Guest team of the match
+    IF NOT EXISTS (
+        SELECT 1 FROM public.matches 
+        WHERE id = p_matchid AND (hometeamid = v_team_id OR guestteamid = v_team_id)
+    ) THEN
+        RAISE EXCEPTION 'Player does not belong to any team participating in this match.' USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 3. Validation: Check lineup limit (only for new entries)
+    -- We check if the ID exists. If not, it's a new entry that might exceed the limit.
+    IF NOT EXISTS (SELECT 1 FROM public.matchlineups WHERE id = v_final_id) THEN
+        SELECT t.sportid, sc.lineuplimit INTO v_sport_id, v_lineup_limit
+        FROM public.matches m
+        JOIN public.tournaments t ON m.tournamentid = t.id
+        JOIN public.sportconfigurations sc ON t.configurationid = sc.id
+        WHERE m.id = p_matchid;
+
+        SELECT COUNT(*) INTO v_current_count 
+        FROM public.matchlineups ml
+        JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+        WHERE ml.matchid = p_matchid AND pr.teamid = v_team_id;
+
+        IF v_current_count >= v_lineup_limit THEN
+            RAISE EXCEPTION 'Team lineup limit exceeded for Match %.', p_matchid USING ERRCODE = 'P0003';
+        END IF;
+    END IF;
+
+    -- 4. Atomic Upsert using ON CONFLICT
+    RETURN QUERY
+    INSERT INTO public.matchlineups (
+        id, matchid, playerrosterid, number, isinstartinglineup, positionid
+    )
+    VALUES (
+        v_final_id, p_matchid, p_playerrosterid, p_number, p_isinstartinglineup, p_positionid
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        number = EXCLUDED.number,
+        isinstartinglineup = EXCLUDED.isinstartinglineup,
+        positionid = EXCLUDED.positionid
+    RETURNING *;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves the full match lineup with player and position details.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_lineup(p_matchid UUID)
+RETURNS TABLE (
+    id UUID,
+    matchid UUID,
+    playerrosterid UUID,
+    teamid UUID,
+    firstname VARCHAR,
+    lastname VARCHAR,
+    number INT,
+    isinstartinglineup BOOLEAN,
+    positionid UUID,
+    positionname VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        ml.id, ml.matchid, ml.playerrosterid, pr.teamid,
+        p.firstname, p.lastname, ml.number, ml.isinstartinglineup,
+        ml.positionid, ppd.name
+    FROM public.matchlineups ml
+    JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    JOIN public.players p ON pr.playerid = p.id
+    JOIN public.playerpositiondefinitions ppd ON ml.positionid = ppd.id
+    WHERE ml.matchid = p_matchid
+    ORDER BY pr.teamid, ml.number;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Removes a player from the match lineup.
+ * Returns the number of rows affected (1 if deleted, 0 if not found).
+ * Due to ON DELETE CASCADE settings, related records in playerpresences 
+ * are removed automatically.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.delete_match_lineup_item(p_id UUID)
+RETURNS INT AS $$
+DECLARE
+    v_affected_count INT;
+BEGIN
+    DELETE FROM public.matchlineups
+    WHERE id = p_id;
+    
+    GET DIAGNOSTICS v_affected_count = ROW_COUNT;
+    RETURN v_affected_count;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Bulk copies all players from a team's tournament roster to a match protocol.
+ * Initialized with roster defaults: jersey number, position, and starting flag = FALSE.
+ * Uses ON CONFLICT to skip players already present in the match lineup.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.copy_team_roster_to_match_lineup(
+    p_matchid UUID,
+    p_teamid UUID
+)
+RETURNS INT AS $$
+DECLARE
+    v_inserted_count INT;
+    v_tournamentid UUID;
+BEGIN
+    -- Resolve tournament ID directly from the match record to ensure roster scope validity
+    SELECT tournamentid INTO v_tournamentid FROM public.matches WHERE id = p_matchid;
+
+    -- Perform bulk insert from roster
+    INSERT INTO public.matchlineups (
+        id, matchid, playerrosterid, number, isinstartinglineup, positionid
+    )
+    SELECT 
+        gen_random_uuid(), 
+        p_matchid, 
+        pr.id, 
+        pr.number, 
+        FALSE, 
+        pr.positionid 
+    FROM public.playerrosters pr
+    WHERE pr.teamid = p_teamid AND pr.tournamentid = v_tournamentid
+    -- This prevents errors if the roster is partially or fully copied multiple times
+    ON CONFLICT (matchid, playerrosterid) DO NOTHING;
+
+    -- Capture the number of new records created
+    GET DIAGNOSTICS v_inserted_count = ROW_COUNT;
+    RETURN v_inserted_count;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves a single match lineup record by its unique identifier.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_lineup_by_id(p_id UUID)
+RETURNS SETOF public.matchlineups AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM public.matchlineups WHERE id = p_id;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves a single match lineup record with joined player and position details.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_lineup_details_by_id(p_id UUID)
+RETURNS TABLE (
+    id UUID,
+    matchid UUID,
+    playerrosterid UUID,
+    teamid UUID,
+    firstname VARCHAR,
+    lastname VARCHAR,
+    number INT,
+    isinstartinglineup BOOLEAN,
+    positionid UUID,
+    positionname VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        ml.id, ml.matchid, ml.playerrosterid, pr.teamid,
+        p.firstname, p.lastname, ml.number, ml.isinstartinglineup,
+        ml.positionid, ppd.name
+    FROM public.matchlineups ml
+    JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    JOIN public.players p ON pr.playerid = p.id
+    JOIN public.playerpositiondefinitions ppd ON ml.positionid = ppd.id
+    WHERE ml.id = p_id;
+END;$$ LANGUAGE plpgsql;
