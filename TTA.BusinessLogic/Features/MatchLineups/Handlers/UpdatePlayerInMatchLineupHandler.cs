@@ -59,9 +59,14 @@ public class UpdatePlayerInMatchLineupHandler(
             _logger.LogWarning(ex, "Update failed: Unique constraint violation for lineup entry {Id}.", request.Id);
             throw new ConflictException("This player is already registered in the lineup for this match.", ex);
         }
+        catch (PostgresException ex) when (ex.SqlState == "P0003") // Custom error: Lineup limit exceeded
+        {
+            _logger.LogWarning(ex, "Update failed: Team lineup limit exceeded for Match {MatchId}.", existingModel.MatchId);
+            throw new ConflictException(ex.MessageText, ex);
+        }
         catch (PostgresException ex) when (ex.SqlState == "P0001") // Custom error: Ineligible player
         {
-            _logger.LogWarning(ex, "Lineup creation failed: Player {PlayerRosterId} does not belong to match teams.", existingModel.PlayerRosterId);
+            _logger.LogWarning(ex, "Lineup update failed: Player {PlayerRosterId} does not belong to match teams.", existingModel.PlayerRosterId);
             throw new ConflictException("The player does not belong to any team participating in this match.", ex);
         }
     }
