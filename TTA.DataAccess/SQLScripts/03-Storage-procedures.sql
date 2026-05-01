@@ -889,8 +889,8 @@ CREATE OR REPLACE FUNCTION public.get_match_lineup(p_matchid UUID)
 RETURNS TABLE (
     id UUID,
     matchid UUID,
-    playerrosterid UUID,
     teamid UUID,
+    playerrosterid UUID,
     firstname VARCHAR,
     lastname VARCHAR,
     number INT,
@@ -985,8 +985,8 @@ CREATE OR REPLACE FUNCTION public.get_match_lineup_details_by_id(p_id UUID)
 RETURNS TABLE (
     id UUID,
     matchid UUID,
-    playerrosterid UUID,
     teamid UUID,
+    playerrosterid UUID,
     firstname VARCHAR,
     lastname VARCHAR,
     number INT,

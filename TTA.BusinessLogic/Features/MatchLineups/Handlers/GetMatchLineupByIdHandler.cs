@@ -42,8 +42,8 @@ public class GetMatchLineupByIdHandler(
         return new MatchLineupResponse(
             Id: result.id,
             MatchId: result.matchid,
-            PlayerRosterId: result.playerrosterid,
             TeamId: result.teamid,
+            PlayerRosterId: result.playerrosterid,
             FirstName: result.firstname,
             LastName: result.lastname,
             Number: result.number,

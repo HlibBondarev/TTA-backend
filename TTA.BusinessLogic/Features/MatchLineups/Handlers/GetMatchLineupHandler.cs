@@ -46,8 +46,8 @@ public class GetMatchLineupHandler(
         var response = rawLineup.Select(row => new MatchLineupResponse(
             Id: row.id,
             MatchId: row.matchid,
-            PlayerRosterId: row.playerrosterid,
             TeamId: row.teamid,
+            PlayerRosterId: row.playerrosterid,
             FirstName: row.firstname,
             LastName: row.lastname,
             Number: row.number,
