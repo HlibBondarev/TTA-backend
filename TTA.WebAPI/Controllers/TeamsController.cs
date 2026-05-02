@@ -79,12 +79,14 @@ public class TeamsController(
     /// <param name="teamId">The unique identifier of the team.</param>
     /// <param name="request">The termination details including user email and role.</param>
     /// <param name="validator">The request validator.</param>
-    /// <returns>No content if successful.</returns>
+    /// <returns>A status indicating the result of the operation.</returns>
     /// <response code="204">If the membership was successfully terminated.</response>
+    /// <response code="400">Validation failed or invalid request data.</response>
     /// <response code="404">If the active membership was not found for the given email and role.</response>
     [HttpDelete("{teamId:guid}/members/terminate")]
     [Authorize(Policy = "TeamAdmin")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> TerminateMember(
         [FromRoute] Guid teamId,
