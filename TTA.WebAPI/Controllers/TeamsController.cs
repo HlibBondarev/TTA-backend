@@ -97,10 +97,18 @@ public class TeamsController(
             teamId, request.UserEmail.MaskEmail());
 
         var validationResult = await validator.ValidateAsync(request);
+
         if (!validationResult.IsValid)
         {
             _logger.LogWarning("Validation failed for TerminateMembershipRequest: {Errors}.", validationResult.Errors);
-            return BadRequest(validationResult.Errors);
+
+            // Map FluentValidation errors to ModelState to produce a standard ValidationProblemDetails response
+            foreach (var error in validationResult.Errors)
+            {
+                ModelState.AddModelError(error.PropertyName, error.ErrorMessage);
+            }
+
+            return ValidationProblem(ModelState);
         }
 
         // Mapping route data and request DTO to the command
