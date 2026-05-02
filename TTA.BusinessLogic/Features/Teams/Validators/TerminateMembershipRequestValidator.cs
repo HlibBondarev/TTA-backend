@@ -1,14 +1,13 @@
 ﻿using FluentValidation;
-using TTA.BusinessLogic.Features.Teams.Commands;
+using TTA.BusinessLogic.Features.Teams.DTOs;
 
 namespace TTA.BusinessLogic.Features.Teams.Validators;
 
-public class TerminateMembershipCommandValidator : AbstractValidator<TerminateMembershipCommand>
+public class TerminateMembershipRequestValidator : AbstractValidator<TerminateMembershipRequest>
 {
-    public TerminateMembershipCommandValidator()
+    public TerminateMembershipRequestValidator()
     {
         RuleFor(x => x.UserEmail).NotEmpty().EmailAddress();
-        RuleFor(x => x.TeamId).NotEmpty();
         RuleFor(x => x.RoleInTeam).IsInEnum();
 
         RuleFor(x => x.LeftAt)

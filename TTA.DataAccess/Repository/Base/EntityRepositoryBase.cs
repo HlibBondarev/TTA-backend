@@ -114,28 +114,18 @@ public abstract class EntityRepositoryBase<TKey, TEntity>(IDbConnectionFactory c
     /// <inheritdoc />
     public async Task<bool> Delete(TKey id, string sqlText, CancellationToken cancellationToken = default)
     {
-        using var connection = GetConnection();
-        if (connection is NpgsqlConnection npgsqlConn) await npgsqlConn.OpenAsync(cancellationToken);
-        else connection.Open();
+        var parameters = new DynamicParameters();
+        parameters.Add(KeyParamName, id);
 
-        using var transaction = connection.BeginTransaction();
+        using var connection = await OpenConnectionAsync(cancellationToken);
 
-        try
-        {
-            var parameters = new DynamicParameters();
-            parameters.Add(KeyParamName, id);
+        // ExecuteScalarAsync retrieves the first column of the first row (our INT return)
+        var result = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+            sqlText,
+            parameters,
+            cancellationToken: cancellationToken));
 
-            var command = new CommandDefinition(sqlText, parameters, transaction, commandType: CommandType.Text, cancellationToken: cancellationToken);
-            var affectedRows = await connection.ExecuteAsync(command);
-
-            transaction.Commit();
-            return affectedRows > 0;
-        }
-        catch
-        {
-            transaction.Rollback();
-            return false;
-        }
+        return result > 0;
     }
 
     /// <inheritdoc />

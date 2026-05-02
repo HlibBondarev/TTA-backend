@@ -186,18 +186,18 @@ public class GameEventTests
     }
 
     [Fact]
-    public void GameEvent_PlayerId_IsNullable_AndDefaultsToNull()
+    public void GameEvent_MatchLineupId_IsNullable_AndDefaultsToNull()
     {
         var gameEvent = new GameEvent();
-        Assert.Null(gameEvent.PlayerId);
+        Assert.Null(gameEvent.MatchLineupId);
     }
 
     [Fact]
-    public void GameEvent_PlayerId_CanBeSetToValue()
+    public void GameEvent_MatchLineupId_CanBeSetToValue()
     {
-        var playerId = Guid.NewGuid();
-        var gameEvent = new GameEvent { PlayerId = playerId };
-        Assert.Equal(playerId, gameEvent.PlayerId);
+        var matchLineupId = Guid.NewGuid();
+        var gameEvent = new GameEvent { MatchLineupId = matchLineupId };
+        Assert.Equal(matchLineupId, gameEvent.MatchLineupId);
     }
 
     [Fact]
@@ -386,11 +386,11 @@ public class MatchLineupTests
     }
 
     [Fact]
-    public void MatchLineup_PlayerId_CanBeSetAndRetrieved()
+    public void MatchLineup_PlayerRosterId_CanBeSetAndRetrieved()
     {
-        var playerId = Guid.NewGuid();
-        var lineup = new MatchLineup { PlayerId = playerId };
-        Assert.Equal(playerId, lineup.PlayerId);
+        var playerRosterId = Guid.NewGuid();
+        var lineup = new MatchLineup { PlayerRosterId = playerRosterId };
+        Assert.Equal(playerRosterId, lineup.PlayerRosterId);
     }
 
     [Fact]
@@ -616,11 +616,11 @@ public class PlayerPresenceTests
     }
 
     [Fact]
-    public void PlayerPresence_PlayerId_CanBeSetAndRetrieved()
+    public void PlayerPresence_MatchLineupId_CanBeSetAndRetrieved()
     {
-        var playerId = Guid.NewGuid();
-        var presence = new PlayerPresence { PlayerId = playerId };
-        Assert.Equal(playerId, presence.PlayerId);
+        var matchLineupId = Guid.NewGuid();
+        var presence = new PlayerPresence { MatchLineupId = matchLineupId };
+        Assert.Equal(matchLineupId, presence.MatchLineupId);
     }
 
     [Fact]

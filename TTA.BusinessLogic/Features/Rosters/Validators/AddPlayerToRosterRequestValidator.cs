@@ -6,12 +6,12 @@ namespace TTA.BusinessLogic.Features.Rosters.Validators;
 /// <summary>
 /// Validator for <see cref="AddPlayerToRosterRequest"/> to ensure data integrity before processing.
 /// </summary>
-public class AddPlayerToRosterValidator : AbstractValidator<AddPlayerToRosterRequest>
+public class AddPlayerToRosterRequestValidator : AbstractValidator<AddPlayerToRosterRequest>
 {
     /// <summary>
     /// Initializes validation rules for the roster request.
     /// </summary>
-    public AddPlayerToRosterValidator()
+    public AddPlayerToRosterRequestValidator()
     {
         RuleFor(x => x.PlayerId)
             .NotEmpty().WithMessage("Player identifier is required.");

@@ -233,4 +233,54 @@ public static class SqlStatements
         public const string GetMatchWithDetailsById =
             "SELECT * FROM public.get_match_with_details_by_id(@p_id)";
     }
+
+    /// <summary>
+    /// Contains SQL command constants for Match Lineups operations.
+    /// All commands execute stored procedures defined in the database schema.
+    /// </summary>
+    public static class ForMatchLineups
+    {
+        /// <summary>
+        /// Executes upsert operation for a single match lineup entry.
+        /// </summary>
+        public const string UpsertLineupItem = @"
+        SELECT * FROM public.upsert_match_lineup(
+            @Id, @MatchId, @PlayerRosterId, @Number, @IsInStartingLineup, @PositionId
+        );";
+
+        /// <summary>
+        /// Retrieves the full protocol (lineup) for a specific match.
+        /// </summary>
+        public const string GetMatchLineup = @"
+        SELECT * FROM public.get_match_lineup(@p_id);";
+
+        /// <summary>
+        /// Removes a specific player from the match protocol.
+        /// </summary>
+        /// <summary>
+        /// Removes a specific player from the match protocol using a storage function.
+        /// </summary>
+        public const string DeleteLineupItem = "SELECT public.delete_match_lineup_item(@p_id);";
+
+        /// <summary>
+        /// Performs bulk copy of players from tournament roster to match lineup.
+        /// </summary>
+        public const string CopyRosterToLineup = @"
+        SELECT public.copy_team_roster_to_match_lineup(@p_matchid, @p_teamid);";
+
+        /// <summary>
+        /// Executes the function to retrieve a raw match lineup record by its ID.
+        /// </summary>
+        public const string GetById = @"SELECT * FROM public.get_match_lineup_by_id(@p_id);";
+
+        /// <summary>
+        /// Executes the function to retrieve a match lineup entry with enriched player and position data.
+        /// </summary>
+        public const string GetByIdWithDetails = @"SELECT * FROM public.get_match_lineup_details_by_id(@p_id);";
+
+        /// <summary>
+        /// Executes the function to check if a lineup entry is linked to any game events.
+        /// </summary>
+        public const string CheckHasEvents = "SELECT public.check_match_lineup_has_events(@p_id);";
+    }
 }

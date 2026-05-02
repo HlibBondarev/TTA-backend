@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
@@ -118,7 +119,7 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         await SeedMembershipAsync(Guid.NewGuid(), teamId, victimUserId, (int)TeamRole.Player);
         await SeedAccessPolicyAsync(victimUserId, (int)TargetScope.Team, teamId, (int)AppRole.Viewer);
 
-        var request = new TerminateMembershipRequest(victimEmail, TeamRole.Player, DateTime.UtcNow);
+        var request = new TerminateMembershipRequest(victimEmail, TeamRole.Player, DateTime.UtcNow.AddHours(1));
 
         // Act
         var httpRequest = new HttpRequestMessage(HttpMethod.Delete, $"/api/teams/{teamId}/members/terminate")
@@ -199,6 +200,41 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// Verifies that the endpoint returns <see cref="ValidationProblemDetails"/> (RFC 7807)
+    /// when the request body contains invalid data, provided the user has sufficient permissions.
+    /// </summary>
+    [Fact]
+    public async Task TerminateMember_ShouldReturnValidationProblemDetails_WhenRequestIsInvalid()
+    {
+        // Arrange
+        var teamId = Guid.NewGuid();
+        var clubId = Guid.NewGuid();
+
+        // We MUST seed the team and access policy first. 
+        // Otherwise, the Authorization Middleware returns 403 Forbidden before reaching validation logic.
+        await SeedFullContextAsync(teamId, clubId);
+
+        var invalidRequest = new TerminateMembershipRequest("", TeamRole.Player, null);
+
+        // Act
+        var httpRequest = new HttpRequestMessage(HttpMethod.Delete, $"/api/teams/{teamId}/members/terminate")
+        {
+            Content = JsonContent.Create(invalidRequest)
+        };
+        var response = await Client.SendAsync(httpRequest);
+
+        // Assert
+        // Now that the user is authorized for the team, we expect a 400 Bad Request from validation[cite: 3, 5].
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var details = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+        details.Should().NotBeNull();
+
+        // Ensure the error key matches the property name in the request DTO[cite: 3]
+        details!.Errors.Should().ContainKey("UserEmail");
     }
 
     #endregion
