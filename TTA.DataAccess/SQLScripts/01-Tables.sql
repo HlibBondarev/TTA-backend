@@ -214,7 +214,9 @@ CREATE TABLE matchlineups (
     positionid UUID NOT NULL REFERENCES playerpositiondefinitions(id),
     
     -- Ensures a player cannot be added to the same match lineup more than once
-    CONSTRAINT uix_matchlineups_match_player UNIQUE (matchid, playerrosterid)
+    CONSTRAINT uix_matchlineups_match_player UNIQUE (matchid, playerrosterid),
+
+    CONSTRAINT uix_matchlineups_id_match UNIQUE (id, matchid)
 );
 
 -- Index for fast lookup of all players in a specific match
@@ -251,25 +253,34 @@ CREATE TABLE gameevents (
     matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
     -- Linked to match protocol. NULL allowed for team-wide events (e.g., timeouts)
     -- Refactored: Use ON DELETE RESTRICT to prevent losing attribution to events
-    matchlineupid UUID NULL REFERENCES matchlineups(id) ON DELETE RESTRICT,
+    matchlineupid UUID NULL,
     eventdefinitionid UUID NOT NULL REFERENCES eventdefinitions(id),
     periodnumber INT NOT NULL,
     eventtimestamp TIMESTAMPTZ NOT NULL,
     normalizedmatchtime INTERVAL NULL,
     isleadtogoal BOOLEAN NOT NULL DEFAULT FALSE, 
-    createdat TIMESTAMPTZ NOT NULL
+    createdat TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT fk_gameevents_matchlineup_match
+        FOREIGN KEY (matchlineupid, matchid)
+        REFERENCES public.matchlineups (id, matchid) ON DELETE RESTRICT
 );
 
 CREATE TABLE playerpresences (
     id UUID PRIMARY KEY,
     matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
     -- Updated to track match-specific protocol ID
-    matchlineupid UUID NOT NULL REFERENCES matchlineups(id) ON DELETE CASCADE,
+    matchlineupid UUID NOT NULL,
     periodnumber INT NOT NULL,
     timein TIMESTAMPTZ NOT NULL,
     timeout TIMESTAMPTZ NULL,
+
     CONSTRAINT chk_playerpresences_timeout_after_timein 
-        CHECK (timeout IS NULL OR timeout >= timein)
+        CHECK (timeout IS NULL OR timeout >= timein),
+
+    CONSTRAINT fk_playerpresences_matchlineup_match
+        FOREIGN KEY (matchlineupid, matchid)
+        REFERENCES public.matchlineups (id, matchid) ON DELETE CASCADE
 );
 
 -- Indices for playerpresences to optimize joins and integrity checks
