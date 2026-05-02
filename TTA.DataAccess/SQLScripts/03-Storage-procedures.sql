@@ -835,12 +835,22 @@ DECLARE
     v_lineup_limit INT;
     v_current_count INT;
     v_team_id UUID;
+    v_tournament_id UUID;
+    v_roster_tournament_id UUID;
     v_final_id UUID := COALESCE(p_id, gen_random_uuid());
 BEGIN
-    -- 1. Resolve the team ID from the tournament roster
-    SELECT teamid INTO v_team_id FROM public.playerrosters WHERE id = p_playerrosterid;
+    -- 1. Resolve IDs and Tournament context
+    SELECT teamid, tournamentid INTO v_team_id, v_roster_tournament_id 
+    FROM public.playerrosters WHERE id = p_playerrosterid;
+    
+    SELECT tournamentid INTO v_tournament_id FROM public.matches WHERE id = p_matchid;
 
-    -- 2. Validation: Ensure the player belongs to either the Home or Guest team of the match
+    -- 2. Validation: Tournament integrity
+    IF v_tournament_id <> v_roster_tournament_id THEN
+        RAISE EXCEPTION 'Player roster entry belongs to a different tournament.' USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 3. Validation: Match participation
     IF NOT EXISTS (
         SELECT 1 FROM public.matches 
         WHERE id = p_matchid AND (hometeamid = v_team_id OR guestteamid = v_team_id)
@@ -848,10 +858,12 @@ BEGIN
         RAISE EXCEPTION 'Player does not belong to any team participating in this match.' USING ERRCODE = 'P0001';
     END IF;
 
-    -- 3. Validation: Check lineup limit (only for new entries)
-    -- We check if the ID exists. If not, it's a new entry that might exceed the limit.
+    -- 4. Concurrency Protection & Lineup Limit Check
+    -- Lock is scoped to the specific Match + Team combination to prevent race conditions
+    PERFORM pg_advisory_xact_lock(hashtext(p_matchid::text), hashtext(v_team_id::text));
+
     IF NOT EXISTS (SELECT 1 FROM public.matchlineups WHERE id = v_final_id) THEN
-        SELECT t.sportid, sc.lineuplimit INTO v_sport_id, v_lineup_limit
+        SELECT sc.lineuplimit INTO v_lineup_limit
         FROM public.matches m
         JOIN public.tournaments t ON m.tournamentid = t.id
         JOIN public.sportconfigurations sc ON t.configurationid = sc.id
@@ -867,7 +879,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- 4. Atomic Upsert using ON CONFLICT
+    -- 5. Atomic Upsert
     RETURN QUERY
     INSERT INTO public.matchlineups (
         id, matchid, playerrosterid, number, isinstartinglineup, positionid
@@ -957,18 +969,20 @@ BEGIN
         USING ERRCODE = 'P0001';
     END IF;
 
-    -- 2. Get lineup limit for the match
+    -- 2. Concurrency Protection
+    PERFORM pg_advisory_xact_lock(hashtext(p_matchid::text), hashtext(p_teamid::text));
+
+    -- 3. Get lineup limit and current status
     SELECT sc.lineuplimit INTO v_lineup_limit
     FROM public.matches m
     JOIN public.tournaments t ON m.tournamentid = t.id
     JOIN public.sportconfigurations sc ON t.configurationid = sc.id
     WHERE m.id = p_matchid;
 
-    -- 3. Calculate how many players we want to add vs how many we can
     SELECT COUNT(*) INTO v_roster_count
     FROM public.playerrosters pr
     WHERE pr.teamid = p_teamid AND pr.tournamentid = v_tournamentid
-    AND NOT EXISTS ( -- Only count players not already in the lineup
+    AND NOT EXISTS (
         SELECT 1 FROM public.matchlineups ml 
         WHERE ml.matchid = p_matchid AND ml.playerrosterid = pr.id
     );
@@ -983,7 +997,7 @@ BEGIN
         USING ERRCODE = 'P0003';
     END IF;
 
-    -- 4. Perform efficient bulk insert
+    -- 4. Bulk insert
     INSERT INTO public.matchlineups (
         id, matchid, playerrosterid, number, isinstartinglineup, positionid
     )
