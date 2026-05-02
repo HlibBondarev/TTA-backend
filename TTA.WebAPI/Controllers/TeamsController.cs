@@ -45,7 +45,7 @@ public class TeamsController(
     [HttpPost("{teamId:guid}/members")]
     [Authorize(Policy = "TeamAdmin")]
     [ProducesResponseType(typeof(TeamMembership), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> AddMember(
@@ -59,7 +59,11 @@ public class TeamsController(
         if (!validationResult.IsValid)
         {
             _logger.LogWarning("Validation failed for AddTeamMemberRequest: {Errors}.", validationResult.Errors);
-            return BadRequest(validationResult.Errors);
+            foreach (var error in validationResult.Errors)
+            {
+                ModelState.AddModelError(error.PropertyName, error.ErrorMessage);
+            }
+            return ValidationProblem(ModelState);
         }
 
         var command = new AddTeamMemberCommand(
@@ -82,11 +86,15 @@ public class TeamsController(
     /// <returns>A status indicating the result of the operation.</returns>
     /// <response code="204">If the membership was successfully terminated.</response>
     /// <response code="400">Validation failed or invalid request data.</response>
+    /// <response code="401">If the user is not authenticated.</response>
+    /// <response code="403">If the user does not have permission to manage this team.</response>
     /// <response code="404">If the active membership was not found for the given email and role.</response>
     [HttpDelete("{teamId:guid}/members/terminate")]
     [Authorize(Policy = "TeamAdmin")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> TerminateMember(
         [FromRoute] Guid teamId,
