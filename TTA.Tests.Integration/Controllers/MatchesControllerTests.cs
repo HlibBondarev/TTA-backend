@@ -375,26 +375,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     #region Helpers
 
-    private async Task<Guid> SeedPlayerAsync(string first, string last)
-    {
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
-        var id = Guid.NewGuid();
-        await conn.ExecuteAsync(
-            "INSERT INTO players (id, firstname, lastname, birthdate, createdat) VALUES (@id, @first, @last, '2000-01-01', now())",
-            new { id, first, last });
-        return id;
-    }
-
-    private async Task<Guid> SeedPlayerRosterAsync(Guid teamId, Guid tournamentId, Guid playerId)
-    {
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
-        var id = Guid.NewGuid();
-        await conn.ExecuteAsync(
-            "INSERT INTO playerrosters (id, teamid, tournamentid, playerid, number, createdat) VALUES (@id, @teamId, @tournamentId, @playerId, 10, now())",
-            new { id, teamId, tournamentId, playerId });
-        return id;
-    }
-
     private async Task<(Guid TournamentId, Guid CityId, Guid SportId)> SetupTournamentContextAsync(string ownerId)
     {
         await SeedUserAsync(ownerId);

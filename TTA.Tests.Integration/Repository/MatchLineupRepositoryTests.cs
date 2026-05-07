@@ -485,33 +485,6 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
         return (matchId, rosterId, positionId);
     }
 
-    private async Task<(Guid MatchId, Guid TeamId, int RosterCount)> SeedMatchWithTeamRosterAsync(int count)
-    {
-        var (matchId, _, positionId) = await SeedMatchLineupRequirementsAsync();
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
-
-        var match = await conn.QuerySingleAsync<dynamic>("SELECT tournamentid, hometeamid FROM matches WHERE id = @id", new { id = matchId });
-        Guid tid = match.tournamentid;
-        Guid teamId = match.hometeamid;
-        Guid clubId = await conn.ExecuteScalarAsync<Guid>("SELECT clubid FROM teams WHERE id = @teamId", new { teamId });
-
-        for (int i = 1; i < count; i++)
-        {
-            var pid = Guid.NewGuid();
-            await conn.ExecuteAsync(@"
-                INSERT INTO players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) 
-                VALUES (@id, @clubId, 'Player', @l, '2000-01-01', 0, now())",
-                new { id = pid, clubId, l = i.ToString() });
-
-            await conn.ExecuteAsync(@"
-                INSERT INTO playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) 
-                VALUES (@id, @pid, @tid, @teamid, @num, @posId, now())",
-                new { id = Guid.NewGuid(), pid, tid, teamid = teamId, num = i + 20, posId = positionId });
-        }
-
-        return (matchId, teamId, count);
-    }
-
     /// <summary>
     /// Seeds a game event record linked to a match lineup entry using the exact database schema.
     /// Ensures all mandatory foreign keys (sportid, eventdefinitionid) are valid.

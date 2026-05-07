@@ -126,11 +126,13 @@ public class MatchesController(
     /// <param name="request">The request body containing the list of selected player roster IDs.</param>
     /// <returns>The number of players successfully added to the match lineup.</returns>
     /// <response code="200">Returns the number of players added to the match lineup.</response>
+    /// <response code="400">If the request data is invalid or validation fails.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user is not the owner of the tournament.</response>
     /// <response code="404">If the match or team was not found.</response>
     [HttpPost("{matchId:guid}/teams/{teamId:guid}/lineup/copy")]
     [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -141,6 +143,14 @@ public class MatchesController(
     {
         _logger.LogInformation("Requested bulk copy of {Count} selected players for Team {TeamId} into Match {MatchId}.",
             request.PlayerRosterIds.Count(), teamId, matchId);
+
+        // Verify that the team is actually a participant in this specific match
+        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId));
+        if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
+        {
+            _logger.LogWarning("Access denied: Team {TeamId} is not part of Match {MatchId}.", teamId, matchId);
+            return BadRequest("The specified team is not a participant in this match.");
+        }
 
         // Validate tournament ownership before proceeding with the operation
         var validationResult = await ValidateTournamentOwnership(matchId);
@@ -167,12 +177,14 @@ public class MatchesController(
     /// <param name="request">The request body containing selected player roster IDs.</param>
     /// <returns>The number of players successfully added to the match lineup.</returns>
     /// <response code="200">Returns the count of players added.</response>
+    /// <response code="400">If the request data is invalid or validation fails.</response>
     /// <response code="401">If the request is not authenticated.</response>
     /// <response code="403">If the user is not authorized as a Team Editor for this team.</response>
     /// <response code="404">If the match or team is not found.</response>
     [Authorize(Policy = "TeamEditor")]
     [HttpPost("{matchId:guid}/teams/{teamId:guid}/lineup/copy-by-team")]
     [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
