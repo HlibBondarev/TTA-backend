@@ -33,22 +33,22 @@ public class CopyTeamRosterToMatchLineupHandlerTests
     }
 
     /// <summary>
-    /// Verifies that when a valid match exists, the handler calls the repository 
-    /// and returns the count of inserted records.
+    /// Verifies that the handler calls the repository with correct parameters and returns the count.
     /// </summary>
     [Fact]
-    public async Task Handle_ValidMatch_ShouldReturnInsertedCount()
+    public async Task Handle_ValidRequest_ShouldReturnInsertedCount()
     {
         // Arrange
-        var command = new CopyTeamRosterToMatchLineupCommand(Guid.NewGuid(), Guid.NewGuid());
-        var expectedCount = 11;
+        var playerIds = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        var command = new CopyTeamRosterToMatchLineupCommand(Guid.NewGuid(), Guid.NewGuid(), playerIds);
+        const int expectedCount = 2;
 
         _matchRepoMock
             .Setup(x => x.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Match { Id = command.MatchId });
 
         _matchLineupRepoMock
-            .Setup(x => x.CopyFromRosterAsync(command.MatchId, command.TeamId, It.IsAny<CancellationToken>()))
+            .Setup(x => x.CopyFromRosterAsync(command.MatchId, command.TeamId, command.PlayerRosterIds, It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedCount);
 
         // Act
@@ -57,7 +57,7 @@ public class CopyTeamRosterToMatchLineupHandlerTests
         // Assert
         result.Should().Be(expectedCount);
         _matchRepoMock.Verify(x => x.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()), Times.Once);
-        _matchLineupRepoMock.Verify(x => x.CopyFromRosterAsync(command.MatchId, command.TeamId, It.IsAny<CancellationToken>()), Times.Once);
+        _matchLineupRepoMock.Verify(x => x.CopyFromRosterAsync(command.MatchId, command.TeamId, command.PlayerRosterIds, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -67,7 +67,7 @@ public class CopyTeamRosterToMatchLineupHandlerTests
     public async Task Handle_NonExistentMatch_ShouldThrowNotFoundException()
     {
         // Arrange
-        var command = new CopyTeamRosterToMatchLineupCommand(Guid.NewGuid(), Guid.NewGuid());
+        var command = new CopyTeamRosterToMatchLineupCommand(Guid.NewGuid(), Guid.NewGuid(), new List<Guid>());
 
         _matchRepoMock
             .Setup(x => x.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
@@ -80,6 +80,8 @@ public class CopyTeamRosterToMatchLineupHandlerTests
         await act.Should().ThrowAsync<NotFoundException>()
             .WithMessage($"Match with ID {command.MatchId} was not found.");
 
-        _matchLineupRepoMock.Verify(x => x.CopyFromRosterAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _matchLineupRepoMock.Verify(x => x.CopyFromRosterAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 }

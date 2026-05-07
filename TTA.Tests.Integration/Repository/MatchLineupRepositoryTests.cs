@@ -205,21 +205,45 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that lineup entries can be bulk-copied from a team's tournament roster.
+    /// Verifies that only selected players from the tournament roster are copied to the match protocol.
     /// </summary>
     [Fact]
-    public async Task CopyFromRosterAsync_ShouldPopulateLineup_FromTeamRoster()
+    public async Task CopyFromRosterAsync_ShouldCopyOnlySelectedPlayers()
     {
         // Arrange
-        var (matchId, teamId, rosterCount) = await SeedMatchWithTeamRosterAsync(3);
+        var (matchId, teamId, tournamentId) = await SeedMatchAsync();
+        var rosterIds = await SeedPlayerRostersAsync(tournamentId, teamId, 3);
+
+        var selectedRosterIds = rosterIds.Take(2).ToList();
 
         // Act
-        var copiedCount = await _repository.CopyFromRosterAsync(matchId, teamId, CancellationToken.None);
+        var result = await _repository.CopyFromRosterAsync(matchId, teamId, selectedRosterIds);
 
         // Assert
-        copiedCount.Should().Be(rosterCount);
-        var result = await _repository.GetByMatchIdAsync(matchId);
-        result.Count().Should().Be(rosterCount);
+        result.Should().Be(2);
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var count = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM public.matchlineups WHERE matchid = @matchId",
+            new { matchId });
+
+        count.Should().Be(2);
+    }
+
+    /// <summary>
+    /// Verifies that zero records are inserted when an empty list of IDs is provided.
+    /// </summary>
+    [Fact]
+    public async Task CopyFromRosterAsync_ShouldReturnZero_WhenSelectionIsEmpty()
+    {
+        // Arrange
+        var (matchId, teamId, _) = await SeedMatchAsync();
+
+        // Act
+        var result = await _repository.CopyFromRosterAsync(matchId, teamId, Enumerable.Empty<Guid>());
+
+        // Assert
+        result.Should().Be(0);
     }
 
     #endregion
@@ -288,6 +312,111 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
     #endregion
 
     #region Seeding Helpers
+
+    /// <summary>
+    /// Seeds a match and all mandatory dependencies strictly following 01-Tables.sql schema.
+    /// Ensures that parent records (User, Country, Region, City, Sport, Teams) exist before dependent ones.
+    /// </summary>
+    private async Task<(Guid MatchId, Guid TeamId, Guid TournamentId)> SeedMatchAsync()
+    {
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var cityId = Guid.NewGuid();
+        var clubId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+        var guestTeamId = Guid.NewGuid();
+        var tournamentId = Guid.NewGuid();
+        var matchId = Guid.NewGuid();
+        var userId = "test-owner";
+
+        // 1. User (Tournament Owner)
+        await conn.ExecuteAsync(@"
+            INSERT INTO users (id, email, displayname, createdat) 
+            VALUES (@userId, 'owner@test.com', 'Tournament Owner', now()) 
+            ON CONFLICT (id) DO NOTHING", new { userId });
+
+        // 2. Geography
+        await conn.ExecuteAsync("INSERT INTO countries (name, code) VALUES ('TestCountry', 'TC') ON CONFLICT (code) DO NOTHING");
+        var countryId = await conn.ExecuteScalarAsync<int>("SELECT id FROM countries WHERE code = 'TC'");
+
+        await conn.ExecuteAsync("INSERT INTO regions (countryid, name) VALUES (@countryId, 'TestRegion') ON CONFLICT (countryid, name) DO NOTHING", new { countryId });
+        var regionId = await conn.ExecuteScalarAsync<int>("SELECT id FROM regions WHERE countryid = @countryId AND name = 'TestRegion'", new { countryId });
+
+        await conn.ExecuteAsync("INSERT INTO cities (id, regionid, name) VALUES (@cityId, @regionId, 'TestCity') ON CONFLICT (regionid, name) DO NOTHING", new { cityId, regionId });
+        var effectiveCityId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM cities WHERE regionid = @regionId AND name = 'TestCity'", new { regionId });
+
+        // 3. Sport & Config
+        await conn.ExecuteAsync("INSERT INTO sports (id, name) VALUES (@sportId, 'Football')", new { sportId });
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+            VALUES (@configId, @sportId, false, 2, 45, 'Standard', 25, 11)",
+            new { configId, sportId });
+
+        // 4. Tournament
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
+            VALUES (@tournamentId, @sportId, @configId, @effectiveCityId, @userId, 'Test Tournament', now(), now())",
+            new { tournamentId, sportId, configId, effectiveCityId, userId });
+
+        // 5. Club
+        await conn.ExecuteAsync("INSERT INTO clubs (id, cityid, name, createdat) VALUES (@clubId, @effectiveCityId, 'Test Club', now())",
+            new { clubId, effectiveCityId });
+
+        // 6. Home and Guest Teams (Both must exist for the match)
+        await conn.ExecuteAsync(@"
+            INSERT INTO teams (id, clubid, sportid, name, gender, createdat) 
+            VALUES (@teamId, @clubId, @sportId, 'Home Team', 0, now())",
+            new { teamId, clubId, sportId });
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO teams (id, clubid, sportid, name, gender, createdat) 
+            VALUES (@guestTeamId, @clubId, @sportId, 'Guest Team', 0, now())",
+            new { guestTeamId, clubId, sportId });
+
+        // 7. Match (Using valid GuestTeamId)
+        await conn.ExecuteAsync(@"
+            INSERT INTO matches (id, tournamentid, hometeamid, guestteamid, scheduledat, createdat)
+            VALUES (@matchId, @tournamentId, @teamId, @guestTeamId, now(), now())",
+            new { matchId, tournamentId, teamId, guestTeamId });
+
+        return (matchId, teamId, tournamentId);
+    }
+
+    /// <summary>
+    /// Seeds player records and tournament roster entries following the schema.
+    /// </summary>
+    private async Task<List<Guid>> SeedPlayerRostersAsync(Guid tournamentId, Guid teamId, int count)
+    {
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var ids = new List<Guid>();
+
+        // Get or create a position definition
+        var positionId = Guid.NewGuid();
+        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM teams WHERE id = @teamId", new { teamId });
+        var clubId = await conn.ExecuteScalarAsync<Guid>("SELECT clubid FROM teams WHERE id = @teamId", new { teamId });
+
+        await conn.ExecuteAsync("INSERT INTO playerpositiondefinitions (id, sportid, name, shortname) VALUES (@positionId, @sportId, 'Forward', 'FW')",
+            new { positionId, sportId });
+
+        for (int i = 0; i < count; i++)
+        {
+            var playerId = Guid.NewGuid();
+            var rosterId = Guid.NewGuid();
+            ids.Add(rosterId);
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) 
+                VALUES (@playerId, @clubId, 'First', @last, '2000-01-01', 0, now())",
+                new { playerId, clubId, last = i.ToString() });
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat)
+                VALUES (@rosterId, @playerId, @tournamentId, @teamId, @num, @positionId, now())",
+                new { rosterId, playerId, tournamentId, teamId, positionId, num = 10 + i });
+        }
+        return ids;
+    }
 
     private async Task<(Guid MatchId, Guid PlayerRosterId, Guid PositionId)> SeedMatchLineupRequirementsAsync()
     {

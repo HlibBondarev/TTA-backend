@@ -39,11 +39,11 @@ public class CopyTeamRosterToMatchLineupHandler(
             throw new NotFoundException($"Match with ID {request.MatchId} was not found.");
         }
 
-        // 2. Execute the batch operation via repository
-        // The repository method name is CopyFromRosterAsync as per the corrected MatchLineupRepository implementation.
+        // 2. Execute the batch operation via repository with the specific selection of players
         int insertedCount = await _matchLineupRepository.CopyFromRosterAsync(
             request.MatchId,
             request.TeamId,
+            request.PlayerRosterIds,
             cancellationToken);
 
         _logger.LogInformation("Successfully added {Count} players to the lineup for Match {MatchId}.",

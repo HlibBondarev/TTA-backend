@@ -3,11 +3,12 @@
 namespace TTA.BusinessLogic.Features.MatchLineups.Commands;
 
 /// <summary>
-/// Command to batch-copy all players from a specific team's tournament roster into the match lineup.
-/// The TournamentId is resolved internally by the system based on the MatchId.
+/// Command to copy selected players from a team's tournament roster to a specific match protocol.
 /// </summary>
-/// <param name="MatchId">The unique identifier of the match where players will be added.</param>
-/// <param name="TeamId">The unique identifier of the team whose roster is being copied.</param>
+/// <param name="MatchId">Target match identifier.</param>
+/// <param name="TeamId">Team identifier.</param>
+/// <param name="PlayerRosterIds">Collection of specific player roster IDs to copy.</param>
 public record CopyTeamRosterToMatchLineupCommand(
     Guid MatchId,
-    Guid TeamId) : IRequest<int>;
+    Guid TeamId,
+    IEnumerable<Guid> PlayerRosterIds) : IRequest<int>;

@@ -255,18 +255,20 @@ public static class SqlStatements
         SELECT * FROM public.get_match_lineup(@p_id);";
 
         /// <summary>
-        /// Removes a specific player from the match protocol.
-        /// </summary>
-        /// <summary>
         /// Removes a specific player from the match protocol using a storage function.
         /// </summary>
         public const string DeleteLineupItem = "SELECT public.delete_match_lineup_item(@p_id);";
 
         /// <summary>
-        /// Performs bulk copy of players from tournament roster to match lineup.
+        /// Executes the bulk copy of specific players from the tournament roster to a match protocol.
+        /// Expected parameters: @p_matchid (UUID), @p_teamid (UUID), @p_player_roster_ids (UUID[]).
         /// </summary>
         public const string CopyRosterToLineup = @"
-        SELECT public.copy_team_roster_to_match_lineup(@p_matchid, @p_teamid);";
+            SELECT public.copy_team_roster_to_match_lineup(
+                @p_matchid, 
+                @p_teamid, 
+                @p_player_roster_ids
+            );";
 
         /// <summary>
         /// Executes the function to retrieve a raw match lineup record by its ID.

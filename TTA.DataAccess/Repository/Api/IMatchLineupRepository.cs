@@ -34,13 +34,18 @@ public interface IMatchLineupRepository : IEntityRepositoryBase<Guid, MatchLineu
     Task<bool> DeleteLineupItemAsync(Guid id, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Performs bulk copy of players from a team's tournament roster to the match lineup.
+    /// Copies selected players from the team's tournament roster to the specific match lineup.
     /// </summary>
-    /// <param name="matchId">Target match identifier.</param>
-    /// <param name="teamId">Team identifier whose roster will be copied.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>The number of records successfully inserted.</returns>
-    Task<int> CopyFromRosterAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default);
+    /// <param name="matchId">The unique identifier of the target match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="playerRosterIds">The list of player roster identifiers to be copied into the match protocol.</param>
+    /// <param name="cancellationToken">Token to monitor for cancellation requests.</param>
+    /// <returns>The number of players successfully added to the match lineup.</returns>
+    Task<int> CopyFromRosterAsync(
+        Guid matchId,
+        Guid teamId,
+        IEnumerable<Guid> playerRosterIds,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves a match lineup record by its unique identifier.
