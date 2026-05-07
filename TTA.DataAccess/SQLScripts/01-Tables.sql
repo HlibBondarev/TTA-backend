@@ -209,7 +209,7 @@ CREATE TABLE matchlineups (
     matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
     -- playerrosterid is now NULLABLE to allow "Team" placeholders (for timeouts, etc.)
     playerrosterid UUID NULL REFERENCES playerrosters(id) ON DELETE CASCADE,
-    number INT NOT NULL, -- Jersey number for this specific match. Will be 0 for team placeholders.
+    number INT NOT NULL, -- Jersey number; -1=Home placeholder, -2=Guest placeholder. Positive values are real player jerseys.
     isinstartinglineup BOOLEAN NOT NULL DEFAULT false,
     -- positionid is NULLABLE for team placeholders
     positionid UUID NULL REFERENCES playerpositiondefinitions(id),

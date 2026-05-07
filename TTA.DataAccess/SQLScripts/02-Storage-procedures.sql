@@ -821,14 +821,20 @@ $$ LANGUAGE plpgsql;
 -- We create two records so that team-specific events (like timeouts) can be attributed correctly
 CREATE OR REPLACE FUNCTION public.fn_create_team_placeholders()
 RETURNS TRIGGER AS $$
+DECLARE
+    -- Sentinel jersey numbers for team-level placeholder lineup rows.
+    -- Kept negative so they can never collide with real jersey numbers
+    -- and are easy to filter out via `number > 0`.
+    c_home_placeholder CONSTANT INT := -1;
+    c_guest_placeholder CONSTANT INT := -2;
 BEGIN
     -- Placeholder for Home Team
     INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid)
-    VALUES (gen_random_uuid(), NEW.id, NULL, -1, false, NULL); -- number -1 = Home
-    
+    VALUES (gen_random_uuid(), NEW.id, NULL, c_home_placeholder, false, NULL);
+
     -- Placeholder for Guest Team
     INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid)
-    VALUES (gen_random_uuid(), NEW.id, NULL, -2, false, NULL); -- number -2 = Guest
+    VALUES (gen_random_uuid(), NEW.id, NULL, c_guest_placeholder, false, NULL);
 
     RETURN NEW;
 END;
