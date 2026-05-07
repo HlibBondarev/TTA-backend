@@ -982,7 +982,7 @@ BEGIN
     WHERE m.id = p_matchid;
 
     -- 4. Calculate total count after potential insertion
-    v_requested_count := array_length(p_player_roster_ids, 1);
+    v_requested_count := cardinality(p_player_roster_ids);
     
     SELECT COUNT(*) INTO v_current_count
     FROM public.matchlineups ml
