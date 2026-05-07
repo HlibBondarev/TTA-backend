@@ -426,7 +426,11 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
                 new { playerId, clubId, last = Guid.NewGuid().ToString()[..8] });
 
             // Use random number to avoid uix_playerrosters_tournament_team_number duplicate key error
-            var playerNumber = Random.Shared.Next(100, 999) + i;
+            // NEW: Deterministic unique jersey number generation.
+            // We use a base (e.g., 100) and add a unique offset for each call.
+            // To ensure global uniqueness within the test run for this team/tournament,
+            // we can use the loop index 'i' combined with a hash or a static counter.
+            var playerNumber = 100 + (Math.Abs(rosterId.GetHashCode()) % 1000) + i;
 
             await conn.ExecuteAsync(@"
             INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat)
