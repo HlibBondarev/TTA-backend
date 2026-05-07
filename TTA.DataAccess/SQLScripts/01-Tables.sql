@@ -214,12 +214,13 @@ CREATE TABLE matchlineups (
     -- positionid is NULLABLE for team placeholders
     positionid UUID NULL REFERENCES playerpositiondefinitions(id),
 
-    -- Allows two records with NULL playerrosterid (Home and Guest) by including number (-1 and -2)
-    CONSTRAINT uix_matchlineups_match_player_placeholder UNIQUE (matchid, playerrosterid, number),
+    -- Uniqueness for match lineup rows (real or placeholder).
+    -- Placeholder rows have playerrosterid = NULL and are distinguished by number (-1 = Home, -2 = Guest).
+    -- NULLS NOT DISTINCT prevents duplicate placeholders from being created at the DB level.
+    CONSTRAINT uix_matchlineups_match_player_placeholder
+        UNIQUE NULLS NOT DISTINCT (matchid, playerrosterid, number),
 
-    -- Ensures only one "team placeholder" (where playerrosterid is NULL) exists per match
-    -- Note: This logic assumes we use a trigger to link placeholders to teams internally if needed,
-    -- but for simple event attribution, one or two null-roster records per match is sufficient.
+    -- Composite PK/FK target to link (matchlineup, match) tuples in foreign keys.
     CONSTRAINT uix_matchlineups_id_match UNIQUE (id, matchid)
 );
 
