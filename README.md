@@ -36,12 +36,12 @@
 *   **PlayerRoster (Tournament level):** `Id`, `PlayerId`, `TournamentId`, `TeamId`, `Number`, `PositionId`, `CreatedAt`.
     *   **Constraint 1:** Player registered only **once** per tournament (cannot play for two teams).
     *   **Constraint 2:** Jersey numbers must be unique within a team for a specific tournament.
-*   **MatchLineup (Match level):** `Id`, `MatchId`, `PlayerId`, `Number`, `IsInStartingLineup`, `PositionId`.
+*   **MatchLineup (Match level):** `Id`, `MatchId`, `PlayerRosterId` (nullable), `Number`, `IsInStartingLineup`, `PositionId` (nullable).
 
 ### 5. TTA Engine (Technical & Tactical Actions)
 *   **EventDefinition:** `Id`, `SportId`, `Name`, `ShortName`, `IsPositive` (bool), `CreatedAt`.
-*   **GameEvent:** `Id`, `MatchId`, `PlayerId` (nullable), `EventDefinitionId`, `PeriodNumber`, `EventTimestamp` (Real Time), `NormalizedMatchTime` (Interval), `IsLeadToGoal` (bool), `CreatedAt`.
-*   **PlayerPresence:** `Id`, `MatchId`, `PlayerId`, `PeriodNumber`, `TimeIn`, `TimeOut`.
+*   **GameEvent:** `Id`, `EventDefinitionId`, `PeriodNumber`, `EventTimestamp` (Real Time), `NormalizedMatchTime` (Interval), `IsLeadToGoal` (bool), `CreatedAt`.
+*   **PlayerPresence:** `Id`, `MatchLineupId`, `PeriodNumber`, `TimeIn`, `TimeOut`.
 *   **TimeAnchor:** `Id`, `MatchId`, `PeriodNumber`, `Type` (Enum: 0:Start, 1:End, 2:StoppageStart, 3:StoppageEnd), `Timestamp`.
 
 ### 6. Architectural Chain & Data Access
@@ -60,6 +60,7 @@
     *   **Inheritance:** Permission for a Club automatically grants access to all its Teams.
     *   **JIT Registration:** `create_club_with_ownership` handles Just-In-Time user creation during club setup.
     *   **Policy Sync:** `upsert_team_membership_with_policy` synchronizes `TeamRole` with `AppRole` in the security table.
+    *   **Global policies** utilize targetid = NULL combined with a NULLS NOT DISTINCT constraint to prevent duplicate global assignments for the same user.
 
 ### 8. Time Normalization Logic (Piecewise-Linear)
 The system calculates "Clean Time" by processing segments between TimeAnchors:
