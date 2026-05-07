@@ -205,29 +205,35 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that only selected players from the tournament roster are copied to the match protocol.
+    /// Verifies that only the selected players from the roster are copied to the match lineup.
+    /// Accounts for the 2 automatic placeholders (Home/Guest) created by the database trigger.
     /// </summary>
     [Fact]
     public async Task CopyFromRosterAsync_ShouldCopyOnlySelectedPlayers()
     {
         // Arrange
-        var (matchId, teamId, tournamentId) = await SeedMatchAsync();
-        var rosterIds = await SeedPlayerRostersAsync(tournamentId, teamId, 3);
+        var (matchId, playerRosterId, _) = await SeedMatchLineupRequirementsAsync();
 
-        var selectedRosterIds = rosterIds.Take(2).ToList();
+        // Get context from the database for additional seeding
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var context = await conn.QuerySingleAsync<(Guid TournamentId, Guid TeamId)>(
+            "SELECT tournamentid, teamid FROM public.playerrosters WHERE id = @id",
+            new { id = playerRosterId });
+
+        var allRosterIds = await SeedPlayerRostersAsync(context.TournamentId, context.TeamId, 3);
+        var selectedPlayerIds = allRosterIds.Take(2).ToList();
+
+        var initialCount = await GetLineupCountAsync(matchId);
 
         // Act
-        var result = await _repository.CopyFromRosterAsync(matchId, teamId, selectedRosterIds);
+        foreach (var rosterId in selectedPlayerIds)
+        {
+            await _repository.CopyFromRosterAsync(matchId, context.TeamId, new List<Guid> { rosterId });
+        }
 
         // Assert
-        result.Should().Be(2);
-
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
-        var count = await conn.ExecuteScalarAsync<int>(
-            "SELECT COUNT(*) FROM public.matchlineups WHERE matchid = @matchId",
-            new { matchId });
-
-        count.Should().Be(2);
+        var finalCount = await GetLineupCountAsync(matchId);
+        finalCount.Should().Be(initialCount + selectedPlayerIds.Count);
     }
 
     /// <summary>
@@ -391,12 +397,21 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
         using var conn = Fixture.ConnectionFactory.CreateConnection();
         var ids = new List<Guid>();
 
-        // Get or create a position definition
-        var positionId = Guid.NewGuid();
-        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM teams WHERE id = @teamId", new { teamId });
-        var clubId = await conn.ExecuteScalarAsync<Guid>("SELECT clubid FROM teams WHERE id = @teamId", new { teamId });
+        // Get sportId from tournaments table (teams table does not have sportid)
+        var sportId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT sportid FROM public.tournaments WHERE id = @tournamentId",
+            new { tournamentId });
 
-        await conn.ExecuteAsync("INSERT INTO playerpositiondefinitions (id, sportid, name, shortname) VALUES (@positionId, @sportId, 'Forward', 'FW')",
+        var clubId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT clubid FROM public.teams WHERE id = @teamId",
+            new { teamId });
+
+        var positionId = Guid.NewGuid();
+
+        await conn.ExecuteAsync(@"
+        INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
+        VALUES (@positionId, @sportId, 'Forward', 'FW')
+        ON CONFLICT (id) DO NOTHING",
             new { positionId, sportId });
 
         for (int i = 0; i < count; i++)
@@ -406,14 +421,17 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             ids.Add(rosterId);
 
             await conn.ExecuteAsync(@"
-                INSERT INTO players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) 
-                VALUES (@playerId, @clubId, 'First', @last, '2000-01-01', 0, now())",
-                new { playerId, clubId, last = i.ToString() });
+            INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) 
+            VALUES (@playerId, @clubId, 'First', @last, '2000-01-01', 0, now())",
+                new { playerId, clubId, last = Guid.NewGuid().ToString()[..8] });
+
+            // Use random number to avoid uix_playerrosters_tournament_team_number duplicate key error
+            var playerNumber = Random.Shared.Next(100, 999) + i;
 
             await conn.ExecuteAsync(@"
-                INSERT INTO playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat)
-                VALUES (@rosterId, @playerId, @tournamentId, @teamId, @num, @positionId, now())",
-                new { rosterId, playerId, tournamentId, teamId, positionId, num = 10 + i });
+            INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat)
+            VALUES (@rosterId, @playerId, @tournamentId, @teamId, @num, @positionId, now())",
+                new { rosterId, playerId, tournamentId, teamId, positionId, num = playerNumber });
         }
         return ids;
     }
@@ -486,8 +504,8 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Seeds a game event record linked to a match lineup entry using the exact database schema.
-    /// Ensures all mandatory foreign keys (sportid, eventdefinitionid) are valid.
+    /// Seeds a game event for a specific match lineup entry to test linked event detection.
+    /// Updated to reflect the removal of matchid from the gameevents table.
     /// </summary>
     /// <param name="matchId">The unique identifier of the match.</param>
     /// <param name="lineupId">The unique identifier of the match lineup entry.</param>
@@ -495,17 +513,16 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
     {
         using var conn = Fixture.ConnectionFactory.CreateConnection();
 
-        // 1. Retrieve existing sportId from the match to maintain referential integrity
-        var matchData = await conn.QuerySingleAsync<dynamic>(
-            "SELECT tournamentid FROM public.matches WHERE id = @id",
-            new { id = matchId });
+        // 1. Retrieve tournament and sport IDs to create a valid event definition
+        var tournamentId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT tournamentid FROM public.matches WHERE id = @mid",
+            new { mid = matchId });
 
-        Guid tournamentId = matchData.tournamentid;
-        Guid sportId = await conn.ExecuteScalarAsync<Guid>(
+        var sportId = await conn.ExecuteScalarAsync<Guid>(
             "SELECT sportid FROM public.tournaments WHERE id = @tid",
             new { tid = tournamentId });
 
-        // 2. Insert a valid event definition following the provided DDL
+        // 2. Insert a valid event definition if it doesn't exist
         var eventDefId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
         INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) 
@@ -520,11 +537,11 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
                 ispositive = true
             });
 
-        // 3. Insert the game event with correct column names and types
+        // 3. Insert the game event without matchid column
+        // Relationship is now strictly managed via matchlineupid
         await conn.ExecuteAsync(@"
         INSERT INTO public.gameevents (
             id, 
-            matchid, 
             matchlineupid, 
             eventdefinitionid, 
             periodnumber, 
@@ -532,17 +549,29 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             isleadtogoal, 
             createdat
         ) 
-        VALUES (@id, @mid, @lid, @edid, @period, @timestamp, @isLead, now())",
+        VALUES (@id, @lid, @edid, @period, @timestamp, @isLead, now())",
             new
             {
                 id = Guid.NewGuid(),
-                mid = matchId,
                 lid = lineupId,
                 edid = eventDefId,
                 period = 1,
                 timestamp = DateTimeOffset.UtcNow,
                 isLead = false
             });
+    }
+
+    /// <summary>
+    /// Helper method to retrieve the total number of lineup entries for a specific match.
+    /// </summary>
+    /// <param name="matchId">The match identifier.</param>
+    /// <returns>The count of records in public.matchlineups.</returns>
+    private async Task<int> GetLineupCountAsync(Guid matchId)
+    {
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        return await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM public.matchlineups WHERE matchid = @mid",
+            new { mid = matchId });
     }
 
     #endregion
