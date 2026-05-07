@@ -3,10 +3,13 @@
 namespace TTA.BusinessLogic.Features.MatchLineups.DTOs;
 
 /// <summary>
-/// Request DTO for bulk copying selected players from a tournament roster to a match protocol.
+/// Request DTO for copying specific players from tournament roster to match lineup.
 /// </summary>
-/// <param name="PlayerRosterIds">The list of player roster identifiers to be included in the match.</param>
-public record CopyTeamRosterToMatchLineupRequest(IEnumerable<Guid> PlayerRosterIds);
+/// <<param name="PlayerRosterIds">The list of player roster identifiers to be included in the match.</param>
+public record CopyTeamRosterToMatchLineupRequest(IEnumerable<Guid> PlayerRosterIds)
+{
+    public IEnumerable<Guid> PlayerRosterIds { get; init; } = PlayerRosterIds ?? [];
+}
 
 /// <summary>
 /// Mapping extensions for <see cref="CopyTeamRosterToMatchLineupRequest"/>.
