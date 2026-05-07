@@ -45,13 +45,22 @@ public class MatchLineupRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
-    public async Task<int> CopyFromRosterAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default)
+    public async Task<int> CopyFromRosterAsync(
+        Guid matchId,
+        Guid teamId,
+        IEnumerable<Guid> playerRosterIds,
+        CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_matchid", matchId);
         parameters.Add("p_teamid", teamId);
 
+        // Converting IEnumerable to Array is mandatory for Dapper to map to PostgreSQL array types
+        parameters.Add("p_player_roster_ids", playerRosterIds.ToArray());
+
         using var connection = await OpenConnectionAsync(cancellationToken);
+
+        // ExecuteScalarAsync is used to retrieve the integer result returned by the SQL function
         return await connection.ExecuteScalarAsync<int>(new CommandDefinition(
             SqlStatements.ForMatchLineups.CopyRosterToLineup,
             parameters,

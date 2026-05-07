@@ -468,3 +468,46 @@ BEGIN
 
     RAISE NOTICE 'Seeding completed for "Spring Water Polo Cup 2026" matches.';
 END $$;
+
+-- ========================================================================================================================================
+-- 10. Seed lineups for match 33333333-3333-0000-0000-333333333001
+-- ========================================================================================================================================
+-- MATCH of Hlib Bondarev's tournament - 'Spring Water Polo Cup 2026', match: "My super team U-15 (2011)" - "My super team - 2 U-15 (2011)"
+DO $$ 
+DECLARE 
+    v_match_id uuid := '33333333-3333-0000-0000-333333333001'; 
+    v_team_home uuid := '22222222-2222-2222-2222-222222222215';
+    v_team_guest uuid := '22222222-2222-2222-2222-222222222216';
+    v_home_players uuid[];
+    v_guest_players uuid[];
+BEGIN
+    -- Collect up to 13 player IDs for home team
+    SELECT array_agg(id) INTO v_home_players
+    FROM (
+        SELECT id FROM public.playerrosters 
+        WHERE teamid = v_team_home
+        ORDER BY id
+        LIMIT 13
+    ) AS sub;
+
+    -- Collect up to 13 player IDs for guest team
+    SELECT array_agg(id) INTO v_guest_players
+    FROM (
+        SELECT id FROM public.playerrosters 
+        WHERE teamid = v_team_guest
+        ORDER BY id
+        LIMIT 13
+    ) AS sub;
+
+    -- Execute copy with specific arrays
+    PERFORM public.copy_team_roster_to_match_lineup(v_match_id, v_team_home, v_home_players);
+    PERFORM public.copy_team_roster_to_match_lineup(v_match_id, v_team_guest, v_guest_players);
+
+    -- Set starting 7
+    UPDATE public.matchlineups 
+    SET isinstartinglineup = true 
+    WHERE matchid = v_match_id 
+      AND number <= 7;
+
+    RAISE NOTICE 'Lineups for match % initialized with specific selection.', v_match_id;
+END $$;

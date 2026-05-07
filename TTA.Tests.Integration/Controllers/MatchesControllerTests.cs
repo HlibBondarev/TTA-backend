@@ -1,4 +1,5 @@
-﻿using FluentAssertions;
+﻿using Dapper;
+using FluentAssertions;
 using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
@@ -107,29 +108,191 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that the owner can batch copy players from the roster to the match lineup.
+    /// Verifies that the tournament owner can successfully copy selected players from the tournament roster to the match lineup.
+    /// This test ensures all database constraints including gender, homeclubid, and positionid are satisfied.
     /// </summary>
     [Fact]
     public async Task CopyFromRoster_ShouldReturnOk_WhenUserIsOwner()
     {
         // Arrange
         var context = await SetupTournamentContextAsync(TestUserId);
-        var teamId = await SeedTeamAsync(context.CityId, context.SportId, "Copy Team");
-        await SeedTeamRegistrationAsync(context.TournamentId, teamId, context.SportId);
 
-        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Other Team");
-        await SeedTeamRegistrationAsync(context.TournamentId, guestId, context.SportId);
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // 1. Seed a club to satisfy the player's homeclubid constraint
+        var clubId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityId, 'Test Club', now())",
+            new { id = clubId, cityId = context.CityId });
+
+        // 2. Seed a position definition to satisfy the playerrosters' positionid constraint
+        var positionId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) VALUES (@id, @sId, 'Forward', 'FW')",
+            new { id = positionId, sId = context.SportId });
+
+        var teamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
 
         var matchId = Guid.NewGuid();
-        await SeedMatchAsync(matchId, context.TournamentId, teamId, guestId, "M-COPY");
+        await SeedMatchAsync(matchId, context.TournamentId, teamId, guestId, "M-301");
+
+        // 3. Seed players and roster entries with all required fields
+        var playerRosterIds = new List<Guid>();
+        for (int i = 0; i < 3; i++)
+        {
+            var playerId = Guid.NewGuid();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) 
+                VALUES (@id, @clubId, @f, @l, '2000-01-01', 1, now())",
+                new { id = playerId, clubId, f = $"Player{i}", l = "Test" });
+
+            var rosterId = Guid.NewGuid();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.playerrosters (id, teamid, tournamentid, playerid, number, positionid, createdat) 
+                VALUES (@id, @tId, @tourId, @pId, @num, @posId, now())",
+                new { id = rosterId, tId = teamId, tourId = context.TournamentId, pId = playerId, num = 10 + i, posId = positionId });
+
+            playerRosterIds.Add(rosterId);
+        }
+
+        var request = new CopyTeamRosterToMatchLineupRequest(playerRosterIds);
+        // Corrected URL: added the missing slash before 'copy'
+        var url = $"{BaseUrl}/{matchId}/teams/{teamId}/lineup/copy";
 
         // Act
-        var response = await Client.PostAsync($"{BaseUrl}/{matchId}/lineups/copy-from-roster/{teamId}", null);
+        var response = await Client.PostAsJsonAsync(url, request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var count = await response.Content.ReadFromJsonAsync<int>();
-        count.Should().BeGreaterThan(0);
+        count.Should().Be(3);
+    }
+
+    /// <summary>
+    /// Verifies that a user who is not the tournament owner receives a 403 Forbidden response.
+    /// Seeds necessary match and team data to ensure the validation logic reaches the ownership check.
+    /// </summary>
+    [Fact]
+    public async Task CopyFromRoster_ShouldReturnForbidden_WhenUserIsNotOwner()
+    {
+        // Arrange: Tournament owned by a different user
+        var context = await SetupTournamentContextAsync("not-the-owner-id");
+        var teamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, teamId, guestId, "M-302");
+
+        var request = new CopyTeamRosterToMatchLineupRequest(new List<Guid> { Guid.NewGuid() });
+        // Corrected URL: added the missing slash before 'copy'
+        var url = $"{BaseUrl}/{matchId}/teams/{teamId}/lineup/copy";
+
+        // Act
+        var response = await Client.PostAsJsonAsync(url, request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// Verifies that a user with the TeamEditor role can successfully copy selected players to the match lineup.
+    /// Ensures that all database constraints (gender, homeclubid, positionid) and access policies are satisfied.
+    /// </summary>
+    [Fact]
+    public async Task CopyFromRosterByTeam_ShouldReturnOk_WhenUserIsTeamEditor()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var teamId = await SeedTeamAsync(context.CityId, context.SportId, "Editor Team");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Other Team");
+
+        // Grant TeamEditor role (role=1) for the specific team (targettype=2) in the auth schema
+        await conn.ExecuteAsync(@"
+            INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat) 
+            VALUES (@id, @uId, 1, 2, @tId, now())",
+            new { id = Guid.NewGuid(), uId = TestUserId, tId = teamId });
+
+        // Seed a position definition first to prevent NullReferenceException in GetFirstPositionIdAsync
+        var positionId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
+            VALUES (@id, @sId, 'Universal Player', 'UP')",
+            new { id = positionId, sId = context.SportId });
+
+        // Seed club for player constraints
+        var clubId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityId, 'Editor Club', now())",
+            new { id = clubId, cityId = context.CityId });
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, teamId, guestId, "M-601");
+
+        // Seed a player and their roster entry linked to the created position
+        var playerId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) 
+            VALUES (@id, @clubId, 'John', 'Editor', '1998-08-08', 1, now())",
+            new { id = playerId, clubId });
+
+        var rosterId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.playerrosters (id, teamid, tournamentid, playerid, number, positionid, createdat) 
+            VALUES (@id, @tId, @tourId, @pId, 88, @posId, now())",
+            new { id = rosterId, tId = teamId, tourId = context.TournamentId, pId = playerId, posId = positionId });
+
+        var request = new CopyTeamRosterToMatchLineupRequest(new[] { rosterId });
+        var url = $"{BaseUrl}/{matchId}/teams/{teamId}/lineup/copy-by-team";
+
+        // Act
+        var response = await Client.PostAsJsonAsync(url, request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var count = await response.Content.ReadFromJsonAsync<int>();
+        count.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Verifies that the endpoint returns 400 BadRequest when the authorized team is not a participant in the match.
+    /// </summary>
+    [Fact]
+    public async Task CopyFromRosterByTeam_ShouldReturnBadRequest_WhenTeamIsNotInMatch()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Match Home");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Match Guest");
+        var nonParticipantTeamId = await SeedTeamAsync(context.CityId, context.SportId, "External Team");
+
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // Grant permissions for the non-participant team to pass the 403 Authorization check
+        await conn.ExecuteAsync(@"
+            INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat) 
+            VALUES (@id, @uId, 1, 2, @tId, now())",
+            new { id = Guid.NewGuid(), uId = TestUserId, tId = nonParticipantTeamId });
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-602");
+
+        var request = new CopyTeamRosterToMatchLineupRequest(new[] { Guid.NewGuid() });
+        var url = $"{BaseUrl}/{matchId}/teams/{nonParticipantTeamId}/lineup/copy-by-team";
+
+        // Act
+        var response = await Client.PostAsJsonAsync(url, request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var errorContent = await response.Content.ReadAsStringAsync();
+        errorContent.Should().Contain("The specified team is not a participant in this match");
     }
 
     /// <summary>

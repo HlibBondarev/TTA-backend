@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.Matches.Queries;
-using TTA.BusinessLogic.Features.MatchLineups.Commands;
 using TTA.BusinessLogic.Features.MatchLineups.DTOs;
 using TTA.BusinessLogic.Features.MatchLineups.Queries;
 using TTA.BusinessLogic.Features.Tournaments.Queries;
@@ -120,33 +119,92 @@ public class MatchesController(
     }
 
     /// <summary>
-    /// Batch populates the match lineup by copying all players from a team's tournament roster.
+    /// Copies a specific selection of players from a team's tournament roster to the match protocol.
     /// </summary>
     /// <param name="matchId">The unique identifier of the match.</param>
     /// <param name="teamId">The unique identifier of the team.</param>
-    /// <returns>The number of players added to the match lineup.</returns>
+    /// <param name="request">The request body containing the list of selected player roster IDs.</param>
+    /// <returns>The number of players successfully added to the match lineup.</returns>
     /// <response code="200">Returns the number of players added to the match lineup.</response>
+    /// <response code="400">If the request data is invalid or validation fails.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user is not the owner of the tournament.</response>
     /// <response code="404">If the match or team was not found.</response>
-    [HttpPost("{matchId:guid}/lineups/copy-from-roster/{teamId:guid}")]
+    [HttpPost("{matchId:guid}/teams/{teamId:guid}/lineup/copy")]
     [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> CopyFromRoster(
         [FromRoute] Guid matchId,
-        [FromRoute] Guid teamId)
+        [FromRoute] Guid teamId,
+        [FromBody] CopyTeamRosterToMatchLineupRequest request)
     {
-        _logger.LogInformation("Executing CopyFromRoster action for match {MatchId} and team {TeamId}.",
-            matchId, teamId);
+        _logger.LogInformation("Requested bulk copy of {Count} selected players for Team {TeamId} into Match {MatchId}.",
+            request.PlayerRosterIds.Count(), teamId, matchId);
 
-        // 1. Authorization: Validate that the current user is the owner of the tournament associated with this match
-        var authResult = await ValidateTournamentOwnership(matchId);
-        if (authResult != null) return authResult;
+        // Verify that the team is actually a participant in this specific match
+        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId));
+        if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
+        {
+            _logger.LogWarning("Access denied: Team {TeamId} is not part of Match {MatchId}.", teamId, matchId);
+            return BadRequest("The specified team is not a participant in this match.");
+        }
 
-        // 2. Execute the command to copy players from the team's roster to the match lineup
-        var command = new CopyTeamRosterToMatchLineupCommand(matchId, teamId);
+        // Validate tournament ownership before proceeding with the operation
+        var validationResult = await ValidateTournamentOwnership(matchId);
+        if (validationResult != null)
+        {
+            return validationResult;
+        }
+
+        // Map the request DTO to the business logic command
+        var command = request.ToCommand(matchId, teamId);
+
+        // Execute the command via Mediator
+        var result = await _mediator.Send(command);
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Copies selected players to the match lineup. 
+    /// This endpoint is specifically for team representatives/editors.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="request">The request body containing selected player roster IDs.</param>
+    /// <returns>The number of players successfully added to the match lineup.</returns>
+    /// <response code="200">Returns the count of players added.</response>
+    /// <response code="400">If the request data is invalid or validation fails.</response>
+    /// <response code="401">If the request is not authenticated.</response>
+    /// <response code="403">If the user is not authorized as a Team Editor for this team.</response>
+    /// <response code="404">If the match or team is not found.</response>
+    [Authorize(Policy = "TeamEditor")]
+    [HttpPost("{matchId:guid}/teams/{teamId:guid}/lineup/copy-by-team")]
+    [ProducesResponseType(typeof(int), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CopyFromRosterByTeam(
+        [FromRoute] Guid matchId,
+        [FromRoute] Guid teamId,
+        [FromBody] CopyTeamRosterToMatchLineupRequest request)
+    {
+        _logger.LogInformation("Team Editor requested copy of {Count} players for Team {TeamId} in Match {MatchId}.",
+            request.PlayerRosterIds.Count(), teamId, matchId);
+
+        // Verify that the team is actually a participant in this specific match
+        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId));
+        if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
+        {
+            _logger.LogWarning("Access denied: Team {TeamId} is not part of Match {MatchId}.", teamId, matchId);
+            return BadRequest("The specified team is not a participant in this match.");
+        }
+
+        var command = request.ToCommand(matchId, teamId);
         var result = await _mediator.Send(command);
 
         return Ok(result);

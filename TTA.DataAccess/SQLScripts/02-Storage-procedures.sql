@@ -942,14 +942,16 @@ BEGIN
     RETURN v_affected_count;
 END;$$ LANGUAGE plpgsql;
 
-/**********************************************************************************
- * Bulk copies all players from a team's tournament roster to a match protocol.
+/***************************************************************************************
+ * Copies a specific selection of players from the tournament roster to the match.
  * Initialized with roster defaults: jersey number, position, and starting flag = FALSE.
  * Uses ON CONFLICT to skip players already present in the match lineup.
- **********************************************************************************/
+ * p_player_roster_ids: Array of UUIDs from the playerrosters table.
+ ***************************************************************************************/
 CREATE OR REPLACE FUNCTION public.copy_team_roster_to_match_lineup(
     p_matchid UUID,
-    p_teamid UUID
+    p_teamid UUID,
+    p_player_roster_ids UUID[]
 )
 RETURNS INT AS $$
 DECLARE
@@ -957,7 +959,7 @@ DECLARE
     v_tournamentid UUID;
     v_lineup_limit INT;
     v_current_count INT;
-    v_roster_count INT;
+    v_requested_count INT;
 BEGIN
     -- 1. Resolve tournament ID and verify team participation
     SELECT tournamentid INTO v_tournamentid 
@@ -972,39 +974,45 @@ BEGIN
     -- 2. Concurrency Protection
     PERFORM pg_advisory_xact_lock(hashtext(p_matchid::text), hashtext(p_teamid::text));
 
-    -- 3. Get lineup limit and current status
+    -- 3. Get lineup limit
     SELECT sc.lineuplimit INTO v_lineup_limit
     FROM public.matches m
     JOIN public.tournaments t ON m.tournamentid = t.id
     JOIN public.sportconfigurations sc ON t.configurationid = sc.id
     WHERE m.id = p_matchid;
 
-    SELECT COUNT(*) INTO v_roster_count
-    FROM public.playerrosters pr
-    WHERE pr.teamid = p_teamid AND pr.tournamentid = v_tournamentid
-    AND NOT EXISTS (
-        SELECT 1 FROM public.matchlineups ml 
-        WHERE ml.matchid = p_matchid AND ml.playerrosterid = pr.id
-    );
-
+    -- 4. Calculate total count after potential insertion
+    v_requested_count := cardinality(p_player_roster_ids);
+    
     SELECT COUNT(*) INTO v_current_count
     FROM public.matchlineups ml
     JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
-    WHERE ml.matchid = p_matchid AND pr.teamid = p_teamid;
+    WHERE ml.matchid = p_matchid 
+      AND pr.teamid = p_teamid
+      -- Do not count players that are already in lineup AND in the new selection
+      AND ml.playerrosterid != ALL(p_player_roster_ids);
 
-    IF (v_current_count + v_roster_count) > v_lineup_limit THEN
-        RAISE EXCEPTION 'Adding % players would exceed the lineup limit (%) for this team.', v_roster_count, v_lineup_limit
+    IF (v_current_count + v_requested_count) > v_lineup_limit THEN
+        RAISE EXCEPTION 'Total players (%) would exceed the lineup limit (%) for this team.', 
+            (v_current_count + v_requested_count), v_lineup_limit
         USING ERRCODE = 'P0003';
     END IF;
 
-    -- 4. Bulk insert
+    -- 5. Bulk insert from the provided array
     INSERT INTO public.matchlineups (
         id, matchid, playerrosterid, number, isinstartinglineup, positionid
     )
     SELECT 
-        gen_random_uuid(), p_matchid, pr.id, pr.number, FALSE, pr.positionid 
+        gen_random_uuid(), 
+        p_matchid, 
+        pr.id, 
+        pr.number, 
+        FALSE, 
+        pr.positionid 
     FROM public.playerrosters pr
-    WHERE pr.teamid = p_teamid AND pr.tournamentid = v_tournamentid
+    WHERE pr.id = ANY(p_player_roster_ids)
+      AND pr.teamid = p_teamid 
+      AND pr.tournamentid = v_tournamentid
     ON CONFLICT (matchid, playerrosterid) DO NOTHING;
 
     GET DIAGNOSTICS v_inserted_count = ROW_COUNT;
