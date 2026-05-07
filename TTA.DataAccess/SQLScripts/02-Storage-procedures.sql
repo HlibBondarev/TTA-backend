@@ -814,6 +814,37 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 -- MATCHLINEUP MANAGEMENT FUNCTIONS
 -- =============================================================
+/*****************************************************************************
+ * Trigger function to automatically create team placeholders in matchlineups
+ *****************************************************************************/
+
+-- We create two records so that team-specific events (like timeouts) can be attributed correctly
+CREATE OR REPLACE FUNCTION public.fn_create_team_placeholders()
+RETURNS TRIGGER AS $$
+DECLARE
+    -- Sentinel jersey numbers for team-level placeholder lineup rows.
+    -- Kept negative so they can never collide with real jersey numbers
+    -- and are easy to filter out via `number > 0`.
+    c_home_placeholder CONSTANT INT := -1;
+    c_guest_placeholder CONSTANT INT := -2;
+BEGIN
+    -- Placeholder for Home Team
+    INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid)
+    VALUES (gen_random_uuid(), NEW.id, NULL, c_home_placeholder, false, NULL);
+
+    -- Placeholder for Guest Team
+    INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid)
+    VALUES (gen_random_uuid(), NEW.id, NULL, c_guest_placeholder, false, NULL);
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_matches_after_insert
+AFTER INSERT ON public.matches
+FOR EACH ROW
+EXECUTE FUNCTION public.fn_create_team_placeholders();
+
 /**********************************************************************************
  * Upserts a player into the match lineup with full business rule validation.
  * * Validations:
@@ -1013,7 +1044,8 @@ BEGIN
     WHERE pr.id = ANY(p_player_roster_ids)
       AND pr.teamid = p_teamid 
       AND pr.tournamentid = v_tournamentid
-    ON CONFLICT (matchid, playerrosterid) DO NOTHING;
+    -- Updated to match the new unique constraint (matchid, playerrosterid, number)
+    ON CONFLICT (matchid, playerrosterid, number) DO NOTHING;
 
     GET DIAGNOSTICS v_inserted_count = ROW_COUNT;
     RETURN v_inserted_count;

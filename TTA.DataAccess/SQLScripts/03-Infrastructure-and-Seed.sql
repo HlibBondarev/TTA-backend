@@ -507,6 +507,7 @@ BEGIN
     UPDATE public.matchlineups 
     SET isinstartinglineup = true 
     WHERE matchid = v_match_id 
+      AND number > 0
       AND number <= 7;
 
     RAISE NOTICE 'Lineups for match % initialized with specific selection.', v_match_id;
