@@ -397,11 +397,15 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
         using var conn = Fixture.ConnectionFactory.CreateConnection();
         var ids = new List<Guid>();
 
-        // Get sportId from tournaments table (teams table does not have sportid)
+        // We intentionally read sportId from the tournaments table to ensure that 
+        // the seeded playerpositiondefinitions are perfectly aligned with the tournament's sport.
+        // This maintains a valid FK chain into playerrosters.positionid. While teams also 
+        // store sportid, we use tournaments here for seeding consistency.
         var sportId = await conn.ExecuteScalarAsync<Guid>(
             "SELECT sportid FROM public.tournaments WHERE id = @tournamentId",
             new { tournamentId });
 
+        // Club context is still retrieved from the teams table
         var clubId = await conn.ExecuteScalarAsync<Guid>(
             "SELECT clubid FROM public.teams WHERE id = @teamId",
             new { teamId });
