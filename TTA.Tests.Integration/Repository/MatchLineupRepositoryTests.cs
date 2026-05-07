@@ -13,6 +13,9 @@ namespace TTA.Tests.Integration.Repository;
 public class MatchLineupRepositoryTests : BaseIntegrationTest
 {
     private readonly MatchLineupRepository _repository;
+    // Class-level static counter – thread-safe, ever-increasing across the test run.
+    // Starts high enough to never clash with the jersey 10 seeded by SeedMatchLineupRequirementsAsync.
+    private static int _playerNumberSeed = 1000;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="MatchLineupRepositoryTests"/> class.
@@ -429,12 +432,10 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             VALUES (@playerId, @clubId, 'First', @last, '2000-01-01', 0, now())",
                 new { playerId, clubId, last = Guid.NewGuid().ToString()[..8] });
 
-            // Use random number to avoid uix_playerrosters_tournament_team_number duplicate key error
-            // NEW: Deterministic unique jersey number generation.
-            // We use a base (e.g., 100) and add a unique offset for each call.
-            // To ensure global uniqueness within the test run for this team/tournament,
-            // we can use the loop index 'i' combined with a hash or a static counter.
-            var playerNumber = 100 + (Math.Abs(rosterId.GetHashCode()) % 1000) + i;
+            // Deterministic, collision-free jersey number across all test invocations.
+            // Interlocked.Increment guarantees thread-safety and no duplicates for the
+            // uix_playerrosters_tournament_team_number (tournamentId, teamId, number) constraint.
+            var playerNumber = Interlocked.Increment(ref _playerNumberSeed);
 
             await conn.ExecuteAsync(@"
             INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat)
