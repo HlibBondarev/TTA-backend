@@ -485,7 +485,8 @@ BEGIN
     SELECT array_agg(id) INTO v_home_players
     FROM (
         SELECT id FROM public.playerrosters 
-        WHERE teamid = v_team_home 
+        WHERE teamid = v_team_home
+        ORDER BY id
         LIMIT 13
     ) AS sub;
 
@@ -493,7 +494,8 @@ BEGIN
     SELECT array_agg(id) INTO v_guest_players
     FROM (
         SELECT id FROM public.playerrosters 
-        WHERE teamid = v_team_guest 
+        WHERE teamid = v_team_guest
+        ORDER BY id
         LIMIT 13
     ) AS sub;
 
