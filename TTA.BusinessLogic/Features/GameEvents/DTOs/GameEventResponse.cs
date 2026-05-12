@@ -5,7 +5,7 @@
 /// mapped exactly from the 'public.get_match_events' storage function output.
 /// </summary>
 /// <param name="Id">The unique identifier of the game event record.</param>
-/// <param name="MatchLineupId">The identifier of the match lineup entry (nullable).</param>
+/// <param name="MatchLineupId">The identifier of the match lineup entry.</param>
 /// <param name="EventDefinitionId">The identifier of the specific event type definition.</param>
 /// <param name="EventName">The human-readable name of the event type.</param>
 /// <param name="IsPositive">Indicates if the event has a positive impact based on definition.</param>

@@ -8,7 +8,7 @@ namespace TTA.BusinessLogic.Features.GameEvents.Commands;
 /// Command to create a new game event record. Returns the unique identifier of the created event.
 /// </summary>
 /// <param name="MatchId">The unique identifier of the match (from route).</param>
-/// <param name="MatchLineupId">The unique identifier of the match lineup (nullable for team events).</param>
+/// <param name="MatchLineupId">The unique identifier of the match lineup.</param>
 /// <param name="EventDefinitionId">The identifier of the event type definition.</param>
 /// <param name="PeriodNumber">The match period when the event occurred.</param>
 /// <param name="EventTimestamp">The UTC timestamp of the event.</param>

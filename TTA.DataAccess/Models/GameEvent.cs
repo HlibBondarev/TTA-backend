@@ -14,7 +14,6 @@ public class GameEvent : IKeyedEntity<Guid>
 
     /// <summary>
     /// Gets or sets the match lineup identifier (link to protocol).
-    /// Can be null for team-level events (e.g., team timeouts).
     /// </summary>
     public Guid MatchLineupId { get; set; }
 
