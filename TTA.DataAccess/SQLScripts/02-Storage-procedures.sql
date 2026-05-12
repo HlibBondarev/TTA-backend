@@ -1103,3 +1103,187 @@ BEGIN
         WHERE matchlineupid = p_id
     );
 END;$$ LANGUAGE plpgsql;
+
+
+-- =============================================================
+-- GAME EVENTS STORED FUNCTIONS
+-- =============================================================
+
+/**********************************************************************************
+ * Upserts a game event record and returns the resulting row.
+ * Consistent with the project's repository pattern for entity mapping.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.upsert_game_event(
+    p_id UUID,
+    p_matchlineupid UUID,
+    p_eventdefinitionid UUID,
+    p_periodnumber INT,
+    p_eventtimestamp TIMESTAMPTZ,
+    p_normalizedmatchtime INTERVAL,
+    p_isleadtogoal BOOLEAN,
+    p_createdat TIMESTAMPTZ
+)
+RETURNS SETOF public.gameevents AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO public.gameevents (
+        id, 
+        matchlineupid, 
+        eventdefinitionid, 
+        periodnumber, 
+        eventtimestamp, 
+        normalizedmatchtime, 
+        isleadtogoal, 
+        createdat
+    )
+    VALUES (
+        p_id, 
+        p_matchlineupid, 
+        p_eventdefinitionid, 
+        p_periodnumber, 
+        p_eventtimestamp, 
+        p_normalizedmatchtime, 
+        p_isleadtogoal, 
+        p_createdat
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        matchlineupid = EXCLUDED.matchlineupid,
+        eventdefinitionid = EXCLUDED.eventdefinitionid,
+        periodnumber = EXCLUDED.periodnumber,
+        eventtimestamp = EXCLUDED.eventtimestamp,
+        normalizedmatchtime = EXCLUDED.normalizedmatchtime,
+        isleadtogoal = EXCLUDED.isleadtogoal
+    RETURNING *; -- Returns the full row including the correct 'id' column name
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves a single game event record by its primary key.
+ * Strictly returns columns defined in the public.gameevents table.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_game_event_by_id(p_id UUID)
+RETURNS TABLE (
+    id UUID,
+    matchlineupid UUID,
+    eventdefinitionid UUID,
+    periodnumber INT,
+    eventtimestamp TIMESTAMPTZ,
+    normalizedmatchtime INTERVAL,
+    isleadtogoal BOOLEAN,
+    createdat TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        ge.id, 
+        ge.matchlineupid, 
+        ge.eventdefinitionid, 
+        ge.periodnumber, 
+        ge.eventtimestamp, 
+        ge.normalizedmatchtime, 
+        ge.isleadtogoal, 
+        ge.createdat
+    FROM public.gameevents ge
+    WHERE ge.id = p_id;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves a single game event enriched with metadata.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_game_event_by_id_with_details(p_id UUID)
+RETURNS TABLE (
+    id UUID,
+    matchlineupid UUID,
+    eventdefinitionid UUID,
+    eventname VARCHAR,
+    ispositive BOOLEAN,
+    periodnumber INT,
+    eventtimestamp TIMESTAMPTZ,
+    normalizedmatchtime INTERVAL,
+    isleadtogoal BOOLEAN,
+    playername TEXT,
+    playernumber INT,
+    teamid UUID,
+    teamname VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        ge.id, ge.matchlineupid, ge.eventdefinitionid, ed.name AS eventname, ed.ispositive,
+        ge.periodnumber, ge.eventtimestamp, ge.normalizedmatchtime, ge.isleadtogoal,
+        (p.firstname || ' ' || p.lastname) AS playername, ml.number AS playernumber,
+        pr.teamid, t.name AS teamname
+    FROM public.gameevents ge
+    JOIN public.eventdefinitions ed ON ge.eventdefinitionid = ed.id
+    LEFT JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
+    LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    LEFT JOIN public.players p ON pr.playerid = p.id
+    LEFT JOIN public.teams t ON pr.teamid = t.id
+    WHERE ge.id = p_id;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves all events for a specific match.
+ * Mapped to TTA.BusinessLogic.Features.GameEvents.DTOs.GameEventResponse.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_events(
+    p_match_id UUID
+)
+RETURNS TABLE (
+    id UUID,
+    matchlineupid UUID,
+    eventdefinitionid UUID,
+    eventname VARCHAR,
+    ispositive BOOLEAN,
+    periodnumber INT,
+    eventtimestamp TIMESTAMPTZ,
+    normalizedmatchtime INTERVAL, -- Matches TimeSpan? in C#
+    isleadtogoal BOOLEAN,
+    playername TEXT,
+    playernumber INT,
+    teamid UUID,
+    teamname VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        ge.id, 
+        ge.matchlineupid, 
+        ge.eventdefinitionid, 
+        ed.name AS eventname, 
+        ed.ispositive,
+        ge.periodnumber, 
+        ge.eventtimestamp, 
+        ge.normalizedmatchtime, -- Now correctly maps to nullable TimeSpan?
+        ge.isleadtogoal,
+        -- Combined name from player record (remains nullable)
+        (p.firstname || ' ' || p.lastname)::TEXT AS playername,
+        ml.number AS playernumber,
+        pr.teamid,
+        t.name AS teamname
+    FROM public.gameevents ge
+    INNER JOIN public.eventdefinitions ed ON ge.eventdefinitionid = ed.id
+    -- Mandatory join: ensures event is linked to a valid lineup entry
+    INNER JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
+    LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    LEFT JOIN public.players p ON pr.playerid = p.id
+    LEFT JOIN public.teams t ON pr.teamid = t.id
+    WHERE ml.matchid = p_match_id
+    ORDER BY ge.periodnumber ASC, ge.eventtimestamp ASC;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Removes a game event from the database.
+ * Returns TRUE if the record was successfully deleted, FALSE otherwise.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.delete_game_event(
+    p_id UUID
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+    DELETE FROM public.gameevents
+    WHERE id = p_id;
+
+    -- Returns TRUE if a row was actually deleted, otherwise FALSE
+    RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql;

@@ -178,21 +178,6 @@ public class GameEventTests
     }
 
     [Fact]
-    public void GameEvent_MatchId_CanBeSetAndRetrieved()
-    {
-        var matchId = Guid.NewGuid();
-        var gameEvent = new GameEvent { MatchId = matchId };
-        Assert.Equal(matchId, gameEvent.MatchId);
-    }
-
-    [Fact]
-    public void GameEvent_MatchLineupId_IsNullable_AndDefaultsToNull()
-    {
-        var gameEvent = new GameEvent();
-        Assert.Null(gameEvent.MatchLineupId);
-    }
-
-    [Fact]
     public void GameEvent_MatchLineupId_CanBeSetToValue()
     {
         var matchLineupId = Guid.NewGuid();

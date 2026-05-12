@@ -212,8 +212,10 @@ public static class SqlStatements
         /// <summary>
         /// SQL to call the upsert function for matches.
         /// </summary>
-        public const string UpsertMatch =
-            "SELECT * FROM public.upsert_match(@Id, @TournamentId, @HomeTeamId, @GuestTeamId, @ScheduledAt, @MatchNumber, @Venue, @Temperature, @HomeScore, @GuestScore, @CreatedAt)";
+        public const string UpsertMatch = @"
+            SELECT * FROM public.upsert_match(
+                @Id, @TournamentId, @HomeTeamId, @GuestTeamId, @ScheduledAt, @MatchNumber, @Venue, @Temperature, @HomeScore, @GuestScore, @CreatedAt
+            )";
 
         /// <summary>
         /// SQL to retrieve a match by its unique identifier.
@@ -244,20 +246,21 @@ public static class SqlStatements
         /// Executes upsert operation for a single match lineup entry.
         /// </summary>
         public const string UpsertLineupItem = @"
-        SELECT * FROM public.upsert_match_lineup(
-            @Id, @MatchId, @PlayerRosterId, @Number, @IsInStartingLineup, @PositionId
-        );";
+            SELECT * FROM public.upsert_match_lineup(
+                @Id, @MatchId, @PlayerRosterId, @Number, @IsInStartingLineup, @PositionId
+            );";
 
         /// <summary>
         /// Retrieves the full protocol (lineup) for a specific match.
         /// </summary>
-        public const string GetMatchLineup = @"
-        SELECT * FROM public.get_match_lineup(@p_id);";
+        public const string GetMatchLineup =
+            "SELECT * FROM public.get_match_lineup(@p_id);";
 
         /// <summary>
         /// Removes a specific player from the match protocol using a storage function.
         /// </summary>
-        public const string DeleteLineupItem = "SELECT public.delete_match_lineup_item(@p_id);";
+        public const string DeleteLineupItem =
+            "SELECT public.delete_match_lineup_item(@p_id);";
 
         /// <summary>
         /// Executes the bulk copy of specific players from the tournament roster to a match protocol.
@@ -265,24 +268,75 @@ public static class SqlStatements
         /// </summary>
         public const string CopyRosterToLineup = @"
             SELECT public.copy_team_roster_to_match_lineup(
-                @p_matchid, 
-                @p_teamid, 
-                @p_player_roster_ids
+                @p_matchid, @p_teamid, @p_player_roster_ids
             );";
 
         /// <summary>
         /// Executes the function to retrieve a raw match lineup record by its ID.
         /// </summary>
-        public const string GetById = @"SELECT * FROM public.get_match_lineup_by_id(@p_id);";
+        public const string GetById =
+            "SELECT * FROM public.get_match_lineup_by_id(@p_id);";
 
         /// <summary>
         /// Executes the function to retrieve a match lineup entry with enriched player and position data.
         /// </summary>
-        public const string GetByIdWithDetails = @"SELECT * FROM public.get_match_lineup_details_by_id(@p_id);";
+        public const string GetByIdWithDetails =
+            "SELECT * FROM public.get_match_lineup_details_by_id(@p_id);";
 
         /// <summary>
         /// Executes the function to check if a lineup entry is linked to any game events.
         /// </summary>
-        public const string CheckHasEvents = "SELECT public.check_match_lineup_has_events(@p_id);";
+        public const string CheckHasEvents =
+            "SELECT public.check_match_lineup_has_events(@p_id);";
+    }
+
+    /// <summary>
+    /// SQL command constants for Game Events related operations.
+    /// These constants invoke storage functions defined in the public schema.
+    /// </summary>
+    public static class ForGameEvents
+    {
+        /// <summary>
+        /// Invokes the storage function to create or update a game event.
+        /// Uses 'SELECT * FROM' to ensure PostgreSQL returns columns that Dapper can map to the entity.
+        /// Parameters match the property names of the GameEvent class for automatic mapping.
+        /// </summary>
+        public const string UpsertEvent = @"
+            SELECT * FROM public.upsert_game_event(
+                @Id, 
+                @MatchLineupId, 
+                @EventDefinitionId, 
+                @PeriodNumber, 
+                @EventTimestamp, 
+                @NormalizedMatchTime, 
+                @IsLeadToGoal, 
+                @CreatedAt
+            );";
+
+        /// <summary>
+        /// Invokes the storage function to retrieve a raw game event record by its unique identifier.
+        /// Returns columns matching the public.gameevents table.
+        /// </summary>
+        public const string GetById =
+            "SELECT * FROM public.get_game_event_by_id(@p_id);";
+
+        /// <summary>
+        /// SQL statement to invoke the detailed game event retrieval function.
+        /// </summary>
+        public const string GetByIdWithDetails =
+            "SELECT * FROM public.get_game_event_by_id_with_details(@p_id);";
+
+        /// <summary>
+        /// Invokes the storage function to retrieve the full chronological timeline of events for a specific match.
+        /// Returns events enriched with player names, team names, and event type metadata.
+        /// </summary>
+        public const string GetMatchEvents =
+            "SELECT * FROM public.get_match_events(@p_match_id);";
+
+        /// <summary>
+        /// Invokes the storage function to permanently remove a game event record.
+        /// </summary>
+        public const string DeleteEvent =
+            "SELECT public.delete_game_event(@p_id);";
     }
 }

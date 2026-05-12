@@ -2,6 +2,9 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TTA.BusinessLogic.Features.GameEvents.Commands;
+using TTA.BusinessLogic.Features.GameEvents.DTOs;
+using TTA.BusinessLogic.Features.GameEvents.Queries;
 using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.Matches.Queries;
 using TTA.BusinessLogic.Features.MatchLineups.DTOs;
@@ -257,6 +260,139 @@ public class MatchesController(
 
         return Ok(result);
     }
+
+    #region Game Events Section
+
+    // ==========================================================================================
+    // Game Events Section
+    // ==========================================================================================
+
+    /// <summary>
+    /// Retrieves the chronological timeline of all game events for a specific match.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("{matchId:guid}/events")]
+    [ProducesResponseType(typeof(IEnumerable<GameEventResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetMatchEvents(Guid matchId)
+    {
+        _logger.LogInformation("Retrieving event timeline for match {MatchId}.", matchId);
+        // Note: The query handler handles match existence and returns an empty list or throws if necessary.
+        var result = await _mediator.Send(new GetMatchEventsTimelineQuery(matchId));
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Records a new game event for a match in the context of a specific team.
+    /// Access is restricted to team editors via policy.
+    /// </summary>
+    [HttpPost("{matchId:guid}/teams/{teamId:guid}/events")]
+    [Authorize(Policy = "TeamEditor")]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> RecordMatchEventByTeam(Guid matchId, Guid teamId, [FromBody] CreateGameEventRequest request)
+    {
+        _logger.LogInformation("Team {TeamId} is recording a new event for match {MatchId}.", teamId, matchId);
+
+        var command = request.ToCommand(matchId);
+        var result = await _mediator.Send(command);
+
+        return StatusCode(StatusCodes.Status201Created, result);
+    }
+
+    /// <summary>
+    /// Records a new game event for a match as a tournament organizer.
+    /// </summary>
+    [HttpPost("{matchId:guid}/events")]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RecordMatchEvent(Guid matchId, [FromBody] CreateGameEventRequest request)
+    {
+        var accessError = await ValidateTournamentOwnership(matchId);
+        if (accessError != null) return accessError;
+
+        var command = request.ToCommand(matchId);
+        var result = await _mediator.Send(command);
+
+        return StatusCode(StatusCodes.Status201Created, result);
+    }
+
+    /// <summary>
+    /// Updates an existing game event for a specific team.
+    /// Access is restricted to team editors via policy.
+    /// </summary>
+    [HttpPut("{matchId:guid}/teams/{teamId:guid}/events/{id:guid}")]
+    [Authorize(Policy = "TeamEditor")]
+    [ProducesResponseType(typeof(GameEventResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateMatchEventByTeam(Guid matchId, Guid teamId, Guid id, [FromBody] UpdateGameEventRequest request)
+    {
+        _logger.LogInformation("Team {TeamId} is updating event {Id} in match {MatchId}.", teamId, id, matchId);
+
+        var command = request.ToCommand(id, matchId);
+        var result = await _mediator.Send(command);
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Updates an existing game event as a tournament organizer.
+    /// </summary>
+    [HttpPut("{matchId:guid}/events/{id:guid}")]
+    [ProducesResponseType(typeof(GameEventResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateMatchEvent(Guid matchId, Guid id, [FromBody] UpdateGameEventRequest request)
+    {
+        var accessError = await ValidateTournamentOwnership(matchId);
+        if (accessError != null) return accessError;
+
+        var command = request.ToCommand(id, matchId);
+        var result = await _mediator.Send(command);
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Deletes a game event in the context of a specific team. 
+    /// Validates match and team integrity before deletion.
+    /// </summary>
+    [HttpDelete("{matchId:guid}/teams/{teamId:guid}/events/{id:guid}")]
+    [Authorize(Policy = "TeamEditor")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteMatchEventByTeam(Guid matchId, Guid teamId, Guid id)
+    {
+        _logger.LogInformation("Team {TeamId} is attempting to delete event {Id} in match {MatchId}.", teamId, id, matchId);
+
+        // 1. Fetch the event to verify existence and context
+        var gameEvent = await _mediator.Send(new GetGameEventByIdQuery(id));
+        if (gameEvent == null) return NotFound($"Game event with ID {id} not found.");
+
+        // 2. Fetch lineup to verify match and team ownership (MatchLineupId is now Guid)
+        var lineupItem = await _mediator.Send(new GetMatchLineupByIdQuery(gameEvent.MatchLineupId));
+        if (lineupItem == null)
+        {
+            _logger.LogError("Data integrity error: Event {Id} exists but its lineup record is missing.", id);
+            return BadRequest("The operation cannot be completed due to a missing lineup record.");
+        }
+
+        // 3. Security & Integrity check: Route parameters must match the database record
+        if (lineupItem.MatchId != matchId || lineupItem.TeamId != teamId)
+        {
+            _logger.LogWarning("Unauthorized deletion attempt: Event {Id} context mismatch (Match/Team).", id);
+            return Forbid();
+        }
+
+        await _mediator.Send(new DeleteGameEventCommand(id));
+        return NoContent();
+    }
+
+    #endregion
 
     /// <summary>
     /// Validates if the current user is the owner of the tournament associated with the given match.

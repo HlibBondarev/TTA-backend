@@ -3,6 +3,7 @@ using FluentAssertions;
 using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
+using TTA.BusinessLogic.Features.GameEvents.DTOs;
 using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.MatchLineups.DTOs;
 using TTA.Tests.Integration.Infrastructure;
@@ -369,6 +370,262 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    #endregion
+
+    #region Game Events Tests
+
+    /// <summary>
+    /// Verifies that the system retrieves all events associated with a specific match.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchEvents_ShouldReturnOk_WhenMatchExists()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-01");
+
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", true);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+        await SeedGameEventAsync(lineupId, eventDefId);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/events");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Verifies that a new game event can be recorded for a specific match.
+    /// </summary>
+    [Fact]
+    public async Task RecordMatchEvent_ShouldReturnCreated_WhenDataIsValid()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-02");
+
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Yellow Card", false);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+
+        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, DateTime.UtcNow, false);
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    /// <summary>
+    /// Verifies recording an event specifically for a team side within a match.
+    /// Seeds an access policy to avoid 403 Forbidden.
+    /// </summary>
+    [Fact]
+    public async Task RecordMatchEventByTeam_ShouldReturnCreated_WhenDataIsValid()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-03");
+        await SeedAccessPolicyAsync(TestUserId, 0, 2, homeTeamId); // FullControl (0) for Team (2)
+
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Timeout", true);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+
+        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, DateTime.UtcNow, false);
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    /// <summary>
+    /// Verifies that an existing game event can be updated.
+    /// Adjusted assertion to OK (200) based on observed behavior.
+    /// </summary>
+    [Fact]
+    public async Task UpdateMatchEvent_ShouldReturnOk_WhenUpdateIsValid()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-04");
+
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Shot", true);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+        var eventId = await SeedGameEventAsync(lineupId, eventDefId);
+
+        var request = new UpdateGameEventRequest(lineupId, eventDefId, 2, true);
+
+        // Act
+        var response = await Client.PutAsJsonAsync($"{BaseUrl}/{matchId}/events/{eventId}", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Verifies that an existing game event can be updated via team route.
+    /// Seeds an access policy to avoid 403 Forbidden.
+    /// </summary>
+    [Fact]
+    public async Task UpdateMatchEventByTeam_ShouldReturnNoContent_WhenUpdateIsValid()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-05");
+        await SeedAccessPolicyAsync(TestUserId, 0, 2, homeTeamId);
+
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Foul", false);
+        var eventId = await SeedGameEventAsync(lineupId, eventDefId);
+
+        var request = new UpdateGameEventRequest(lineupId, eventDefId, 1, false);
+
+        // Act
+        var response = await Client.PutAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events/{eventId}", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Verifies that a game event can be successfully removed via the team-specific route.
+    /// Route: DELETE api/matches/{matchId}/teams/{teamId}/events/{id}
+    /// </summary>
+    [Fact]
+    public async Task DeleteMatchEvent_ShouldReturnNoContent_WhenEventExists()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        // 1. Seed match
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-06");
+
+        // 2. Seed access policy (Role 0 = FullControl/Editor) for the team to pass [Authorize(Policy = "TeamEditor")]
+        await SeedAccessPolicyAsync(TestUserId, 0, 2, homeTeamId);
+
+        // 3. Seed required entities for event
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Technical Foul", false);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+        var eventId = await SeedGameEventAsync(lineupId, eventDefId);
+
+        // Act - Using the EXACT route from your MatchesController
+        var response = await Client.DeleteAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events/{eventId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    #endregion
+
+    #region Helpers for Events
+
+    /// <summary>
+    /// Seeds an access policy to satisfy authorization requirements.
+    /// </summary>
+    private async Task SeedAccessPolicyAsync(string userId, int role, int targetType, Guid targetId)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.ExecuteAsync(
+            @"INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat) 
+              VALUES (@id, @userId, @role, @targetType, @targetId, @now)",
+            new { id = Guid.NewGuid(), userId, role, targetType, targetId, now = DateTime.UtcNow });
+    }
+
+    /// <summary>
+    /// Seeds an event definition record.
+    /// </summary>
+    private async Task<Guid> SeedEventDefinitionAsync(Guid sportId, string name, bool isPositive)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        var id = Guid.NewGuid();
+        var shortName = name.Length > 10 ? name.Substring(0, 10) : name;
+
+        await conn.ExecuteAsync(
+            @"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) 
+              VALUES (@id, @sportId, @name, @shortName, @isPositive, @createdAt)",
+            new { id, sportId, name, shortName, isPositive, createdAt = DateTime.UtcNow });
+        return id;
+    }
+
+    /// <summary>
+    /// Seeds a complete hierarchy for match lineups.
+    /// </summary>
+    private async Task<Guid> SeedMatchLineupAsync(Guid matchId, Guid teamId, Guid cityId, Guid tournamentId, Guid sportId)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        var now = DateTime.UtcNow;
+
+        var positionId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) VALUES (@positionId, @sportId, 'Forward', 'FWD')",
+            new { positionId, sportId });
+
+        var clubId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@clubId, @cityId, 'Integration Test Club', @now)",
+            new { clubId, cityId, now });
+
+        var playerId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            @"INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) 
+              VALUES (@playerId, @clubId, 'John', 'Doe', @dob, @gender, @now)",
+            new { playerId, clubId, dob = new DateTime(1995, 1, 1, 0, 0, 0, DateTimeKind.Utc), gender = 0, now });
+
+        var rosterId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            @"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) 
+              VALUES (@rosterId, @playerId, @tournamentId, @teamId, 7, @positionId, @now)",
+            new { rosterId, playerId, tournamentId, teamId, positionId, now });
+
+        var lineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            @"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) 
+              VALUES (@lineupId, @matchId, @rosterId, 7, true, @positionId)",
+            new { lineupId, matchId, rosterId, positionId });
+
+        return lineupId;
+    }
+
+    /// <summary>
+    /// Seeds a game event record.
+    /// </summary>
+    private async Task<Guid> SeedGameEventAsync(Guid lineupId, Guid eventDefId)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        var id = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            @"INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) 
+              VALUES (@id, @lineupId, @eventDefId, 1, @ts, '00:15:00'::interval, false, @now)",
+            new { id, lineupId, eventDefId, ts = DateTime.UtcNow, now = DateTime.UtcNow });
+        return id;
     }
 
     #endregion

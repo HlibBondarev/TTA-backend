@@ -13,15 +13,10 @@ public class GameEvent : IKeyedEntity<Guid>
     public Guid Id { get; set; }
 
     /// <summary>
-    /// Gets or sets the match identifier.
-    /// </summary>
-    public Guid MatchId { get; set; }
-
-    /// <summary>
     /// Gets or sets the match lineup identifier (link to protocol).
     /// Can be null for team-level events (e.g., team timeouts).
     /// </summary>
-    public Guid? MatchLineupId { get; set; }
+    public Guid MatchLineupId { get; set; }
 
     /// <summary>
     /// Gets or sets the event definition identifier.

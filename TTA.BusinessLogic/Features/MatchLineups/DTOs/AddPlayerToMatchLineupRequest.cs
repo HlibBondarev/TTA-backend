@@ -16,7 +16,7 @@ public record AddPlayerToMatchLineupRequest(
 /// <summary>
 /// Mapping extensions for <see cref="AddPlayerToMatchLineupRequest"/>.
 /// </summary>
-public static class CreateMatchLineupRequestExtensions
+public static class AddPlayerToMatchLineupRequestExtensions
 {
     /// <summary>
     /// Converts a request DTO to a creation command.
