@@ -69,10 +69,5 @@ public class UpdateGameEventHandler(
             _logger.LogWarning(ex, "Game event update failed due to database business rule: {Message}", ex.MessageText);
             throw new ConflictException(ex.MessageText, ex);
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "An unexpected error occurred while updating game event {Id}.", request.Id);
-            throw;
-        }
     }
 }

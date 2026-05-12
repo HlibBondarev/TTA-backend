@@ -69,10 +69,5 @@ public class CreateGameEventHandler(
             _logger.LogWarning(ex, "Game event creation failed due to database business rule: {Message}", ex.MessageText);
             throw new ConflictException(ex.MessageText, ex);
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "An unexpected error occurred while creating game event for Match {MatchId}.", request.MatchId);
-            throw;
-        }
     }
 }
