@@ -169,6 +169,46 @@ public class GetMatchEventsTimelineQueryHandlerTests
     }
 
     /// <summary>
+    /// Verifies that events with null NormalizedMatchTime are placed at the end of the timeline
+    /// and are internally sorted by their EventTimestamp.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldPlaceEventsWithNullNormalizedMatchTimeAtEnd()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var query = new GetMatchEventsTimelineQuery(matchId);
+        var baseTimestamp = DateTime.UtcNow;
+
+        // Valid time event
+        var timedEvent = CreateRawEvent(Guid.NewGuid(), "Timed Event", 1, baseTimestamp.AddMinutes(5), TimeSpan.FromMinutes(10));
+
+        // Explicit null-time events
+        var nullTimeEvent1 = CreateRawEvent(Guid.NewGuid(), "Pre-Match Event", 1, baseTimestamp, null);
+        var nullTimeEvent2 = CreateRawEvent(Guid.NewGuid(), "Another Null Time Event", 1, baseTimestamp.AddSeconds(30), null);
+
+        var rawEvents = new List<GameEventProjection> { nullTimeEvent2, timedEvent, nullTimeEvent1 };
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetMatchEventsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(rawEvents);
+
+        // Act
+        var result = (await _handler.Handle(query, CancellationToken.None)).ToList();
+
+        // Assert
+        result.Should().HaveCount(3);
+
+        // Assert sorting: Timed first, then nulls sorted by timestamp
+        result[0].EventName.Should().Be("Timed Event");
+        result[1].EventName.Should().Be("Pre-Match Event");
+        result[2].EventName.Should().Be("Another Null Time Event");
+
+        result[1].NormalizedMatchTime.Should().BeNull(); // Now this will pass
+        result[2].NormalizedMatchTime.Should().BeNull();
+    }
+
+    /// <summary>
     /// Helper method to create a dynamic raw event object using ExpandoObject.
     /// Matches the property naming expected by the handler.
     /// </summary>
@@ -176,9 +216,14 @@ public class GetMatchEventsTimelineQueryHandlerTests
     /// <param name="name">The event name.</param>
     /// <param name="period">The match period.</param>
     /// <returns>A GameEventProjection object with populated event data.</returns>
-    private static GameEventProjection CreateRawEvent(Guid id, string name, int period, DateTime eventTimestamp = default, TimeSpan normalizedMatchTime = default)
+    private static GameEventProjection CreateRawEvent(
+        Guid id,
+        string name,
+        int period,
+        DateTime? eventTimestamp = null,
+        TimeSpan? normalizedMatchTime = null) // Changed to nullable
     {
-        var e = new GameEventProjection
+        return new GameEventProjection
         (
             Id: id,
             MatchLineupId: Guid.NewGuid(),
@@ -186,15 +231,15 @@ public class GetMatchEventsTimelineQueryHandlerTests
             EventName: name,
             IsPositive: true,
             PeriodNumber: period,
-            EventTimestamp: eventTimestamp == default ? DateTime.UtcNow : eventTimestamp,
-            NormalizedMatchTime: normalizedMatchTime == default ? TimeSpan.FromMinutes(20) : normalizedMatchTime,
+            EventTimestamp: eventTimestamp ?? DateTime.UtcNow,
+            // Logic: If it's NULL, we leave it NULL. 
+            // If we need a default for OTHER tests, we should be explicit there or use a sentinel.
+            NormalizedMatchTime: normalizedMatchTime,
             IsLeadToGoal: false,
             PlayerName: "Player Name",
             PlayerNumber: 7,
             TeamId: Guid.NewGuid(),
             TeamName: "Team Name"
         );
-
-        return e;
     }
 }
