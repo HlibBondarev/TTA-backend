@@ -66,6 +66,6 @@
 The system calculates "Clean Time" by processing segments between TimeAnchors:
 *   **Identify Active Segments:** Intervals between (PeriodStart or StoppageEnd) and (StoppageStart or PeriodEnd).
 *   **Calculate Effective Real Duration:** Sum of all active segments' real-world durations.
-*   **Coefficient Per Period:** $SportConfig.PeriodDuration / TotalEffectiveRealDuration$.
+*   **Coefficient Per Period:** $SportConfiguration.PeriodDurationMinutes / TotalEffectiveRealDuration$.
 *   **Normalized Time Formula:** $NormalizedTime = AccumulatedCleanTimeFromPriorSegments + (CurrentEventTimestamp - CurrentSegmentStart) * PeriodCoefficient$.
 *   **Player Presence:** Playing time is scaled using the same coefficient, automatically excluding "Dead Time" (Stoppages).
