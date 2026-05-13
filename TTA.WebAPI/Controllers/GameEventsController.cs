@@ -64,11 +64,13 @@ public class GameEventsController(
     /// <response code="400">If the event data is inconsistent (missing lineup entry).</response>
     /// <response code="403">If the user is not the owner of the tournament.</response>
     /// <response code="404">If the game event or associated tournament is not found.</response>
+    /// <response code="409">If there is a conflict with the current state of the resource.</response>
     [HttpDelete("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Delete(Guid id)
     {
         _logger.LogInformation("Attempting to delete game event {Id} by tournament owner.", id);

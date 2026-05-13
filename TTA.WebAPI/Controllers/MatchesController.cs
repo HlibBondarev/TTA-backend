@@ -89,12 +89,14 @@ public class MatchesController(
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user is not the owner of the tournament.</response>
     /// <response code="404">If the match or player was not found.</response>
+    /// <response code="409">If there is a conflict with the current state of the resource.</response>
     [HttpPost("{matchId:guid}/lineups/{playerRosterId:guid}")]
     [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> AddPlayerToLineup(
         [FromRoute] Guid matchId,
         [FromRoute] Guid playerRosterId,
@@ -270,6 +272,10 @@ public class MatchesController(
     /// <summary>
     /// Retrieves the chronological timeline of all game events for a specific match.
     /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <returns>A list of <see cref="GameEventResponse"/> representing the event timeline.</returns>
+    /// <response code="200">If the event timeline was successfully retrieved.</response>
+    /// <response code="404">If the match is not found.</response>
     [AllowAnonymous]
     [HttpGet("{matchId:guid}/events")]
     [ProducesResponseType(typeof(IEnumerable<GameEventResponse>), StatusCodes.Status200OK)]
@@ -286,10 +292,20 @@ public class MatchesController(
     /// Records a new game event for a match in the context of a specific team.
     /// Access is restricted to team editors via policy.
     /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="request">The request containing details of the game event to be recorded.</param>
+    /// <returns>A <see cref="Guid"/> representing the newly created game event.</returns>
+    /// <response code="201">If the game event was successfully created.</response>
+    /// <response code="403">If the user is not authorized to create the game event.</response>
+    /// <response code="404">If the match or team is not found.</response>
+    /// <response code="409">If there is a conflict with the current state of the resource.</response>
     [HttpPost("{matchId:guid}/teams/{teamId:guid}/events")]
     [Authorize(Policy = "TeamEditor")]
     [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> RecordMatchEventByTeam(Guid matchId, Guid teamId, [FromBody] CreateGameEventRequest request)
     {
         _logger.LogInformation("Team {TeamId} is recording a new event for match {MatchId}.", teamId, matchId);
@@ -303,10 +319,18 @@ public class MatchesController(
     /// <summary>
     /// Records a new game event for a match as a tournament organizer.
     /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="request">The request containing details of the game event to be recorded.</param>
+    /// <returns>A <see cref="Guid"/> representing the newly created game event.</returns>
+    /// <response code="201">If the game event was successfully created.</response>
+    /// <response code="403">If the user is not the owner of the tournament.</response>
+    /// <response code="404">If the match is not found.</response>
+    /// <response code="409">If there is a conflict with the current state of the resource.</response>
     [HttpPost("{matchId:guid}/events")]
     [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> RecordMatchEvent(Guid matchId, [FromBody] CreateGameEventRequest request)
     {
         var accessError = await ValidateTournamentOwnership(matchId);
@@ -322,11 +346,21 @@ public class MatchesController(
     /// Updates an existing game event for a specific team.
     /// Access is restricted to team editors via policy.
     /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="id">The unique identifier of the game event to update.</param>
+    /// <param name="request">The request containing updated details of the game event.</param>
+    /// <returns>A <see cref="GameEventResponse"/> representing the updated game event.</returns>
+    /// <response code="200">If the game event was successfully updated.</response>
+    /// <response code="403">If the user is not authorized to update the game event.</response>
+    /// <response code="404">If the game event is not found.</response>
+    /// <response code="409">If there is a conflict with the current state of the resource.</response>
     [HttpPut("{matchId:guid}/teams/{teamId:guid}/events/{id:guid}")]
     [Authorize(Policy = "TeamEditor")]
     [ProducesResponseType(typeof(GameEventResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> UpdateMatchEventByTeam(Guid matchId, Guid teamId, Guid id, [FromBody] UpdateGameEventRequest request)
     {
         _logger.LogInformation("Team {TeamId} is updating event {Id} in match {MatchId}.", teamId, id, matchId);
@@ -340,10 +374,19 @@ public class MatchesController(
     /// <summary>
     /// Updates an existing game event as a tournament organizer.
     /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="id">The unique identifier of the game event to update.</param>
+    /// <param name="request">The request containing updated details of the game event.</param>
+    /// <returns>A <see cref="GameEventResponse"/> representing the updated game event.</returns>
+    /// <response code="200">If the game event was successfully updated.</response>
+    /// <response code="403">If the user is not authorized to update the game event.</response>
+    /// <response code="404">If the game event is not found.</response>
+    /// <response code="409">If there is a conflict with the current state of the resource.</response>
     [HttpPut("{matchId:guid}/events/{id:guid}")]
     [ProducesResponseType(typeof(GameEventResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> UpdateMatchEvent(Guid matchId, Guid id, [FromBody] UpdateGameEventRequest request)
     {
         var accessError = await ValidateTournamentOwnership(matchId);
@@ -359,6 +402,14 @@ public class MatchesController(
     /// Deletes a game event in the context of a specific team. 
     /// Validates match and team integrity before deletion.
     /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="id">The unique identifier of the game event to delete.</param>
+    /// <returns>A <see cref="IActionResult"/> representing the result of the deletion operation.</returns>
+    /// <response code="204">If the deletion was successful.</response>
+    /// <response code="400">If the event data is inconsistent (missing lineup entry).</response>
+    /// <response code="403">If the user is not authorized to delete the game event.</response>
+    /// <response code="404">If the game event or associated lineup is not found.</response>
     [HttpDelete("{matchId:guid}/teams/{teamId:guid}/events/{id:guid}")]
     [Authorize(Policy = "TeamEditor")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
