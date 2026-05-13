@@ -31,9 +31,11 @@ public class GetMatchEventsTimelineQueryHandler(
 
         var rawEvents = await _gameEventRepository.GetMatchEventsAsync(request.MatchId, cancellationToken);
 
-        // Map and enforce chronological order by Match Time, then by absolute Timestamp
+        // Sorting logic: 
+        // 1. NormalizedMatchTime ASC (nulls last using TimeSpan.MaxValue as sentinel)
+        // 2. EventTimestamp ASC as a tie-breaker
         var response = rawEvents
-            .OrderBy(e => e.NormalizedMatchTime)
+            .OrderBy(e => e.NormalizedMatchTime ?? TimeSpan.MaxValue)
             .ThenBy(e => e.EventTimestamp)
             .Select(e => new GameEventResponse(
                 Id: e.Id,

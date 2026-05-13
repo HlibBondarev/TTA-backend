@@ -133,6 +133,42 @@ public class GetMatchEventsTimelineQueryHandlerTests
     }
 
     /// <summary>
+    /// Verifies that events with identical NormalizedMatchTime are sorted by EventTimestamp (tie-breaker).
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldSortByTimestamp_WhenNormalizedMatchTimeIsIdentical()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var query = new GetMatchEventsTimelineQuery(matchId);
+        var sharedTime = TimeSpan.FromMinutes(20);
+        var baseTimestamp = DateTime.UtcNow;
+
+        // Create two events with identical match minute but different actual timestamps
+        var event1 = CreateRawEvent(Guid.NewGuid(), "Yellow Card", 1);
+        event1 = event1 with { NormalizedMatchTime = sharedTime, EventTimestamp = baseTimestamp.AddSeconds(30) };
+
+        var event2 = CreateRawEvent(Guid.NewGuid(), "Goal", 1);
+        event2 = event2 with { NormalizedMatchTime = sharedTime, EventTimestamp = baseTimestamp };
+
+        var rawEvents = new List<GameEventProjection> { event1, event2 };
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetMatchEventsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(rawEvents);
+
+        // Act
+        var result = (await _handler.Handle(query, CancellationToken.None)).ToList();
+
+        // Assert
+        result.Should().HaveCount(2);
+        // Event 2 should be first because its EventTimestamp is earlier
+        result[0].EventName.Should().Be("Goal");
+        result[1].EventName.Should().Be("Yellow Card");
+        result[0].EventTimestamp.Should().BeBefore(result[1].EventTimestamp);
+    }
+
+    /// <summary>
     /// Helper method to create a dynamic raw event object using ExpandoObject.
     /// Matches the property naming expected by the handler.
     /// </summary>
