@@ -310,6 +310,14 @@ public class MatchesController(
     {
         _logger.LogInformation("Team {TeamId} is recording a new event for match {MatchId}.", teamId, matchId);
 
+        var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(request.MatchLineupId));
+
+        if (lineup == null)
+            return BadRequest("The specified lineup entry was not found.");
+
+        if (lineup.MatchId != matchId || lineup.TeamId != teamId)
+            return Forbid();
+
         var command = request.ToCommand(matchId);
         var result = await _mediator.Send(command);
 
@@ -364,6 +372,14 @@ public class MatchesController(
     public async Task<IActionResult> UpdateMatchEventByTeam(Guid matchId, Guid teamId, Guid id, [FromBody] UpdateGameEventRequest request)
     {
         _logger.LogInformation("Team {TeamId} is updating event {Id} in match {MatchId}.", teamId, id, matchId);
+
+        var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(request.MatchLineupId));
+
+        if (lineup == null)
+            return BadRequest("The specified lineup entry was not found.");
+
+        if (lineup.MatchId != matchId || lineup.TeamId != teamId)
+            return Forbid();
 
         var command = request.ToCommand(id, matchId);
         var result = await _mediator.Send(command);
