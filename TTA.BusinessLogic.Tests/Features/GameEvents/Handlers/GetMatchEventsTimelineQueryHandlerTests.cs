@@ -1,10 +1,10 @@
 ﻿using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
-using System.Dynamic;
 using TTA.BusinessLogic.Features.GameEvents.Handlers;
 using TTA.BusinessLogic.Features.GameEvents.Queries;
 using TTA.DataAccess.Repository.Api;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.BusinessLogic.Tests.Features.GameEvents.Handlers;
 
@@ -43,7 +43,7 @@ public class GetMatchEventsTimelineQueryHandlerTests
         var matchId = Guid.NewGuid();
         var query = new GetMatchEventsTimelineQuery(matchId);
 
-        var rawEvents = new List<object>
+        var rawEvents = new List<GameEventProjection>
         {
             CreateRawEvent(Guid.NewGuid(), "Goal", 1),
             CreateRawEvent(Guid.NewGuid(), "Yellow Card", 2)
@@ -82,7 +82,7 @@ public class GetMatchEventsTimelineQueryHandlerTests
 
         _gameEventRepositoryMock
             .Setup(r => r.GetMatchEventsAsync(matchId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<object>());
+            .ReturnsAsync([]);
 
         // Act
         var result = await _handler.Handle(query, CancellationToken.None);
@@ -95,29 +95,70 @@ public class GetMatchEventsTimelineQueryHandlerTests
     }
 
     /// <summary>
+    /// Verifies that the handler returns events in chronological order,
+    /// sorted primarily by NormalizedMatchTime and secondarily by EventTimestamp.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldReturnEventsInChronologicalOrder()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var query = new GetMatchEventsTimelineQuery(matchId);
+
+        var event1 = CreateRawEvent(Guid.NewGuid(), "Early Event", 1, DateTime.UtcNow.AddMinutes(-20), TimeSpan.FromMinutes(10));
+        var event2 = CreateRawEvent(Guid.NewGuid(), "Late Event", 2, DateTime.UtcNow.AddMinutes(-5), TimeSpan.FromMinutes(40));
+        var event3 = CreateRawEvent(Guid.NewGuid(), "Middle Event", 1, DateTime.UtcNow.AddMinutes(-15), TimeSpan.FromMinutes(25));
+
+        // We return them out of order from the repository
+        var rawEvents = new List<GameEventProjection> { event2, event1, event3 };
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetMatchEventsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(rawEvents);
+
+        // Act
+        var result = (await _handler.Handle(query, CancellationToken.None)).ToList();
+
+        // Assert
+        result.Should().HaveCount(3);
+        result[0].EventName.Should().Be("Early Event");
+        result[1].EventName.Should().Be("Middle Event");
+        result[2].EventName.Should().Be("Late Event");
+
+        result[0].NormalizedMatchTime.Should().NotBeNull();
+        result[1].NormalizedMatchTime.Should().NotBeNull();
+        result[2].NormalizedMatchTime.Should().NotBeNull();
+        result[0].NormalizedMatchTime!.Value.Should().BeLessThanOrEqualTo(result[1].NormalizedMatchTime!.Value);
+        result[1].NormalizedMatchTime!.Value.Should().BeLessThanOrEqualTo(result[2].NormalizedMatchTime!.Value);
+    }
+
+    /// <summary>
     /// Helper method to create a dynamic raw event object using ExpandoObject.
     /// Matches the property naming expected by the handler.
     /// </summary>
     /// <param name="id">The event ID.</param>
     /// <param name="name">The event name.</param>
     /// <param name="period">The match period.</param>
-    /// <returns>A dynamic object with populated event data.</returns>
-    private static dynamic CreateRawEvent(Guid id, string name, int period)
+    /// <returns>A GameEventProjection object with populated event data.</returns>
+    private static GameEventProjection CreateRawEvent(Guid id, string name, int period, DateTime eventTimestamp = default, TimeSpan normalizedMatchTime = default)
     {
-        dynamic e = new ExpandoObject();
-        e.id = id;
-        e.matchlineupid = Guid.NewGuid();
-        e.eventdefinitionid = Guid.NewGuid();
-        e.eventname = name;
-        e.ispositive = true;
-        e.periodnumber = period;
-        e.eventtimestamp = DateTime.UtcNow;
-        e.normalizedmatchtime = TimeSpan.FromMinutes(20);
-        e.isleadtogoal = false;
-        e.playername = "Player Name";
-        e.playernumber = 7;
-        e.teamid = Guid.NewGuid();
-        e.teamname = "Team Name";
+        var e = new GameEventProjection
+        (
+            Id: id,
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            EventName: name,
+            IsPositive: true,
+            PeriodNumber: period,
+            EventTimestamp: eventTimestamp == default ? DateTime.UtcNow : eventTimestamp,
+            NormalizedMatchTime: normalizedMatchTime == default ? TimeSpan.FromMinutes(20) : normalizedMatchTime,
+            IsLeadToGoal: false,
+            PlayerName: "Player Name",
+            PlayerNumber: 7,
+            TeamId: Guid.NewGuid(),
+            TeamName: "Team Name"
+        );
+
         return e;
     }
 }

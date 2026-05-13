@@ -31,23 +31,28 @@ public class GetMatchEventsTimelineQueryHandler(
 
         var rawEvents = await _gameEventRepository.GetMatchEventsAsync(request.MatchId, cancellationToken);
 
-        var response = rawEvents.Select(e => new GameEventResponse(
-            Id: e.id,
-            MatchLineupId: e.matchlineupid,
-            EventDefinitionId: e.eventdefinitionid,
-            EventName: e.eventname,
-            IsPositive: e.ispositive,
-            PeriodNumber: e.periodnumber,
-            EventTimestamp: e.eventtimestamp,
-            NormalizedMatchTime: e.normalizedmatchtime,
-            IsLeadToGoal: e.isleadtogoal,
-            PlayerName: e.playername,
-            PlayerNumber: e.playernumber,
-            TeamId: e.teamid,
-            TeamName: e.teamname
-        )).ToList();
+        // Map and enforce chronological order by Match Time, then by absolute Timestamp
+        var response = rawEvents
+            .OrderBy(e => e.NormalizedMatchTime)
+            .ThenBy(e => e.EventTimestamp)
+            .Select(e => new GameEventResponse(
+                Id: e.Id,
+                MatchLineupId: e.MatchLineupId,
+                EventDefinitionId: e.EventDefinitionId,
+                EventName: e.EventName,
+                IsPositive: e.IsPositive,
+                PeriodNumber: e.PeriodNumber,
+                EventTimestamp: e.EventTimestamp,
+                NormalizedMatchTime: e.NormalizedMatchTime,
+                IsLeadToGoal: e.IsLeadToGoal,
+                PlayerName: e.PlayerName,
+                PlayerNumber: e.PlayerNumber,
+                TeamId: e.TeamId,
+                TeamName: e.TeamName
+            )).ToList();
 
         _logger.LogInformation("Successfully retrieved {Count} events for Match {MatchId}.", response.Count, request.MatchId);
+
         return response;
     }
 }

@@ -1,5 +1,6 @@
 ﻿using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Base;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository.Api;
 
@@ -30,7 +31,7 @@ public interface IGameEventRepository : IEntityRepositoryBase<Guid, GameEvent>
     /// <param name="id">The unique identifier of the game event.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A dynamic object containing the raw record details if found.</returns>
-    Task<dynamic?> GetByIdWithDetailsAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<GameEventProjection?> GetByIdWithDetailsAsync(Guid id, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves all events associated with a specific match, enriched with player and team metadata.
@@ -38,7 +39,7 @@ public interface IGameEventRepository : IEntityRepositoryBase<Guid, GameEvent>
     /// <param name="matchId">The unique identifier of the match.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A collection of dynamic objects representing the match timeline.</returns>
-    Task<IEnumerable<dynamic>> GetMatchEventsAsync(Guid matchId, CancellationToken cancellationToken = default);
+    Task<IEnumerable<GameEventProjection>> GetMatchEventsAsync(Guid matchId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Removes a game event from the database by its unique identifier.

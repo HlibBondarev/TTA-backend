@@ -2,6 +2,7 @@
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository;
 
@@ -35,7 +36,7 @@ public class GameEventRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
-    public async Task<dynamic?> GetByIdWithDetailsAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<GameEventProjection?> GetByIdWithDetailsAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_id", id);
@@ -43,14 +44,14 @@ public class GameEventRepository(IDbConnectionFactory connectionFactory)
         using var connection = await OpenConnectionAsync(cancellationToken);
 
         // Returning dynamic to keep repository decoupled from API-level DTOs
-        return await connection.QueryFirstOrDefaultAsync(new CommandDefinition(
+        return await connection.QueryFirstOrDefaultAsync<GameEventProjection>(new CommandDefinition(
             SqlStatements.ForGameEvents.GetByIdWithDetails,
             parameters,
             cancellationToken: cancellationToken));
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<dynamic>> GetMatchEventsAsync(Guid matchId, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<GameEventProjection>> GetMatchEventsAsync(Guid matchId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_match_id", matchId);
@@ -58,7 +59,7 @@ public class GameEventRepository(IDbConnectionFactory connectionFactory)
         using var connection = await OpenConnectionAsync(cancellationToken);
 
         // Returns dynamic objects to include joined metadata like PlayerName, TeamName, and PlayerNumber.
-        return await connection.QueryAsync<dynamic>(new CommandDefinition(
+        return await connection.QueryAsync<GameEventProjection>(new CommandDefinition(
             SqlStatements.ForGameEvents.GetMatchEvents,
             parameters,
             cancellationToken: cancellationToken));

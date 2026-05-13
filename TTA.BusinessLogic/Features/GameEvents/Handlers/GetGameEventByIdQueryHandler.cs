@@ -40,19 +40,19 @@ public class GetGameEventByIdQueryHandler(
         }
 
         var response = new GameEventResponse(
-            Id: e.id,
-            MatchLineupId: e.matchlineupid,
-            EventDefinitionId: e.eventdefinitionid,
-            EventName: e.eventname,
-            IsPositive: e.ispositive,
-            PeriodNumber: e.periodnumber,
-            EventTimestamp: e.eventtimestamp,
-            NormalizedMatchTime: e.normalizedmatchtime,
-            IsLeadToGoal: e.isleadtogoal,
-            PlayerName: e.playername,
-            PlayerNumber: e.playernumber,
-            TeamId: e.teamid,
-            TeamName: e.teamname
+            Id: e.Id,
+            MatchLineupId: e.MatchLineupId,
+            EventDefinitionId: e.EventDefinitionId,
+            EventName: e.EventName,
+            IsPositive: e.IsPositive,
+            PeriodNumber: e.PeriodNumber,
+            EventTimestamp: e.EventTimestamp,
+            NormalizedMatchTime: e.NormalizedMatchTime,
+            IsLeadToGoal: e.IsLeadToGoal,
+            PlayerName: e.PlayerName,
+            PlayerNumber: e.PlayerNumber,
+            TeamId: e.TeamId,
+            TeamName: e.TeamName
         );
 
         _logger.LogInformation("Successfully retrieved details for GameEvent {Id}.", request.Id);

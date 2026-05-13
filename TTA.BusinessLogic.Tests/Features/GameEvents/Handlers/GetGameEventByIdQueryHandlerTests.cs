@@ -1,11 +1,11 @@
 ﻿using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
-using System.Dynamic;
 using TTA.BusinessLogic.Features.GameEvents.Handlers;
 using TTA.BusinessLogic.Features.GameEvents.Queries;
 using TTA.Common.Exceptions;
 using TTA.DataAccess.Repository.Api;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.BusinessLogic.Tests.Features.GameEvents.Handlers;
 
@@ -42,27 +42,26 @@ public class GetGameEventByIdQueryHandlerTests
         // Arrange
         var eventId = Guid.NewGuid();
         var query = new GetGameEventByIdQuery(eventId);
-
-        // We use ExpandoObject because anonymous types are internal and 
-        // not accessible via 'dynamic' across different assemblies.
-        dynamic detailedEvent = new ExpandoObject();
-        detailedEvent.id = eventId;
-        detailedEvent.matchlineupid = Guid.NewGuid();
-        detailedEvent.eventdefinitionid = Guid.NewGuid();
-        detailedEvent.eventname = "Goal";
-        detailedEvent.ispositive = true;
-        detailedEvent.periodnumber = 1;
-        detailedEvent.eventtimestamp = DateTime.UtcNow;
-        detailedEvent.normalizedmatchtime = TimeSpan.FromMinutes(15);
-        detailedEvent.isleadtogoal = false;
-        detailedEvent.playername = "John Doe";
-        detailedEvent.playernumber = 10;
-        detailedEvent.teamid = Guid.NewGuid();
-        detailedEvent.teamname = "Warriors";
+        GameEventProjection detailedEvent = new
+        (
+            Id: eventId,
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            EventName: "Goal",
+            IsPositive: true,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            NormalizedMatchTime: TimeSpan.FromMinutes(15),
+            IsLeadToGoal: false,
+            PlayerName: "John Doe",
+            PlayerNumber: 10,
+            TeamId: Guid.NewGuid(),
+            TeamName: "Warriors"
+        );
 
         _gameEventRepositoryMock
             .Setup(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((object)detailedEvent);
+            .ReturnsAsync(detailedEvent);
 
         // Act
         var result = await _handler.Handle(query, CancellationToken.None);
@@ -90,7 +89,7 @@ public class GetGameEventByIdQueryHandlerTests
 
         _gameEventRepositoryMock
             .Setup(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((object?)null);
+            .ReturnsAsync((GameEventProjection?)null);
 
         // Act
         var act = async () => await _handler.Handle(query, CancellationToken.None);

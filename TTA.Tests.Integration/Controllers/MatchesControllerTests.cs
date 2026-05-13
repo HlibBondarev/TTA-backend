@@ -402,6 +402,61 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
+    /// Verifies that match events are correctly retrieved and ordered chronologically by match time.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchEvents_ShouldReturnSortedTimeline_WhenMatchExists()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+
+        // Ensure a position definition exists for this specific sport to satisfy FK
+        var positionId = Guid.NewGuid();
+        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
+                VALUES (@id, @sId, 'Forward', 'FW') ON CONFLICT DO NOTHING",
+                new { id = positionId, sId = context.SportId });
+        }
+
+        var matchId = Guid.NewGuid();
+        // Signature: (id, tournamentId, homeId, guestId, matchNumber)
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-SORT-01");
+
+        var coachId = Guid.NewGuid();
+        // Calling your helper with the EXACT order required by your stack trace:
+        // (matchId, teamId, cityId, tournamentId, sportId)
+        await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+
+        // Retrieve the generated LineupId to link game events
+        var lineupId = await GetLineupIdAsync(matchId, homeTeamId);
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", true);
+
+        // Seed events with specific match times to verify sorting
+        await SeedGameEventAsync(lineupId, eventDefId, DateTime.UtcNow.AddMinutes(-5), TimeSpan.FromMinutes(40));
+        await SeedGameEventAsync(lineupId, eventDefId, DateTime.UtcNow.AddMinutes(-15), TimeSpan.FromMinutes(10));
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/events");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var events = await response.Content.ReadFromJsonAsync<List<GameEventResponse>>();
+        events.Should().NotBeNull();
+        events.Should().HaveCount(2);
+
+        // Assert chronological order (10 min first, 40 min second)
+        events![0].NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(10));
+        events[1].NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(40));
+    }
+
+    /// <summary>
     /// Verifies that a new game event can be recorded for a specific match.
     /// </summary>
     [Fact]
@@ -628,9 +683,62 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return id;
     }
 
+    /// <summary>
+    /// Seeds a game event record directly into the database.
+    /// </summary>
+    /// <param name="lineupId">The target match lineup identifier.</param>
+    /// <param name="eventDefId">The event definition identifier.</param>
+    /// <param name="timestamp">The absolute timestamp of the event.</param>
+    /// <param name="normalizedTime">The relative match time.</param>
+    /// <returns>The GUID of the created game event.</returns>
+    protected async Task<Guid> SeedGameEventAsync(
+        Guid lineupId,
+        Guid eventDefId,
+        DateTime? timestamp = null,
+        TimeSpan? normalizedTime = null)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var id = Guid.NewGuid();
+        const string sql = @"INSERT INTO public.gameevents 
+            (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) 
+            VALUES (@id, @lId, @edId, 1, @ts, @nt, false, NOW())";
+
+        await conn.ExecuteAsync(sql, new
+        {
+            id,
+            lId = lineupId,
+            edId = eventDefId,
+            ts = timestamp ?? DateTime.UtcNow,
+            nt = normalizedTime
+        });
+
+        return id;
+    }
+
     #endregion
 
     #region Helpers
+
+    /// <summary>
+    /// Retrieves the lineup identifier for a specific match and team by joining with player rosters.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <returns>The GUID of the found match lineup.</returns>
+    private async Task<Guid> GetLineupIdAsync(Guid matchId, Guid teamId)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        return await conn.QuerySingleAsync<Guid>(@"
+            SELECT ml.id 
+            FROM public.matchlineups ml 
+            JOIN public.playerrosters pr ON ml.playerrosterid = pr.id 
+            WHERE ml.matchid = @mId AND pr.teamid = @tId 
+            LIMIT 1",
+            new { mId = matchId, tId = teamId });
+    }
 
     private async Task<(Guid TournamentId, Guid CityId, Guid SportId)> SetupTournamentContextAsync(string ownerId)
     {

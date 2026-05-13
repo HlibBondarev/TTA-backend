@@ -80,11 +80,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         var result = await _repository.GetByIdWithDetailsAsync(newEvent.Id);
 
         // Assert
-        Assert.NotNull(result);
-
-        var dict = (IDictionary<string, object>)result!;
-        Assert.True(dict!.ContainsKey("id"), "The returned object must contain an 'id' column");
-        Assert.Equal(newEvent.Id, (Guid)dict["id"]);
+        Assert.Equal(newEvent.Id, result!.Id);
     }
 
     /// <summary>
