@@ -21,6 +21,11 @@ public class CreateGameEventRequestValidator : AbstractValidator<CreateGameEvent
 
         RuleFor(x => x.EventTimestamp)
             .NotEmpty().WithMessage("Event timestamp is required.")
-            .LessThanOrEqualTo(DateTime.UtcNow).WithMessage("Event timestamp cannot be in the future.");
+            .LessThanOrEqualTo(_ => DateTime.UtcNow).WithMessage("Event timestamp cannot be in the future.");
+
+        // Optional: If MatchLineupId is provided, it should not be an empty Guid
+        RuleFor(x => x.MatchLineupId)
+            .NotEqual(Guid.Empty)
+            .WithMessage("MatchLineupId cannot be an empty GUID.");
     }
 }
