@@ -313,7 +313,7 @@ public class MatchesController(
         var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(request.MatchLineupId));
 
         if (lineup == null)
-            return BadRequest("The specified lineup entry was not found.");
+            return NotFound("The specified lineup entry was not found.");
 
         if (lineup.MatchId != matchId || lineup.TeamId != teamId)
             return Forbid();
@@ -343,6 +343,14 @@ public class MatchesController(
     {
         var accessError = await ValidateTournamentOwnership(matchId);
         if (accessError != null) return accessError;
+
+        var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(request.MatchLineupId));
+
+        if (lineup == null)
+        {
+            _logger.LogWarning("Record event failed: MatchLineup {LineupId} not found.", request.MatchLineupId);
+            return NotFound($"The specified lineup entry {request.MatchLineupId} was not found.");
+        }
 
         var command = request.ToCommand(matchId);
         var result = await _mediator.Send(command);
@@ -376,7 +384,7 @@ public class MatchesController(
         var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(request.MatchLineupId));
 
         if (lineup == null)
-            return BadRequest("The specified lineup entry was not found.");
+            return NotFound("The specified lineup entry was not found.");
 
         if (lineup.MatchId != matchId || lineup.TeamId != teamId)
             return Forbid();
@@ -407,6 +415,14 @@ public class MatchesController(
     {
         var accessError = await ValidateTournamentOwnership(matchId);
         if (accessError != null) return accessError;
+
+        var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(request.MatchLineupId));
+
+        if (lineup == null)
+        {
+            _logger.LogWarning("Update failed: MatchLineup {LineupId} not found.", request.MatchLineupId);
+            return NotFound($"The specified lineup entry {request.MatchLineupId} was not found.");
+        }
 
         var command = request.ToCommand(id, matchId);
         var result = await _mediator.Send(command);
@@ -442,6 +458,7 @@ public class MatchesController(
 
         // 2. Fetch lineup to verify match and team ownership (MatchLineupId is now Guid)
         var lineupItem = await _mediator.Send(new GetMatchLineupByIdQuery(gameEvent.MatchLineupId));
+
         if (lineupItem == null)
         {
             _logger.LogError("Data integrity error: Event {Id} exists but its lineup record is missing.", id);
