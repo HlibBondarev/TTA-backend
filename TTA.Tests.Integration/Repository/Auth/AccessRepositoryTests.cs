@@ -170,7 +170,7 @@ public class AccessRepositoryTests : BaseIntegrationTest
 
         // Set CreatedAt significantly in the past to satisfy the DB constraint:
         // expiresat >= createdat
-        var createdAt = DateTime.UtcNow.AddDays(-1);
+        var createdAt = DateTime.UtcNow.AddDays(-2);
         var expiresAt = DateTime.UtcNow.AddSeconds(-1);
 
         await SeedUserAsync(userId);

@@ -418,7 +418,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Yellow Card", false);
         var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
 
-        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, DateTime.UtcNow, false);
+        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, DateTime.UtcNow.AddSeconds(-5), false);
 
         // Act
         var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", request);
@@ -446,7 +446,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Timeout", true);
         var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
 
-        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, DateTime.UtcNow, false);
+        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, DateTime.UtcNow.AddSeconds(-5), false);
 
         // Act
         var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events", request);
