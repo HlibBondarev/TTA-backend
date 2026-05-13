@@ -95,9 +95,17 @@ public class GameEventsController(
         var accessError = await ValidateTournamentOwnership(lineupItem.MatchId);
         if (accessError != null) return accessError;
 
-        await _mediator.Send(new DeleteGameEventCommand(id));
+        // 4.Capture the result of the deletion command
+        var deleted = await _mediator.Send(new DeleteGameEventCommand(id));
+
+        if (!deleted)
+        {
+            _logger.LogWarning("Deletion failed for game event {Id} after validation.", id);
+            return Conflict("The game event exists but could not be deleted, likely due to a conflict or internal state.");
+        }
 
         _logger.LogInformation("Game event {Id} successfully deleted by tournament owner.", id);
+
         return NoContent();
     }
 
