@@ -43,7 +43,13 @@ public class UpdateGameEventHandler(
 
         var lineupEntry = await _matchLineupRepository.GetByIdAsync(request.MatchLineupId, cancellationToken);
 
-        if (lineupEntry == null || lineupEntry.MatchId != request.MatchId)
+        if (lineupEntry == null)
+        {
+            _logger.LogWarning("Game event update failed: MatchLineup {MatchLineupId} not found.", request.MatchLineupId);
+            throw new NotFoundException($"Match lineup with ID {request.MatchLineupId} was not found.");
+        }
+
+        if (lineupEntry.MatchId != request.MatchId)
         {
             _logger.LogWarning("Game event update failed: Player {MatchLineupId} is invalid for Match {MatchId}.",
                 request.MatchLineupId, request.MatchId);
