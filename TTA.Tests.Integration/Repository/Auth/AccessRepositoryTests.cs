@@ -168,10 +168,9 @@ public class AccessRepositoryTests : BaseIntegrationTest
         var scope = TargetScope.Club;
         var role = AppRole.FullControl;
 
-        // Set CreatedAt significantly in the past to satisfy the DB constraint:
-        // expiresat >= createdat
-        var createdAt = DateTime.UtcNow.AddDays(-1);
-        var expiresAt = DateTime.UtcNow.AddSeconds(-1);
+        // Use a significant buffer to ensure expiration is recognized by the DB
+        var createdAt = DateTime.UtcNow.AddDays(-2);
+        var expiresAt = DateTime.UtcNow.AddDays(-1);
 
         await SeedUserAsync(userId);
 
@@ -193,7 +192,7 @@ public class AccessRepositoryTests : BaseIntegrationTest
         roleBefore.Should().Be(role);
 
         // Act - Remove Access
-        // Now policy.ExpiresAt (-1s) is > policy.CreatedAt (-1 day), satisfying the DB check
+        // Setting ExpiresAt to 1 day ago ensures it is definitely in the past for the DB
         policy.ExpiresAt = expiresAt;
         await _repository.RemoveAccessAsync(policy);
 
