@@ -40,7 +40,7 @@
 
 ### 5. TTA Engine (Technical & Tactical Actions)
 *   **EventDefinition:** `Id`, `SportId`, `Name`, `ShortName`, `IsPositive` (bool), `CreatedAt`.
-*   **GameEvent:** `Id`, `EventDefinitionId`, `PeriodNumber`, `EventTimestamp` (Real Time), `NormalizedMatchTime` (Interval), `IsLeadToGoal` (bool), `CreatedAt`.
+*   **GameEvent:** `Id`, `MatchLineupId`, `EventDefinitionId`, `PeriodNumber`, `EventTimestamp` (Real Time), `NormalizedMatchTime` (Interval), `IsLeadToGoal` (bool), `CreatedAt`.
 *   **PlayerPresence:** `Id`, `MatchLineupId`, `PeriodNumber`, `TimeIn`, `TimeOut`.
 *   **TimeAnchor:** `Id`, `MatchId`, `PeriodNumber`, `Type` (Enum: 0:Start, 1:End, 2:StoppageStart, 3:StoppageEnd), `Timestamp`.
 
