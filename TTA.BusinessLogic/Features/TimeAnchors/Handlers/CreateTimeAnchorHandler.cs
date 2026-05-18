@@ -86,6 +86,8 @@ public class CreateTimeAnchorHandler(
                     throw new ConflictException($"Cannot end period {request.PeriodNumber} before it starts.");
                 if (existing.Any(a => a.Type == TimeAnchorType.PeriodEnd))
                     throw new ConflictException($"Period {request.PeriodNumber} is already finished.");
+                if (last?.Type == TimeAnchorType.StoppageStart)
+                    throw new ConflictException("Cannot end period: a stoppage is currently active.");
                 break;
 
             case TimeAnchorType.StoppageStart:
