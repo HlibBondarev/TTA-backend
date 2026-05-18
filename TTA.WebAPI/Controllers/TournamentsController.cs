@@ -54,18 +54,20 @@ public class TournamentsController(
     {
         _logger.LogInformation("Executing Create action for tournament: {Name}.", request.Name);
 
+        // 1) Validate the incoming request
         var validationResult = await validator.ValidateAsync(request);
+
         if (!validationResult.IsValid)
         {
             _logger.LogWarning("Validation failed for CreateTournamentRequest: {Errors}.", validationResult.Errors);
             return BadRequest(validationResult.Errors);
         }
 
-        // Get User Id from custom claim
+        // 2) Get User Id from custom claim
         string userId = this.GetUserId(_auth0Settings);
 
+        // 3) Map the request to a command and send it to the mediator
         var command = request.ToCommand(userId);
-
         var result = await _mediator.Send(command);
 
         return StatusCode(StatusCodes.Status201Created, result);
@@ -98,18 +100,20 @@ public class TournamentsController(
     {
         _logger.LogInformation("Executing Update action for tournament {Id}: {Name}.", id, request.Name);
 
+        // 1) Validate the incoming request
         var validationResult = await validator.ValidateAsync(request);
+
         if (!validationResult.IsValid)
         {
             _logger.LogWarning("Validation failed for UpdateTournamentRequest {Id}: {Errors}.", id, validationResult.Errors);
             return BadRequest(validationResult.Errors);
         }
 
-        // Get User Id from custom claim
+        // 2) Get User Id from custom claim
         string userId = this.GetUserId(_auth0Settings);
 
+        // 3) Map the request to a command and send it to the mediator
         var command = request.ToCommand(id, userId);
-
         var result = await _mediator.Send(command);
 
         return Ok(result);
@@ -144,6 +148,7 @@ public class TournamentsController(
     /// <summary>
     /// Schedules a new match.
     /// </summary>
+    /// <param name="tournamentId">The unique identifier of the tournament.</param>
     /// <param name="request">The match creation request data.</param>
     /// <param name="validator">The validator for the creation request.</param>
     /// <returns>The newly created match entity.</returns>
@@ -169,6 +174,7 @@ public class TournamentsController(
 
         // 1) Validate the incoming request
         var validationResult = await validator.ValidateAsync(request);
+
         if (!validationResult.IsValid)
         {
             _logger.LogWarning("Validation failed for ScheduleMatchRequest in tournament with ID: {TournamentId}. Errors: {Errors}.", tournamentId, validationResult.Errors);
@@ -222,6 +228,7 @@ public class TournamentsController(
             return NotFound();
         }
 
+        // If tournament exists, retrieve matches
         var query = new GetTournamentMatchesQuery(tournamentId);
         var result = await _mediator.Send(query);
 

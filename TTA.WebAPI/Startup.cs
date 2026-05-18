@@ -123,6 +123,7 @@ public static class Startup
         services.AddScoped<IMatchRepository, MatchRepository>();
         services.AddScoped<IMatchLineupRepository, MatchLineupRepository>();
         services.AddScoped<IGameEventRepository, GameEventRepository>();
+        services.AddScoped<ITimeAnchorRepository, TimeAnchorRepository>();
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 

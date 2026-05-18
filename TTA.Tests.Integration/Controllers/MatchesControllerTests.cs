@@ -3,9 +3,13 @@ using FluentAssertions;
 using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using TTA.BusinessLogic.Features.GameEvents.DTOs;
 using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.MatchLineups.DTOs;
+using TTA.BusinessLogic.Features.TimeAnchors.DTOs;
+using TTA.DataAccess.Enums;
 using TTA.Tests.Integration.Infrastructure;
 using Xunit.Abstractions;
 
@@ -473,7 +477,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Yellow Card", false);
         var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
 
-        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, DateTime.UtcNow.AddSeconds(-5), false);
+        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, false);
 
         // Act
         var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", request);
@@ -501,7 +505,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Timeout", true);
         var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
 
-        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, DateTime.UtcNow.AddSeconds(-5), false);
+        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, false);
 
         // Act
         var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events", request);
@@ -596,6 +600,156 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    #endregion
+
+    #region Time Anchors Tests
+
+    /// <summary>
+    /// Verifies that retrieving match anchors returns an OK response with the list of anchors.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchAnchors_ShouldReturnOk_WhenAnchorsExist()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC Anchors");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC Anchors");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "TA-01");
+
+        // Seed initial anchors for the match
+        await SeedTimeAnchorAsync(matchId, 1, (int)TimeAnchorType.PeriodStart);
+        await SeedTimeAnchorAsync(matchId, 1, (int)TimeAnchorType.PeriodEnd);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/anchors");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Explicitly defining JSON options to handle string-to-enum conversion
+        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        jsonOptions.Converters.Add(new JsonStringEnumConverter());
+
+        var anchors = await response.Content.ReadFromJsonAsync<List<TimeAnchorResponse>>(jsonOptions);
+        anchors.Should().NotBeNull();
+        anchors!.Count.Should().BeGreaterThanOrEqualTo(2);
+    }
+
+    /// <summary>
+    /// Verifies that retrieving a specific time anchor by ID returns an OK response.
+    /// </summary>
+    [Fact]
+    public async Task GetTimeAnchorById_ShouldReturnOk_WhenExists()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC Anchor");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC Anchor");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "TA-02");
+
+        var anchorId = await SeedTimeAnchorAsync(matchId, 1, (int)TimeAnchorType.PeriodStart);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/anchors/{anchorId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Explicitly defining JSON options to handle string-to-enum conversion
+        var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        jsonOptions.Converters.Add(new JsonStringEnumConverter());
+
+        var anchor = await response.Content.ReadFromJsonAsync<TimeAnchorResponse>(jsonOptions);
+        anchor.Should().NotBeNull();
+        anchor!.Id.Should().Be(anchorId);
+        anchor.MatchId.Should().Be(matchId);
+    }
+
+    /// <summary>
+    /// Verifies that an authorized user (Tournament Owner) can successfully record a new time anchor.
+    /// </summary>
+    [Fact]
+    public async Task RecordTimeAnchor_ShouldReturnCreated_WhenUserIsAuthorized()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC RecAnchor");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC RecAnchor");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "TA-03");
+
+        var request = new CreateTimeAnchorRequest(1, TimeAnchorType.PeriodStart);
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/anchors", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var returnedId = await response.Content.ReadFromJsonAsync<Guid>();
+        returnedId.Should().NotBeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that an authorized user (Tournament Owner) can delete an existing time anchor.
+    /// </summary>
+    [Fact]
+    public async Task DeleteTimeAnchor_ShouldReturnNoContent_WhenUserIsAuthorized()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC DelAnchor");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC DelAnchor");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "TA-04");
+
+        var anchorId = await SeedTimeAnchorAsync(matchId, 1, (int)TimeAnchorType.PeriodStart);
+
+        // Act
+        var response = await Client.DeleteAsync($"{BaseUrl}/{matchId}/anchors/{anchorId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    #endregion
+
+    #region Helpers for Time Anchors
+
+    /// <summary>
+    /// Seeds a time anchor record directly into the database for integration testing.
+    /// Bypasses the application layer to set up reliable initial state.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the associated match.</param>
+    /// <param name="periodNumber">The match period number.</param>
+    /// <param name="type">The integer representation of the time anchor type.</param>
+    /// <returns>The unique identifier of the seeded time anchor.</returns>
+    private async Task<Guid> SeedTimeAnchorAsync(Guid matchId, int periodNumber, int type)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var id = Guid.NewGuid();
+        const string sql = "INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) VALUES (@id, @matchid, @period, @type, @ts)";
+
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("matchid", matchId);
+        cmd.Parameters.AddWithValue("period", periodNumber);
+        cmd.Parameters.AddWithValue("type", type);
+        cmd.Parameters.AddWithValue("ts", DateTime.UtcNow);
+
+        await cmd.ExecuteNonQueryAsync();
+
+        return id;
     }
 
     #endregion

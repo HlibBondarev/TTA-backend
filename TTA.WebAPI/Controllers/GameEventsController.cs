@@ -44,7 +44,7 @@ public class GameEventsController(
     [HttpGet("{id:guid}")]
     [ProducesResponseType(typeof(GameEventResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetById(Guid id)
+    public async Task<IActionResult> GetById([FromRoute] Guid id)
     {
         _logger.LogInformation("Retrieving details for game event {Id}.", id);
         var result = await _mediator.Send(new GetGameEventByIdQuery(id));
@@ -71,7 +71,7 @@ public class GameEventsController(
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> Delete(Guid id)
+    public async Task<IActionResult> Delete([FromRoute] Guid id)
     {
         _logger.LogInformation("Attempting to delete game event {Id} by tournament owner.", id);
 

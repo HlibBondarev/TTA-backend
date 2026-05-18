@@ -11,13 +11,13 @@ namespace TTA.BusinessLogic.Features.GameEvents.Handlers;
 /// </summary>
 /// <param name="gameEventRepository">The repository for game event data operations.</param>
 /// <param name="logger">The logger instance for tracking execution flow.</param>
-public class GetMatchEventsTimelineQueryHandler(
+public class GetMatchEventsTimelineHandler(
     IGameEventRepository gameEventRepository,
-    ILogger<GetMatchEventsTimelineQueryHandler> logger)
+    ILogger<GetMatchEventsTimelineHandler> logger)
     : IRequestHandler<GetMatchEventsTimelineQuery, IEnumerable<GameEventResponse>>
 {
     private readonly IGameEventRepository _gameEventRepository = gameEventRepository;
-    private readonly ILogger<GetMatchEventsTimelineQueryHandler> _logger = logger;
+    private readonly ILogger<GetMatchEventsTimelineHandler> _logger = logger;
 
     /// <summary>
     /// Fetches raw event data from the repository and maps it to a chronological list of response DTOs.

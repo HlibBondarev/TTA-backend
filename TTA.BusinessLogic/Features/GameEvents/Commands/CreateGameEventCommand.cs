@@ -11,14 +11,12 @@ namespace TTA.BusinessLogic.Features.GameEvents.Commands;
 /// <param name="MatchLineupId">The unique identifier of the match lineup.</param>
 /// <param name="EventDefinitionId">The identifier of the event type definition.</param>
 /// <param name="PeriodNumber">The match period when the event occurred.</param>
-/// <param name="EventTimestamp">The UTC timestamp of the event.</param>
 /// <param name="IsLeadToGoal">Indicates if the event was a direct lead to a goal.</param>
 public record CreateGameEventCommand(
     Guid MatchId,
     Guid MatchLineupId,
     Guid EventDefinitionId,
     int PeriodNumber,
-    DateTime EventTimestamp,
     bool IsLeadToGoal) : IRequest<Guid>;
 
 /// <summary>
@@ -37,7 +35,8 @@ public static class CreateGameEventCommandExtensions
         MatchLineupId = cmd.MatchLineupId,
         EventDefinitionId = cmd.EventDefinitionId,
         PeriodNumber = cmd.PeriodNumber,
-        EventTimestamp = cmd.EventTimestamp,
+        // Enforcing UTC consistency as per project standards
+        EventTimestamp = DateTime.UtcNow,
         IsLeadToGoal = cmd.IsLeadToGoal,
         CreatedAt = DateTime.UtcNow
     };

@@ -1287,3 +1287,87 @@ BEGIN
     RETURN FOUND;
 END;
 $$ LANGUAGE plpgsql;
+
+-- =============================================================
+-- TIME ANCHORS STORED FUNCTIONS
+-- =============================================================
+
+/**********************************************************************************
+ * Inserts or updates a time anchor record.
+ * If the provided ID exists, updates the record. Otherwise, inserts a new one.
+ * Returns the resulting row from the public.timeanchors table.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.upsert_time_anchor(
+    p_id UUID,
+    p_match_id UUID,
+    p_period_number INT,
+    p_type INT,
+    p_timestamp TIMESTAMPTZ
+)
+RETURNS SETOF public.timeanchors AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO public.timeanchors (
+        id,
+        matchid,
+        periodnumber,
+        type,
+        timestamp
+    )
+    VALUES (
+        p_id,
+        p_match_id,
+        p_period_number,
+        p_type,
+        p_timestamp
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        matchid = EXCLUDED.matchid,
+        periodnumber = EXCLUDED.periodnumber,
+        type = EXCLUDED.type,
+        timestamp = EXCLUDED.timestamp
+    RETURNING *;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves a single time anchor record by its unique identifier.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_time_anchor_by_id(
+    p_id UUID
+)
+RETURNS SETOF public.timeanchors AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM public.timeanchors
+    WHERE id = p_id;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves all time anchors associated with a specific match.
+ * Results are ordered chronologically by period and timestamp.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_anchors(
+    p_match_id UUID
+)
+RETURNS SETOF public.timeanchors AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM public.timeanchors
+    WHERE matchid = p_match_id
+    ORDER BY periodnumber ASC, timestamp ASC;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Removes a specific time anchor record from the database.
+ * Returns TRUE if the record was successfully deleted, FALSE otherwise.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.delete_time_anchor(
+    p_id UUID
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+    DELETE FROM public.timeanchors
+    WHERE id = p_id;
+    
+    RETURN FOUND;
+END;$$ LANGUAGE plpgsql;

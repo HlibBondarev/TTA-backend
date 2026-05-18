@@ -12,13 +12,13 @@ namespace TTA.BusinessLogic.Features.GameEvents.Handlers;
 /// </summary>
 /// <param name="gameEventRepository">The repository for game event data operations.</param>
 /// <param name="logger">The logger instance for tracking execution flow.</param>
-public class GetGameEventByIdQueryHandler(
+public class GetGameEventByIdHandler(
     IGameEventRepository gameEventRepository,
-    ILogger<GetGameEventByIdQueryHandler> logger)
+    ILogger<GetGameEventByIdHandler> logger)
     : IRequestHandler<GetGameEventByIdQuery, GameEventResponse>
 {
     private readonly IGameEventRepository _gameEventRepository = gameEventRepository;
-    private readonly ILogger<GetGameEventByIdQueryHandler> _logger = logger;
+    private readonly ILogger<GetGameEventByIdHandler> _logger = logger;
 
     /// <summary>
     /// Retrieves a detailed event record by ID and maps it to the response DTO.
