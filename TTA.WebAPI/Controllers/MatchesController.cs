@@ -689,7 +689,8 @@ public class MatchesController(
         if (authResult != null) return authResult;
 
         // Note: The handler for DeleteTimeAnchorCommand handles existence check and throws NotFoundException if anchor is missing,
-        await _mediator.Send(new DeleteTimeAnchorCommand(id), cancellationToken);
+        // pass both matchId and id to the command
+        await _mediator.Send(new DeleteTimeAnchorCommand(matchId, id), cancellationToken);
 
         return NoContent();
     }

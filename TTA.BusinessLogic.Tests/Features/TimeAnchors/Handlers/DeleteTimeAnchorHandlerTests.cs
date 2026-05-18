@@ -11,7 +11,7 @@ namespace TTA.BusinessLogic.Tests.Features.TimeAnchors.Handlers;
 
 /// <summary>
 /// Unit tests for the <see cref="DeleteTimeAnchorHandler"/> class.
-/// Validates existence checks and the repository call flow during time anchor deletion.
+/// Validates existence checks, match scoping (IDOR prevention), and the repository call flow.
 /// </summary>
 public class DeleteTimeAnchorHandlerTests
 {
@@ -34,14 +34,17 @@ public class DeleteTimeAnchorHandlerTests
     }
 
     /// <summary>
-    /// Verifies that the handler successfully deletes a time anchor when it exists.
+    /// Verifies that the handler successfully deletes a time anchor when it exists 
+    /// and matches the specified match ID scope.
     /// </summary>
     [Fact]
     public async Task Handle_Should_ReturnTrue_When_AnchorIsDeletedSuccessfully()
     {
         // Arrange
-        var command = new DeleteTimeAnchorCommand(Guid.NewGuid());
-        var existingAnchor = new TimeAnchor { Id = command.Id };
+        var command = new DeleteTimeAnchorCommand(MatchId: Guid.NewGuid(), Id: Guid.NewGuid());
+
+        // FIX: Explicitly set MatchId to match the command's MatchId to pass validation
+        var existingAnchor = new TimeAnchor { Id = command.Id, MatchId = command.MatchId };
 
         _timeAnchorRepositoryMock
             .Setup(r => r.GetByIdAsync(command.Id, It.IsAny<CancellationToken>()))
@@ -67,7 +70,7 @@ public class DeleteTimeAnchorHandlerTests
     public async Task Handle_Should_Throw_NotFoundException_When_AnchorDoesNotExist()
     {
         // Arrange
-        var command = new DeleteTimeAnchorCommand(Guid.NewGuid());
+        var command = new DeleteTimeAnchorCommand(MatchId: Guid.NewGuid(), Id: Guid.NewGuid());
 
         _timeAnchorRepositoryMock
             .Setup(r => r.GetByIdAsync(command.Id, It.IsAny<CancellationToken>()))
@@ -77,8 +80,36 @@ public class DeleteTimeAnchorHandlerTests
         var act = async () => await _handler.Handle(command, CancellationToken.None);
 
         // Assert
+        // FIX: Update the expected exception message to match the new handler logic
         await act.Should().ThrowAsync<NotFoundException>()
-            .WithMessage($"Time anchor with ID {command.Id} was not found.");
+            .WithMessage($"Time anchor with ID {command.Id} was not found for the specified match.");
+
+        _timeAnchorRepositoryMock.Verify(r => r.DeleteAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that the handler throws a <see cref="NotFoundException"/> 
+    /// when attempting to delete an anchor that belongs to a different match (IDOR prevention).
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_NotFoundException_When_MatchIdDoesNotMatch()
+    {
+        // Arrange
+        var command = new DeleteTimeAnchorCommand(MatchId: Guid.NewGuid(), Id: Guid.NewGuid());
+
+        // Anchor exists, but belongs to a DIFFERENT match
+        var existingAnchor = new TimeAnchor { Id = command.Id, MatchId = Guid.NewGuid() };
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchor);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage($"Time anchor with ID {command.Id} was not found for the specified match.");
 
         _timeAnchorRepositoryMock.Verify(r => r.DeleteAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -91,8 +122,10 @@ public class DeleteTimeAnchorHandlerTests
     public async Task Handle_Should_ReturnFalse_When_RepositoryDeletionFails()
     {
         // Arrange
-        var command = new DeleteTimeAnchorCommand(Guid.NewGuid());
-        var existingAnchor = new TimeAnchor { Id = command.Id };
+        var command = new DeleteTimeAnchorCommand(MatchId: Guid.NewGuid(), Id: Guid.NewGuid());
+
+        // FIX: Explicitly set MatchId to pass validation
+        var existingAnchor = new TimeAnchor { Id = command.Id, MatchId = command.MatchId };
 
         _timeAnchorRepositoryMock
             .Setup(r => r.GetByIdAsync(command.Id, It.IsAny<CancellationToken>()))

@@ -22,20 +22,21 @@ public class DeleteTimeAnchorHandler(
     /// <summary>
     /// Processes the removal of a time anchor record.
     /// </summary>
-    /// <param name="request">The command containing the anchor identifier.</param>
+    /// <param name="request">The command containing the anchor and match identifiers.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A task representing the asynchronous operation, returning true if the deletion was successful.</returns>
-    /// <exception cref="NotFoundException">Thrown when the time anchor with the specified ID does not exist.</exception>
+    /// <exception cref="NotFoundException">Thrown when the time anchor does not exist or does not belong to the specified match.</exception>
     public async Task<bool> Handle(DeleteTimeAnchorCommand request, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Attempting to delete time anchor {Id}.", request.Id);
+        _logger.LogInformation("Attempting to delete time anchor {Id} for match {MatchId}.", request.Id, request.MatchId);
 
-        // 1. Verify existence before deletion to provide clear feedback
+        // 1. Verify existence and match scope before deletion to prevent IDOR vulnerabilities
         var existingAnchor = await _timeAnchorRepository.GetByIdAsync(request.Id, cancellationToken);
-        if (existingAnchor == null)
+
+        if (existingAnchor == null || existingAnchor.MatchId != request.MatchId)
         {
-            _logger.LogWarning("Deletion failed: Time anchor {Id} not found.", request.Id);
-            throw new NotFoundException($"Time anchor with ID {request.Id} was not found.");
+            _logger.LogWarning("Deletion failed: Time anchor {Id} not found or does not belong to match {MatchId}.", request.Id, request.MatchId);
+            throw new NotFoundException($"Time anchor with ID {request.Id} was not found for the specified match.");
         }
 
         // 2. Perform deletion via repository using the dedicated storage function
@@ -47,7 +48,6 @@ public class DeleteTimeAnchorHandler(
         }
         else
         {
-            // This case handles unexpected database behavior where the record was found but not removed
             _logger.LogError("Time anchor {Id} was found but the deletion operation failed in the database.", request.Id);
         }
 
