@@ -72,33 +72,37 @@ public class CreateTimeAnchorHandler(
     /// </summary>
     private static void ValidateSequence(CreateTimeAnchorCommand request, List<TimeAnchor> existing)
     {
+        // Pre-compute states to reduce cognitive complexity
         var last = existing.LastOrDefault();
+        bool hasPeriodStarted = existing.Any(a => a.Type == TimeAnchorType.PeriodStart);
+        bool hasPeriodEnded = existing.Any(a => a.Type == TimeAnchorType.PeriodEnd);
+        bool isStoppageActive = last?.Type == TimeAnchorType.StoppageStart;
 
         switch (request.Type)
         {
             case TimeAnchorType.PeriodStart:
-                if (existing.Any(a => a.Type == TimeAnchorType.PeriodStart))
+                if (hasPeriodStarted)
                     throw new ConflictException($"Period {request.PeriodNumber} already started.");
                 break;
 
             case TimeAnchorType.PeriodEnd:
-                if (!existing.Any(a => a.Type == TimeAnchorType.PeriodStart))
+                if (!hasPeriodStarted)
                     throw new ConflictException($"Cannot end period {request.PeriodNumber} before it starts.");
-                if (existing.Any(a => a.Type == TimeAnchorType.PeriodEnd))
+                if (hasPeriodEnded)
                     throw new ConflictException($"Period {request.PeriodNumber} is already finished.");
-                if (last?.Type == TimeAnchorType.StoppageStart)
+                if (isStoppageActive)
                     throw new ConflictException("Cannot end period: a stoppage is currently active.");
                 break;
 
             case TimeAnchorType.StoppageStart:
-                if (!existing.Any(a => a.Type == TimeAnchorType.PeriodStart) || existing.Any(a => a.Type == TimeAnchorType.PeriodEnd))
+                if (!hasPeriodStarted || hasPeriodEnded)
                     throw new ConflictException("Stoppage can only occur during an active period.");
-                if (last?.Type == TimeAnchorType.StoppageStart)
+                if (isStoppageActive)
                     throw new ConflictException("Match is already stopped.");
                 break;
 
             case TimeAnchorType.StoppageEnd:
-                if (last?.Type != TimeAnchorType.StoppageStart)
+                if (!isStoppageActive)
                     throw new ConflictException("Cannot end stoppage: Match was not stopped.");
                 break;
         }
