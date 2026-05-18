@@ -31,7 +31,6 @@ public class CreateGameEventRequestValidatorTests
             MatchLineupId: Guid.NewGuid(),
             EventDefinitionId: Guid.NewGuid(),
             PeriodNumber: 1,
-            EventTimestamp: DateTime.UtcNow.AddMinutes(-5),
             IsLeadToGoal: false
         );
 
@@ -53,7 +52,6 @@ public class CreateGameEventRequestValidatorTests
             MatchLineupId: Guid.NewGuid(),
             EventDefinitionId: Guid.Empty,
             PeriodNumber: 1,
-            EventTimestamp: DateTime.UtcNow,
             IsLeadToGoal: false
         );
 
@@ -78,7 +76,6 @@ public class CreateGameEventRequestValidatorTests
             MatchLineupId: Guid.NewGuid(),
             EventDefinitionId: Guid.NewGuid(),
             PeriodNumber: invalidPeriod,
-            EventTimestamp: DateTime.UtcNow,
             IsLeadToGoal: false
         );
 
@@ -88,51 +85,5 @@ public class CreateGameEventRequestValidatorTests
         // Assert
         result.ShouldHaveValidationErrorFor(x => x.PeriodNumber)
             .WithErrorMessage("Period number must be greater than zero.");
-    }
-
-    /// <summary>
-    /// Verifies that an error is returned when <see cref="CreateGameEventRequest.EventTimestamp"/> is empty (default).
-    /// </summary>
-    [Fact]
-    public void Validator_Should_HaveError_When_EventTimestampIsEmpty()
-    {
-        // Arrange
-        var request = new CreateGameEventRequest(
-            MatchLineupId: Guid.NewGuid(),
-            EventDefinitionId: Guid.NewGuid(),
-            PeriodNumber: 1,
-            EventTimestamp: default,
-            IsLeadToGoal: false
-        );
-
-        // Act
-        var result = _validator.TestValidate(request);
-
-        // Assert
-        result.ShouldHaveValidationErrorFor(x => x.EventTimestamp)
-            .WithErrorMessage("Event timestamp is required.");
-    }
-
-    /// <summary>
-    /// Verifies that an error is returned when <see cref="CreateGameEventRequest.EventTimestamp"/> is set in the future.
-    /// </summary>
-    [Fact]
-    public void Validator_Should_HaveError_When_EventTimestampIsInFuture()
-    {
-        // Arrange
-        var request = new CreateGameEventRequest(
-            MatchLineupId: Guid.NewGuid(),
-            EventDefinitionId: Guid.NewGuid(),
-            PeriodNumber: 1,
-            EventTimestamp: DateTime.UtcNow.AddHours(1),
-            IsLeadToGoal: false
-        );
-
-        // Act
-        var result = _validator.TestValidate(request);
-
-        // Assert
-        result.ShouldHaveValidationErrorFor(x => x.EventTimestamp)
-            .WithErrorMessage("Event timestamp cannot be in the future.");
     }
 }

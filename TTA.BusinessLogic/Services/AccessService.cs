@@ -13,7 +13,7 @@ public class AccessService(IAccessRepository accessRepository) : IAccessService
         AppRole requiredRole,
         TargetScope targetType,
         Guid? targetId = null,
-        CancellationToken ct = default)
+        CancellationToken cancellationToken = default)
     {
         // 1. Fetch the effective role from the DataAccess layer.
         // The repository now returns AppRole? directly, so we don't need string parsing.
@@ -21,7 +21,7 @@ public class AccessService(IAccessRepository accessRepository) : IAccessService
             userId,
             targetType,
             targetId,
-            ct);
+            cancellationToken);
 
         // 2. If no role is found in the database, access is denied by default.
         if (userRole == null)

@@ -8,13 +8,11 @@ namespace TTA.BusinessLogic.Features.GameEvents.DTOs;
 /// <param name="MatchLineupId">The match lineup identifier (nullable for team events).</param>
 /// <param name="EventDefinitionId">The event definition identifier.</param>
 /// <param name="PeriodNumber">The period number when the event occurred.</param>
-/// <param name="EventTimestamp">The absolute timestamp of the event (UTC).</param>
 /// <param name="IsLeadToGoal">Indicates whether this event leads to a goal.</param>
 public record CreateGameEventRequest(
     Guid MatchLineupId,
     Guid EventDefinitionId,
     int PeriodNumber,
-    DateTime EventTimestamp,
     bool IsLeadToGoal);
 
 /// <summary>
@@ -33,6 +31,5 @@ public static class CreateGameEventRequestExtensions
         MatchLineupId: request.MatchLineupId,
         EventDefinitionId: request.EventDefinitionId,
         PeriodNumber: request.PeriodNumber,
-        EventTimestamp: request.EventTimestamp,
         IsLeadToGoal: request.IsLeadToGoal);
 }

@@ -11,11 +11,12 @@ public interface IAccessService
     /// <param name="requiredRole">Minimum role required for the operation.</param>
     /// <param name="targetType">The scope of access (Global, Club, or Team).</param>
     /// <param name="targetId">Specific ID of the resource (null for Global scope).</param>
+    /// <param name="cancellationToken">Cancellation token for the operation.</param>
     /// <returns>True if access is granted; otherwise, false.</returns>
     Task<bool> HasAccessAsync(
         string userId,
         AppRole requiredRole,
         TargetScope targetType,
         Guid? targetId = null,
-        CancellationToken ct = default);
+        CancellationToken cancellationToken = default);
 }

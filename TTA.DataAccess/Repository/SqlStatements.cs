@@ -339,4 +339,43 @@ public static class SqlStatements
         public const string DeleteEvent =
             "SELECT public.delete_game_event(@p_id);";
     }
+
+    /// <summary>
+    /// SQL constants for Time Anchor related database operations.
+    /// Used for piecewise-linear time normalization in match timelines.
+    /// </summary>
+    public static class ForTimeAnchors
+    {
+        /// <summary>
+        /// Invokes the storage function to insert or update a time anchor.
+        /// Returns the full record from the public.timeanchors table.
+        /// </summary>
+        public const string UpsertTimeAnchor =
+            @"SELECT * FROM public.upsert_time_anchor(
+                @Id, 
+                @MatchId, 
+                @PeriodNumber, 
+                @Type, 
+                @Timestamp
+            );";
+
+        /// <summary>
+        /// Invokes the storage function to retrieve a specific time anchor by its unique identifier.
+        /// </summary>
+        public const string GetById =
+            "SELECT * FROM public.get_time_anchor_by_id(@p_id);";
+
+        /// <summary>
+        /// Invokes the storage function to retrieve all time anchors for a specific match.
+        /// Results are ordered chronologically by the database function.
+        /// </summary>
+        public const string GetMatchAnchors =
+            "SELECT * FROM public.get_match_anchors(@p_match_id);";
+
+        /// <summary>
+        /// Invokes the storage function to permanently remove a time anchor record.
+        /// </summary>
+        public const string DeleteAnchor =
+            "SELECT public.delete_time_anchor(@p_id);";
+    }
 }

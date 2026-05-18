@@ -9,25 +9,25 @@ using TTA.DataAccess.Repository.Projections;
 namespace TTA.BusinessLogic.Tests.Features.GameEvents.Handlers;
 
 /// <summary>
-/// Unit tests for the <see cref="GetMatchEventsTimelineQueryHandler"/> class.
+/// Unit tests for the <see cref="GetMatchEventsTimelineHandler"/> class.
 /// Validates the mapping logic from raw repository data to a collection of DTOs.
 /// </summary>
-public class GetMatchEventsTimelineQueryHandlerTests
+public class GetMatchEventsTimelineHandlerTests
 {
     private readonly Mock<IGameEventRepository> _gameEventRepositoryMock;
-    private readonly Mock<ILogger<GetMatchEventsTimelineQueryHandler>> _loggerMock;
-    private readonly GetMatchEventsTimelineQueryHandler _handler;
+    private readonly Mock<ILogger<GetMatchEventsTimelineHandler>> _loggerMock;
+    private readonly GetMatchEventsTimelineHandler _handler;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="GetMatchEventsTimelineQueryHandlerTests"/> class.
+    /// Initializes a new instance of the <see cref="GetMatchEventsTimelineHandlerTests"/> class.
     /// Sets up mocks and the handler under test.
     /// </summary>
-    public GetMatchEventsTimelineQueryHandlerTests()
+    public GetMatchEventsTimelineHandlerTests()
     {
         _gameEventRepositoryMock = new Mock<IGameEventRepository>();
-        _loggerMock = new Mock<ILogger<GetMatchEventsTimelineQueryHandler>>();
+        _loggerMock = new Mock<ILogger<GetMatchEventsTimelineHandler>>();
 
-        _handler = new GetMatchEventsTimelineQueryHandler(
+        _handler = new GetMatchEventsTimelineHandler(
             _gameEventRepositoryMock.Object,
             _loggerMock.Object);
     }
@@ -238,7 +238,7 @@ public class GetMatchEventsTimelineQueryHandlerTests
     }
 
     /// <summary>
-    /// Helper method to create a dynamic raw event object using ExpandoObject.
+    /// Helper method to create a GameEventProjection object.
     /// Matches the property naming expected by the handler.
     /// </summary>
     /// <param name="id">The event ID.</param>
@@ -265,7 +265,7 @@ public class GetMatchEventsTimelineQueryHandlerTests
             IsPositive: true,
             PeriodNumber: period,
             EventTimestamp: eventTimestamp ?? DateTime.UtcNow,
-            // Rabbit's specific logic: 
+            // Specific logic: 
             // If the parameter is not provided (null), default to 20 minutes for legacy tests.
             // But if we use a specific sentinel or call it via named parameters, we handle it.
             NormalizedMatchTime: normalizedMatchTime ?? TimeSpan.FromMinutes(20),

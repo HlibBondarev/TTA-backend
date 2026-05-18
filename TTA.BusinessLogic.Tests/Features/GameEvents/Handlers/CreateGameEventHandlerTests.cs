@@ -180,7 +180,6 @@ public class CreateGameEventHandlerTests
             MatchLineupId: Guid.NewGuid(),
             EventDefinitionId: Guid.NewGuid(),
             PeriodNumber: 1,
-            EventTimestamp: DateTime.UtcNow,
             IsLeadToGoal: false);
     }
 }

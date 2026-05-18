@@ -10,24 +10,24 @@ using TTA.DataAccess.Repository.Projections;
 namespace TTA.BusinessLogic.Tests.Features.GameEvents.Handlers;
 
 /// <summary>
-/// Unit tests for the <see cref="GetGameEventByIdQueryHandler"/> class.
+/// Unit tests for the <see cref="GetGameEventByIdHandler"/> class.
 /// Ensures correct mapping of repository results to DTOs and proper error handling.
 /// </summary>
-public class GetGameEventByIdQueryHandlerTests
+public class GetGameEventByIdHandlerTests
 {
     private readonly Mock<IGameEventRepository> _gameEventRepositoryMock;
-    private readonly Mock<ILogger<GetGameEventByIdQueryHandler>> _loggerMock;
-    private readonly GetGameEventByIdQueryHandler _handler;
+    private readonly Mock<ILogger<GetGameEventByIdHandler>> _loggerMock;
+    private readonly GetGameEventByIdHandler _handler;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="GetGameEventByIdQueryHandlerTests"/> class.
+    /// Initializes a new instance of the <see cref="GetGameEventByIdHandlerTests"/> class.
     /// </summary>
-    public GetGameEventByIdQueryHandlerTests()
+    public GetGameEventByIdHandlerTests()
     {
         _gameEventRepositoryMock = new Mock<IGameEventRepository>();
-        _loggerMock = new Mock<ILogger<GetGameEventByIdQueryHandler>>();
+        _loggerMock = new Mock<ILogger<GetGameEventByIdHandler>>();
 
-        _handler = new GetGameEventByIdQueryHandler(
+        _handler = new GetGameEventByIdHandler(
             _gameEventRepositoryMock.Object,
             _loggerMock.Object);
     }
