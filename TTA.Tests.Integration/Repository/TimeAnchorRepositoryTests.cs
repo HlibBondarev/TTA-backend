@@ -92,9 +92,11 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
 
         // Assert
         var anchors = timeline.ToList();
-        anchors.Count.Should().BeGreaterThanOrEqualTo(2);
+        anchors.Should().OnlyContain(a => a.MatchId == matchId);
         anchors.Should().Contain(a => a.Id == anchor1.Id);
         anchors.Should().Contain(a => a.Id == anchor2.Id);
+        anchors.FindIndex(a => a.Id == anchor1.Id)
+            .Should().BeLessThan(anchors.FindIndex(a => a.Id == anchor2.Id));
     }
 
     /// <summary>
