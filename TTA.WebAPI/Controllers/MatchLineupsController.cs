@@ -80,7 +80,6 @@ public class MatchLineupsController(
             _logger.LogWarning("Validation failed for updating match lineup entry {Id}: {Errors}", id, validationResult.Errors);
             return BadRequest(validationResult.Errors);
         }
-            ;
 
         // 2. Validate ownership of the entry to ensure the user has permission to update it
         var authResult = await ValidateEntryOwnership(id);

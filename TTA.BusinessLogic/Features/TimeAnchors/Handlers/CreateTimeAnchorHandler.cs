@@ -4,6 +4,7 @@ using Npgsql;
 using TTA.BusinessLogic.Features.TimeAnchors.Commands;
 using TTA.Common.Exceptions;
 using TTA.DataAccess.Enums;
+using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 
 namespace TTA.BusinessLogic.Features.TimeAnchors.Handlers;
@@ -69,7 +70,7 @@ public class CreateTimeAnchorHandler(
     /// <summary>
     /// Validates that the new anchor follows the logical rules of the match state.
     /// </summary>
-    private void ValidateSequence(CreateTimeAnchorCommand request, List<TTA.DataAccess.Models.TimeAnchor> existing)
+    private static void ValidateSequence(CreateTimeAnchorCommand request, List<TimeAnchor> existing)
     {
         var last = existing.LastOrDefault();
 
