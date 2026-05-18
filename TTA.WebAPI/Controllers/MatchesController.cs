@@ -615,7 +615,7 @@ public class MatchesController(
     public async Task<IActionResult> GetTimeAnchorById(Guid matchId, Guid id, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Retrieving time anchor {Id} for match {MatchId}.", id, matchId);
-        var anchor = await _mediator.Send(new GetTimeAnchorByIdQuery(id), cancellationToken);
+        var anchor = await _mediator.Send(new GetTimeAnchorByIdQuery(matchId, id), cancellationToken);
 
         return Ok(anchor);
     }

@@ -12,7 +12,7 @@ namespace TTA.BusinessLogic.Tests.Features.TimeAnchors.Handlers;
 
 /// <summary>
 /// Unit tests for the <see cref="GetTimeAnchorByIdHandler"/> class.
-/// Ensures correct mapping of repository results to DTOs and proper error handling.
+/// Ensures correct mapping of repository results to DTOs, scope validation, and proper error handling.
 /// </summary>
 public class GetTimeAnchorByIdHandlerTests
 {
@@ -36,19 +36,20 @@ public class GetTimeAnchorByIdHandlerTests
 
     /// <summary>
     /// Verifies that the handler returns a correctly populated response DTO
-    /// when the time anchor exists in the database.
+    /// when the time anchor exists and belongs to the specified match.
     /// </summary>
     [Fact]
-    public async Task Handle_Should_ReturnAnchorResponse_When_AnchorExists()
+    public async Task Handle_Should_ReturnAnchorResponse_When_AnchorExistsAndMatchIdIsCorrect()
     {
         // Arrange
         var anchorId = Guid.NewGuid();
-        var query = new GetTimeAnchorByIdQuery(anchorId);
+        var matchId = Guid.NewGuid();
+        var query = new GetTimeAnchorByIdQuery(matchId, anchorId);
 
         var existingAnchor = new TimeAnchor
         {
             Id = anchorId,
-            MatchId = Guid.NewGuid(),
+            MatchId = matchId,
             PeriodNumber = 2,
             Type = TimeAnchorType.StoppageStart,
             Timestamp = DateTime.UtcNow
@@ -81,7 +82,8 @@ public class GetTimeAnchorByIdHandlerTests
     {
         // Arrange
         var anchorId = Guid.NewGuid();
-        var query = new GetTimeAnchorByIdQuery(anchorId);
+        var matchId = Guid.NewGuid();
+        var query = new GetTimeAnchorByIdQuery(matchId, anchorId);
 
         _timeAnchorRepositoryMock
             .Setup(r => r.GetByIdAsync(anchorId, It.IsAny<CancellationToken>()))
@@ -92,8 +94,42 @@ public class GetTimeAnchorByIdHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<NotFoundException>()
-            .WithMessage($"Time anchor with ID {anchorId} was not found.");
+            .WithMessage($"Time anchor with ID {anchorId} was not found for the specified match.");
 
         _timeAnchorRepositoryMock.Verify(r => r.GetByIdAsync(anchorId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that a <see cref="NotFoundException"/> is thrown 
+    /// when the anchor exists but belongs to a different match.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_NotFoundException_When_AnchorBelongsToDifferentMatch()
+    {
+        // Arrange
+        var anchorId = Guid.NewGuid();
+        var matchId = Guid.NewGuid();
+        var query = new GetTimeAnchorByIdQuery(matchId, anchorId);
+
+        // Setup existing anchor with a completely different MatchId
+        var existingAnchor = new TimeAnchor
+        {
+            Id = anchorId,
+            MatchId = Guid.NewGuid(),
+            PeriodNumber = 1,
+            Type = TimeAnchorType.PeriodStart,
+            Timestamp = DateTime.UtcNow
+        };
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetByIdAsync(anchorId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchor);
+
+        // Act
+        var act = async () => await _handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage($"Time anchor with ID {anchorId} was not found for the specified match.");
     }
 }
