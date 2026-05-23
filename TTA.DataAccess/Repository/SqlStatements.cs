@@ -378,4 +378,41 @@ public static class SqlStatements
         public const string DeleteAnchor =
             "SELECT public.delete_time_anchor(@p_id);";
     }
+
+    /// <summary>
+    /// SQL constants for Player Presence related database operations.
+    /// Used for tracking active playing time and substitutions.
+    /// </summary>
+    public static class ForPlayerPresence
+    {
+        /// <summary>
+        /// Invokes the storage function to insert or update a player presence record.
+        /// </summary>
+        public const string RecordPresence =
+            @"SELECT * FROM public.record_player_presence(
+                @Id, 
+                @MatchLineupId, 
+                @PeriodNumber, 
+                @TimeIn, 
+                @TimeOut
+            );";
+
+        /// <summary>
+        /// Invokes the storage function to retrieve all presence records for a specific match.
+        /// </summary>
+        public const string GetMatchPresence =
+            "SELECT * FROM public.get_match_presence(@p_match_id);";
+
+        /// <summary>
+        /// Invokes the storage function to bulk insert explicit lineup IDs for the period start.
+        /// </summary>
+        public const string InitializePeriodPresence =
+            "SELECT public.init_period_presence(@p_period_number, @p_time_in, @p_lineup_ids);";
+
+        /// <summary>
+        /// Invokes the storage function to automatically set the timeout for all active players when a period finishes.
+        /// </summary>
+        public const string CloseActivePresences =
+            "SELECT public.close_active_presences(@p_match_id, @p_period_number, @p_time_out);";
+    }
 }

@@ -8,6 +8,7 @@ using System.Text.Json.Serialization;
 using TTA.BusinessLogic.Features.GameEvents.DTOs;
 using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.MatchLineups.DTOs;
+using TTA.BusinessLogic.Features.PlayerPresences.DTOs;
 using TTA.BusinessLogic.Features.TimeAnchors.DTOs;
 using TTA.DataAccess.Enums;
 using TTA.Tests.Integration.Infrastructure;
@@ -718,6 +719,259 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    #endregion
+
+    #region Player Presences Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> returns HTTP 201 Created 
+    /// and the generated presence identifier when an authorized user submits a valid substitution request.
+    /// </summary>
+    [Fact]
+    public async Task SubstitutePlayer_ShouldReturnCreated_WhenRequestIsValidAndUserHasAccess()
+    {
+        // Arrange
+        var context = await SetupPresenceMatchContextAsync(TestUserId);
+
+        // Record an initial active presence for the outgoing player.
+        // We use "NOW() - INTERVAL '5 minutes'" to strictly guarantee that TimeIn is in the past.
+        // This avoids Database Check Constraint (23514) violations caused by millisecond clock drift 
+        // between the C# application (DateTime.UtcNow) and the PostgreSQL container.
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein) VALUES (@id, @lineupId, 1, NOW() - INTERVAL '5 minutes')",
+                new { id = Guid.NewGuid(), lineupId = context.LineupId1 });
+        }
+
+        var request = new SubstitutePlayerRequest(
+            PeriodNumber: 1,
+            PlayerOutLineupId: context.LineupId1,
+            PlayerInLineupId: context.LineupId2
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{context.MatchId}/substitutions", request);
+
+        // Assert
+        // If this returns 409, reading the response content usually reveals the "Substitution time is invalid" message.
+        var errorContent = response.StatusCode != HttpStatusCode.Created ? await response.Content.ReadAsStringAsync() : string.Empty;
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created, $"because valid substitution should succeed. Error: {errorContent}");
+
+        var createdId = await response.Content.ReadFromJsonAsync<Guid>();
+        createdId.Should().NotBeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> returns HTTP 400 Bad Request 
+    /// when FluentValidation rules fail (e.g., trying to substitute a player with themselves).
+    /// </summary>
+    [Fact]
+    public async Task SubstitutePlayer_ShouldReturnBadRequest_WhenValidationFails()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var samePlayerLineupId = Guid.NewGuid();
+
+        var invalidRequest = new SubstitutePlayerRequest(
+            PeriodNumber: 1,
+            PlayerOutLineupId: samePlayerLineupId,
+            PlayerInLineupId: samePlayerLineupId // Violation: input and output cannot be identical
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/substitutions", invalidRequest);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> returns HTTP 403 Forbidden 
+    /// when the authenticated user is not the owner of the tournament or a team editor.
+    /// </summary>
+    [Fact]
+    public async Task SubstitutePlayer_ShouldReturnForbidden_WhenUserLacksEditAccess()
+    {
+        // Arrange
+        const string unauthorizedUserId = "auth0|unauthorized-stranger";
+        var context = await SetupPresenceMatchContextAsync(unauthorizedUserId); // Owned by stranger
+
+        var request = new SubstitutePlayerRequest(
+            PeriodNumber: 1,
+            PlayerOutLineupId: context.LineupId1,
+            PlayerInLineupId: context.LineupId2
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{context.MatchId}/substitutions", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.InitializePeriodPresence"/> returns HTTP 204 No Content 
+    /// when an authorized user submits a valid bulk starting lineup initialization request.
+    /// </summary>
+    [Fact]
+    public async Task InitializePeriodPresence_ShouldReturnNoContent_WhenRequestIsValidAndUserHasAccess()
+    {
+        // Arrange
+        var context = await SetupPresenceMatchContextAsync(TestUserId);
+
+        var request = new InitializePresenceRequest(
+            PeriodNumber: 1,
+            PlayerLineupIds: new List<Guid> { context.LineupId1, context.LineupId2 }
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{context.MatchId}/presence/initialize", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // Secondary DB verify check
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var counts = await conn.QuerySingleAsync<int>(
+            "SELECT COUNT(1) FROM public.playerpresences WHERE periodnumber = 1 AND matchlineupid IN (@id1, @id2)",
+            new { id1 = context.LineupId1, id2 = context.LineupId2 });
+        counts.Should().Be(2);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetMatchPresence"/> returns HTTP 200 OK 
+    /// along with the complete timeline history array, and functions correctly under anonymous access context.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchPresence_ShouldReturnOkWithTimeline_WhenMatchExists()
+    {
+        // Arrange
+        var context = await SetupPresenceMatchContextAsync(TestUserId);
+        var baseTime = DateTime.UtcNow;
+
+        // Directly insert two chronological presence tracking records into the database scope
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) 
+                VALUES 
+                    (gen_random_uuid(), @l1, 1, @t1, @t2),
+                    (gen_random_uuid(), @l2, 1, @t2, NULL)",
+                new { l1 = context.LineupId1, l2 = context.LineupId2, t1 = baseTime.AddMinutes(-10), t2 = baseTime });
+        }
+
+        // Act - Invoke under default client wrapper (respects AllowAnonymous attribute configuration changes)
+        var response = await Client.GetAsync($"{BaseUrl}/{context.MatchId}/presence");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var timeline = await response.Content.ReadFromJsonAsync<IEnumerable<PlayerPresenceResponse>>();
+
+        timeline.Should().NotBeNull();
+        var resultList = timeline!.ToList();
+        resultList.Count.Should().Be(2);
+        resultList[0].MatchLineupId.Should().Be(context.LineupId1);
+        resultList[1].MatchLineupId.Should().Be(context.LineupId2);
+        resultList[1].TimeOut.Should().BeNull();
+    }
+
+    #endregion
+
+    #region Helpers for Player Presences
+
+    /// <summary>
+    /// Sets up a robust transactional database context environment optimized for player presence tracking operations.
+    /// Generates parent hierarchies and yields a match containing 2 unique lineup references.
+    /// </summary>
+    /// <param name="tournamentOwnerId">The explicit user identifier to configure as the master tournament owner asset.</param>
+    /// <returns>A structured tuple capturing the parent Match ID context alongside two validated Lineup entries.</returns>
+    private async Task<(Guid MatchId, Guid LineupId1, Guid LineupId2)> SetupPresenceMatchContextAsync(string tournamentOwnerId)
+    {
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // 1. Establish Geography structures securely
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT (name) DO NOTHING;");
+        var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE name = 'Ukraine'");
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.regions (countryid, name) VALUES (@cid, 'Dnipro Region') ON CONFLICT (countryid, name) DO NOTHING;",
+            new { cid = countryId });
+        var regionId = await conn.QuerySingleAsync<int>("SELECT id FROM public.regions WHERE name = 'Dnipro Region' AND countryid = @cid", new { cid = countryId });
+
+        var cityId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.cities (id, regionid, name) VALUES (@id, @rid, 'Dnipro') ON CONFLICT (regionid, name) DO NOTHING;",
+            new { id = cityId, rid = regionId });
+        cityId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.cities WHERE regionid = @rid AND name = 'Dnipro'", new { rid = regionId });
+
+        // 2. Setup Security Identity and Sport structures configurations
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, 'owner@tta.com', 'Manager', NOW()) ON CONFLICT (id) DO NOTHING;",
+            new { id = tournamentOwnerId });
+
+        var sportId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name) VALUES (@id, 'Water Polo Request') ON CONFLICT (name) DO NOTHING;",
+            new { id = sportId });
+        sportId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sports WHERE name = 'Water Polo Request'");
+
+        var configId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
+            SELECT @id, @sid, true, 4, 8, '30x20', 15, 7 WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
+            new { id = configId, sid = sportId });
+        configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId });
+
+        var posId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
+            SELECT @id, @sid, 'Goalkeeper', 'GK' WHERE NOT EXISTS (SELECT 1 FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'GK')",
+            new { id = posId, sid = sportId });
+        posId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'GK' LIMIT 1", new { sid = sportId });
+
+        // 3. Organization level setup strings data definitions
+        var clubId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityid, 'API_Presence_Club', NOW())",
+            new { id = clubId, cityid = cityId });
+
+        var tournamentId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
+            VALUES (@id, @sid, @cfgid, @cityid, @oid, 'API_Presence_Cup', NOW(), NOW())",
+            new { id = tournamentId, sid = sportId, cfgid = configId, cityid = cityId, oid = tournamentOwnerId });
+
+        var teamId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @cid, @sid, 'API_Presence_Team', 0, NOW())",
+            new { id = teamId, cid = clubId, sid = sportId });
+
+        var matchId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, createdat) 
+            VALUES (@id, @tid, @teamid, @teamid, NOW(), NOW())",
+            new { id = matchId, tid = tournamentId, teamid = teamId });
+
+        // 4. Register two distinct physical players into the active game lineup ledger system 
+        var playerId1 = Guid.NewGuid();
+        var playerId2 = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'Sub', 'Out', '2000-01-01', 0, NOW())", new { id = playerId1, cid = clubId });
+        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'Sub', 'In', '2000-01-02', 0, NOW())", new { id = playerId2, cid = clubId });
+
+        var rosterId1 = Guid.NewGuid();
+        var rosterId2 = Guid.NewGuid();
+        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 11, @posid, NOW())", new { id = rosterId1, pid = playerId1, tid = tournamentId, teamid = teamId, posid = posId });
+        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 22, @posid, NOW())", new { id = rosterId2, pid = playerId2, tid = tournamentId, teamid = teamId, posid = posId });
+
+        var lineupId1 = Guid.NewGuid();
+        var lineupId2 = Guid.NewGuid();
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) VALUES (@id, @mid, @rid, 11, true, @posid)", new { id = lineupId1, mid = matchId, rid = rosterId1, posid = posId });
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) VALUES (@id, @mid, @rid, 22, true, @posid)", new { id = lineupId2, mid = matchId, rid = rosterId2, posid = posId });
+
+        return (matchId, lineupId1, lineupId2);
     }
 
     #endregion

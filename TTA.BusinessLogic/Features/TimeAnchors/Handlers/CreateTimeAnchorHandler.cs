@@ -1,6 +1,7 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using TTA.BusinessLogic.Features.PlayerPresences.Notifications;
 using TTA.BusinessLogic.Features.TimeAnchors.Commands;
 using TTA.Common.Exceptions;
 using TTA.DataAccess.Enums;
@@ -15,14 +16,17 @@ namespace TTA.BusinessLogic.Features.TimeAnchors.Handlers;
 /// </summary>
 /// <param name="timeAnchorRepository">The repository for time anchor data operations.</param>
 /// <param name="matchRepository">The repository for validating match existence.</param>
+/// <param name="mediator">The mediator instance used for publishing domain notification events.</param>
 /// <param name="logger">The logger instance for tracking execution flow.</param>
 public class CreateTimeAnchorHandler(
     ITimeAnchorRepository timeAnchorRepository,
     IMatchRepository matchRepository,
+    IMediator mediator,
     ILogger<CreateTimeAnchorHandler> logger) : IRequestHandler<CreateTimeAnchorCommand, Guid>
 {
     private readonly ITimeAnchorRepository _timeAnchorRepository = timeAnchorRepository;
     private readonly IMatchRepository _matchRepository = matchRepository;
+    private readonly IMediator _mediator = mediator;
     private readonly ILogger<CreateTimeAnchorHandler> _logger = logger;
 
     /// <summary>
@@ -39,11 +43,8 @@ public class CreateTimeAnchorHandler(
             request.Type, request.MatchId, request.PeriodNumber);
 
         // 1. Basic existence check
-        var match = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken);
-        if (match == null)
-        {
-            throw new NotFoundException($"Match with ID {request.MatchId} was not found.");
-        }
+        var match = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken)
+            ?? throw new NotFoundException($"Match with ID {request.MatchId} was not found.");
 
         // 2. Logical sequence validation
         var existingAnchors = await _timeAnchorRepository.GetMatchAnchorsAsync(request.MatchId, cancellationToken);
@@ -59,6 +60,13 @@ public class CreateTimeAnchorHandler(
         try
         {
             var result = await _timeAnchorRepository.UpsertAsync(model, cancellationToken);
+
+            // 4. Domain Trigger: Automatically close active player presence sessions if period finishes
+            if (model.Type == TimeAnchorType.PeriodEnd)
+            {
+                await _mediator.Publish(new PeriodEndedNotification(model.MatchId, model.PeriodNumber, model.Timestamp), cancellationToken);
+            }
+
             return result.Id;
         }
         catch (PostgresException ex) when (ex.SqlState == "P0001")
@@ -71,9 +79,10 @@ public class CreateTimeAnchorHandler(
     /// Validates that the new anchor follows the logical rules of the match state.
     /// Routes the validation to specific helper methods based on the anchor type.
     /// </summary>
+    /// <param name="request">The command containing anchor payload data details.</param>
+    /// <param name="existing">The list dataset of existing anchors within the same period scope.</param>
     private static void ValidateSequence(CreateTimeAnchorCommand request, List<TimeAnchor> existing)
     {
-        // Pre-compute state variables to pass into pure validation helpers
         bool hasPeriodStarted = existing.Any(a => a.Type == TimeAnchorType.PeriodStart);
         bool hasPeriodEnded = existing.Any(a => a.Type == TimeAnchorType.PeriodEnd);
         bool isStoppageActive = existing.LastOrDefault()?.Type == TimeAnchorType.StoppageStart;
@@ -95,12 +104,24 @@ public class CreateTimeAnchorHandler(
         }
     }
 
+    /// <summary>
+    /// Enforces validation constraints for a PeriodStart anchor type.
+    /// </summary>
+    /// <param name="periodNumber">The target period identifier number sequence context.</param>
+    /// <param name="hasPeriodStarted">Indicates whether a start anchor already exists for the period layout.</param>
     private static void ValidatePeriodStart(int periodNumber, bool hasPeriodStarted)
     {
         if (hasPeriodStarted)
             throw new ConflictException($"Period {periodNumber} already started.");
     }
 
+    /// <summary>
+    /// Enforces validation constraints for a PeriodEnd anchor type.
+    /// </summary>
+    /// <param name="periodNumber">The target period identifier number sequence context.</param>
+    /// <param name="hasPeriodStarted">Indicates whether a start anchor exists for the period layout.</param>
+    /// <param name="hasPeriodEnded">Indicates whether an end anchor already exists for the period layout.</param>
+    /// <param name="isStoppageActive">Indicates whether a match stoppage section remains unclosed.</param>
     private static void ValidatePeriodEnd(int periodNumber, bool hasPeriodStarted, bool hasPeriodEnded, bool isStoppageActive)
     {
         if (!hasPeriodStarted)
@@ -111,6 +132,12 @@ public class CreateTimeAnchorHandler(
             throw new ConflictException("Cannot end period: a stoppage is currently active.");
     }
 
+    /// <summary>
+    /// Enforces validation constraints for a StoppageStart anchor type.
+    /// </summary>
+    /// <param name="hasPeriodStarted">Indicates whether a start anchor exists for the period layout.</param>
+    /// <param name="hasPeriodEnded">Indicates whether an end anchor exists for the period layout.</param>
+    /// <param name="isStoppageActive">Indicates whether a stoppage block is currently open.</param>
     private static void ValidateStoppageStart(bool hasPeriodStarted, bool hasPeriodEnded, bool isStoppageActive)
     {
         if (!hasPeriodStarted || hasPeriodEnded)
@@ -119,6 +146,10 @@ public class CreateTimeAnchorHandler(
             throw new ConflictException("Match is already stopped.");
     }
 
+    /// <summary>
+    /// Enforces validation constraints for a StoppageEnd anchor type.
+    /// </summary>
+    /// <param name="isStoppageActive">Indicates whether a match stoppage section is open.</param>
     private static void ValidateStoppageEnd(bool isStoppageActive)
     {
         if (!isStoppageActive)

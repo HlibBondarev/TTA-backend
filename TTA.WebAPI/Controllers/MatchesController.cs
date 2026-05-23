@@ -9,6 +9,8 @@ using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.Matches.Queries;
 using TTA.BusinessLogic.Features.MatchLineups.DTOs;
 using TTA.BusinessLogic.Features.MatchLineups.Queries;
+using TTA.BusinessLogic.Features.PlayerPresences.DTOs;
+using TTA.BusinessLogic.Features.PlayerPresences.Queries;
 using TTA.BusinessLogic.Features.TimeAnchors.Commands;
 using TTA.BusinessLogic.Features.TimeAnchors.DTOs;
 using TTA.BusinessLogic.Features.TimeAnchors.Queries;
@@ -693,6 +695,127 @@ public class MatchesController(
         await _mediator.Send(new DeleteTimeAnchorCommand(matchId, id), cancellationToken);
 
         return NoContent();
+    }
+
+    #endregion
+
+    #region Player Presences
+
+    // ==========================================================================================
+    // Player Presences Section
+    // ==========================================================================================
+
+    /// <summary>
+    /// Executes a player substitution during a specific match period.
+    /// Closes the session for the outgoing player and opens a session for the incoming player identically in time.
+    /// </summary>
+    /// <param name="matchId">The unique identity reference key of the target match extracted from the route path context.</param>
+    /// <param name="request">The incoming data transfer object payload containing period numbers and lineup references data structures.</param>
+    /// <param name="validator">The fluent validator service instance injected directly via method services to manage request structural integrity checks.</param>
+    /// <param name="cancellationToken">A secure execution propagation token designed for watching asynchronous task cancellation requests states.</param>
+    /// <returns>An HTTP action result containing the unique identifier database value of the newly recorded incoming player session asset.</returns>
+    [HttpPost("{matchId}/substitutions")]
+    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SubstitutePlayer(
+        [FromRoute] Guid matchId,
+        [FromBody] SubstitutePlayerRequest request,
+        [FromServices] IValidator<SubstitutePlayerRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Received request to substitute players in Match {MatchId}, Period {Period}.", matchId, request.PeriodNumber);
+
+        // 1. Explicit FluentValidation invocation inside controller layer via injected method service parameter
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation collapse occurred for SubstitutePlayerRequest payload in Match {MatchId}.", matchId);
+            return BadRequest(validationResult.Errors);
+        }
+
+        // 2. Strict match-level domain edit scope access privilege validation check
+        var authResult = await ValidateMatchEditAccess(matchId, cancellationToken);
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        // 3. Transformation mapping conversion invocation and mediator request dispatch routing execution sequence
+        var command = request.ToCommand(matchId);
+        var presenceId = await _mediator.Send(command, cancellationToken);
+
+        return StatusCode(StatusCodes.Status201Created, presenceId);
+    }
+
+    /// <summary>
+    /// Bulk initializes active presence tracking timelines for an explicit array configuration of players starting a specific match period section.
+    /// </summary>
+    /// <param name="matchId">The unique identity reference key of the target match extracted from the route path context.</param>
+    /// <param name="request">The incoming data transfer object payload containing period markers and distinct starting lineup identifier elements collections.</param>
+    /// <param name="validator">The fluent validator service instance injected directly via method services to manage initialization request structural integrity checks.</param>
+    /// <param name="cancellationToken">A secure execution propagation token designed for watching asynchronous task cancellation requests states.</param>
+    /// <returns>An HTTP 204 No Content success state response tracking correct operational transactional completions flags.</returns>
+    [HttpPost("{matchId}/presence/initialize")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> InitializePeriodPresence(
+        [FromRoute] Guid matchId,
+        [FromBody] InitializePresenceRequest request,
+        [FromServices] IValidator<InitializePresenceRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Received request to initialize period presence log arrays for Match {MatchId}, Period {Period}.", matchId, request.PeriodNumber);
+
+        // 1. Explicit FluentValidation invocation inside controller layer via injected method service parameter
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation collapse occurred for InitializePresenceRequest payload in Match {MatchId}.", matchId);
+            return BadRequest(validationResult.Errors);
+        }
+
+        // 2. Strict match-level domain edit scope access privilege validation check
+        var authResult = await ValidateMatchEditAccess(matchId, cancellationToken);
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        // 3. Transformation mapping conversion invocation and mediator request dispatch routing execution sequence
+        var command = request.ToCommand(matchId);
+        await _mediator.Send(command, cancellationToken);
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Retrieves the complete chronological historical tracking sequence list data structure of all player presences and substitutions log entries logged against a match.
+    /// </summary>
+    /// <param name="matchId">The unique identity reference key of the target match extracted from the route path context.</param>
+    /// <param name="cancellationToken">A secure execution propagation token designed for watching asynchronous task cancellation requests states.</param>
+    /// <returns>An HTTP action response wrapper holding a structured collection sequence stream array of player presence data objects entities.</returns>
+    [AllowAnonymous]
+    [HttpGet("{matchId}/presence")]
+    [ProducesResponseType(typeof(IEnumerable<PlayerPresenceResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetMatchPresence(
+        [FromRoute] Guid matchId,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Received HTTP GET data query request to fetch player presence logs timeline history tracking details for Match {MatchId}.", matchId);
+
+        var query = new GetMatchPresenceQuery(matchId);
+        var response = await _mediator.Send(query, cancellationToken);
+
+        return Ok(response);
     }
 
     #endregion

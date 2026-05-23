@@ -1,7 +1,9 @@
 ﻿using FluentAssertions;
+using MediatR;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Npgsql;
+using TTA.BusinessLogic.Features.PlayerPresences.Notifications;
 using TTA.BusinessLogic.Features.TimeAnchors.Commands;
 using TTA.BusinessLogic.Features.TimeAnchors.Handlers;
 using TTA.Common.Exceptions;
@@ -20,6 +22,7 @@ public class CreateTimeAnchorHandlerTests
 {
     private readonly Mock<ITimeAnchorRepository> _timeAnchorRepositoryMock;
     private readonly Mock<IMatchRepository> _matchRepositoryMock;
+    private readonly Mock<IMediator> _mediatorMock;
     private readonly Mock<ILogger<CreateTimeAnchorHandler>> _loggerMock;
     private readonly CreateTimeAnchorHandler _handler;
 
@@ -31,11 +34,13 @@ public class CreateTimeAnchorHandlerTests
     {
         _timeAnchorRepositoryMock = new Mock<ITimeAnchorRepository>();
         _matchRepositoryMock = new Mock<IMatchRepository>();
+        _mediatorMock = new Mock<IMediator>();
         _loggerMock = new Mock<ILogger<CreateTimeAnchorHandler>>();
 
         _handler = new CreateTimeAnchorHandler(
             _timeAnchorRepositoryMock.Object,
             _matchRepositoryMock.Object,
+            _mediatorMock.Object,
             _loggerMock.Object);
     }
 
@@ -214,6 +219,52 @@ public class CreateTimeAnchorHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ConflictException>();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PeriodEndedNotification"/> is published when a PeriodEnd anchor is successfully created.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_PublishPeriodEndedNotification_When_AnchorTypeIsPeriodEnd()
+    {
+        // Arrange
+        var command = new CreateTimeAnchorCommand(Guid.NewGuid(), 1, TimeAnchorType.PeriodEnd);
+        var match = new Match { Id = command.MatchId };
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { MatchId = command.MatchId, PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow.AddMinutes(-20) }
+        };
+
+        var createdAnchor = new TimeAnchor
+        {
+            Id = Guid.NewGuid(),
+            MatchId = command.MatchId,
+            Type = command.Type,
+            PeriodNumber = command.PeriodNumber,
+            Timestamp = DateTime.UtcNow
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdAnchor);
+
+        // Act
+        await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        _mediatorMock.Verify(m => m.Publish(
+            It.Is<PeriodEndedNotification>(n => n.MatchId == command.MatchId && n.PeriodNumber == command.PeriodNumber),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     /// <summary>

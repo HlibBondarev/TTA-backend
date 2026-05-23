@@ -1371,3 +1371,78 @@ BEGIN
     
     RETURN FOUND;
 END;$$ LANGUAGE plpgsql;
+
+-- =============================================================
+-- PLAYER PRESENCE STORED FUNCTIONS & PROCEDURES
+-- =============================================================
+
+/**********************************************************************************
+ * Inserts a new player presence record or updates an existing one (e.g., setting timeout).
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.record_player_presence(
+    p_id UUID,
+    p_match_lineup_id UUID,
+    p_period_number INT,
+    p_time_in TIMESTAMPTZ,
+    p_time_out TIMESTAMPTZ DEFAULT NULL
+)
+RETURNS SETOF public.playerpresences AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout)
+    VALUES (p_id, p_match_lineup_id, p_period_number, p_time_in, p_time_out)
+    ON CONFLICT (id) DO UPDATE 
+    SET timeout = EXCLUDED.timeout
+    RETURNING *;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves all player presence records for a specific match.
+ * Joins with matchlineups to filter by matchid. Ordered chronologically.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_presence(
+    p_match_id UUID
+)
+RETURNS SETOF public.playerpresences AS $$
+BEGIN
+    RETURN QUERY
+    SELECT pp.* FROM public.playerpresences pp
+    JOIN public.matchlineups ml ON pp.matchlineupid = ml.id
+    WHERE ml.matchid = p_match_id
+    ORDER BY pp.periodnumber ASC, pp.timein ASC;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Bulk inserts presence records (TimeIn) for an explicit list of player lineup IDs
+ * who are starting a specific match period (Handles both Period 1 and periods > 1).
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.init_period_presence(
+    p_period_number INT,
+    p_time_in TIMESTAMPTZ,
+    p_lineup_ids UUID[]
+)
+RETURNS VOID AS $$
+BEGIN
+    INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein)
+    SELECT gen_random_uuid(), unnest(p_lineup_ids), p_period_number, p_time_in;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Automatically updates the timeout for all currently active players in a match period
+ * when that specific period ends.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.close_active_presences(
+    p_match_id UUID,
+    p_period_number INT,
+    p_time_out TIMESTAMPTZ
+)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE public.playerpresences pp
+    SET timeout = p_time_out
+    FROM public.matchlineups ml
+    WHERE pp.matchlineupid = ml.id
+      AND ml.matchid = p_match_id
+      AND pp.periodnumber = p_period_number
+      AND pp.timeout IS NULL;
+END;$$ LANGUAGE plpgsql;
