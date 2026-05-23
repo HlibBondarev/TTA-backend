@@ -43,7 +43,7 @@ public class CreateTimeAnchorHandler(
             request.Type, request.MatchId, request.PeriodNumber);
 
         // 1. Basic existence check
-        var match = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken)
+        _ = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken)
             ?? throw new NotFoundException($"Match with ID {request.MatchId} was not found.");
 
         // 2. Logical sequence validation
