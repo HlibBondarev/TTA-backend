@@ -27,6 +27,38 @@ public class PlayerPresenceRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
+    public async Task<Guid> RecordSubstitutionAsync(PlayerPresence outgoingPresence, PlayerPresence incomingPresence, CancellationToken cancellationToken = default)
+    {
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        using var transaction = connection.BeginTransaction();
+
+        try
+        {
+            // 1. Update the outgoing player's presence
+            await connection.ExecuteAsync(new CommandDefinition(
+                SqlStatements.ForPlayerPresence.RecordPresence,
+                outgoingPresence,
+                transaction: transaction,
+                cancellationToken: cancellationToken));
+
+            // 2. Insert the incoming player's presence
+            await connection.ExecuteAsync(new CommandDefinition(
+                SqlStatements.ForPlayerPresence.RecordPresence,
+                incomingPresence,
+                transaction: transaction,
+                cancellationToken: cancellationToken));
+
+            transaction.Commit();
+            return incomingPresence.Id;
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<IEnumerable<PlayerPresence>> GetMatchPresenceAsync(Guid matchId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();

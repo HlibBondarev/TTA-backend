@@ -13,7 +13,7 @@ namespace TTA.BusinessLogic.Tests.Features.PlayerPresences.Handlers;
 
 /// <summary>
 /// Unit tests for the <see cref="SubstitutePlayerHandler"/> class.
-/// Ensures validation logic, active player state checks, repository interaction, and exception mapping are correct.
+/// Ensures validation logic, active player state checks, atomic repository interaction, and exception mapping are correct.
 /// </summary>
 public class SubstitutePlayerHandlerTests
 {
@@ -39,7 +39,7 @@ public class SubstitutePlayerHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a substitution is successfully processed when the match exists and the outgoing player is actively on the field.
+    /// Verifies that a substitution is successfully processed atomically when the match exists and the outgoing player is actively on the field.
     /// </summary>
     [Fact]
     public async Task Handle_Should_SubstitutePlayer_When_RequestIsValid()
@@ -65,9 +65,10 @@ public class SubstitutePlayerHandlerTests
             .Setup(r => r.GetMatchPresenceAsync(command.MatchId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PlayerPresence> { activeOutgoingPresence });
 
+        // Setup the atomic repository call to return the ID of the incoming presence
         _playerPresenceRepositoryMock
-            .Setup(r => r.RecordPresenceAsync(It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((PlayerPresence p, CancellationToken _) => p.Id);
+            .Setup(r => r.RecordSubstitutionAsync(It.IsAny<PlayerPresence>(), It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PlayerPresence outgoing, PlayerPresence incoming, CancellationToken ct) => incoming.Id);
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
@@ -75,13 +76,9 @@ public class SubstitutePlayerHandlerTests
         // Assert
         result.Should().NotBeEmpty();
 
-        // Verify that the outgoing player's presence was updated (TimeOut set)
-        _playerPresenceRepositoryMock.Verify(r => r.RecordPresenceAsync(
+        // Verify that the atomic substitution method was called exactly once with the correctly mutated outgoing and new incoming entities
+        _playerPresenceRepositoryMock.Verify(r => r.RecordSubstitutionAsync(
             It.Is<PlayerPresence>(p => p.Id == activeOutgoingPresence.Id && p.TimeOut != null),
-            It.IsAny<CancellationToken>()), Times.Once);
-
-        // Verify that the incoming player's presence was created
-        _playerPresenceRepositoryMock.Verify(r => r.RecordPresenceAsync(
             It.Is<PlayerPresence>(p => p.MatchLineupId == command.PlayerInLineupId && p.TimeIn != default && p.TimeOut == null),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -106,7 +103,8 @@ public class SubstitutePlayerHandlerTests
         await act.Should().ThrowAsync<NotFoundException>()
             .WithMessage($"Match with ID {command.MatchId} was not found.");
 
-        _playerPresenceRepositoryMock.Verify(r => r.RecordPresenceAsync(It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>()), Times.Never);
+        // Ensure no atomic substitution operation was ever attempted
+        _playerPresenceRepositoryMock.Verify(r => r.RecordSubstitutionAsync(It.IsAny<PlayerPresence>(), It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>
@@ -144,11 +142,12 @@ public class SubstitutePlayerHandlerTests
         await act.Should().ThrowAsync<ConflictException>()
             .WithMessage("The outgoing player is not currently active on the field in this period.");
 
-        _playerPresenceRepositoryMock.Verify(r => r.RecordPresenceAsync(It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>()), Times.Never);
+        // Ensure no atomic substitution operation was ever attempted
+        _playerPresenceRepositoryMock.Verify(r => r.RecordSubstitutionAsync(It.IsAny<PlayerPresence>(), It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     /// <summary>
-    /// Verifies that a <see cref="ConflictException"/> is thrown when a Postgres CHECK constraint violation occurs.
+    /// Verifies that a <see cref="ConflictException"/> is thrown when a Postgres CHECK constraint violation occurs during the atomic substitution transaction.
     /// </summary>
     [Fact]
     public async Task Handle_Should_Throw_ConflictException_When_DatabaseThrowsCheckConstraintViolation()
@@ -162,7 +161,9 @@ public class SubstitutePlayerHandlerTests
 
         _matchRepositoryMock.Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(match);
         _playerPresenceRepositoryMock.Setup(r => r.GetMatchPresenceAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(new List<PlayerPresence> { activeOutgoingPresence });
-        _playerPresenceRepositoryMock.Setup(r => r.RecordPresenceAsync(It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>())).ThrowsAsync(pgException);
+
+        // Setup atomic call to throw
+        _playerPresenceRepositoryMock.Setup(r => r.RecordSubstitutionAsync(It.IsAny<PlayerPresence>(), It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>())).ThrowsAsync(pgException);
 
         // Act
         var act = async () => await _handler.Handle(command, CancellationToken.None);
@@ -172,7 +173,7 @@ public class SubstitutePlayerHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a <see cref="ConflictException"/> is thrown when a Postgres FOREIGN KEY constraint violation occurs.
+    /// Verifies that a <see cref="ConflictException"/> is thrown when a Postgres FOREIGN KEY constraint violation occurs during the atomic substitution transaction.
     /// </summary>
     [Fact]
     public async Task Handle_Should_Throw_ConflictException_When_DatabaseThrowsForeignKeyViolation()
@@ -186,7 +187,9 @@ public class SubstitutePlayerHandlerTests
 
         _matchRepositoryMock.Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(match);
         _playerPresenceRepositoryMock.Setup(r => r.GetMatchPresenceAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(new List<PlayerPresence> { activeOutgoingPresence });
-        _playerPresenceRepositoryMock.Setup(r => r.RecordPresenceAsync(It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>())).ThrowsAsync(pgException);
+
+        // Setup atomic call to throw
+        _playerPresenceRepositoryMock.Setup(r => r.RecordSubstitutionAsync(It.IsAny<PlayerPresence>(), It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>())).ThrowsAsync(pgException);
 
         // Act
         var act = async () => await _handler.Handle(command, CancellationToken.None);
@@ -196,7 +199,7 @@ public class SubstitutePlayerHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a <see cref="ConflictException"/> is thrown when a custom PL/pgSQL business rule violation occurs.
+    /// Verifies that a <see cref="ConflictException"/> is thrown when a custom PL/pgSQL business rule violation occurs during the atomic substitution transaction.
     /// </summary>
     [Fact]
     public async Task Handle_Should_Throw_ConflictException_When_DatabaseThrowsCustomBusinessRuleViolation()
@@ -211,7 +214,9 @@ public class SubstitutePlayerHandlerTests
 
         _matchRepositoryMock.Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(match);
         _playerPresenceRepositoryMock.Setup(r => r.GetMatchPresenceAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(new List<PlayerPresence> { activeOutgoingPresence });
-        _playerPresenceRepositoryMock.Setup(r => r.RecordPresenceAsync(It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>())).ThrowsAsync(pgException);
+
+        // Setup atomic call to throw
+        _playerPresenceRepositoryMock.Setup(r => r.RecordSubstitutionAsync(It.IsAny<PlayerPresence>(), It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>())).ThrowsAsync(pgException);
 
         // Act
         var act = async () => await _handler.Handle(command, CancellationToken.None);

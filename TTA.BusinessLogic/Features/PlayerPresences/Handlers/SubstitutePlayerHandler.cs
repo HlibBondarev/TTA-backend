@@ -62,13 +62,11 @@ public class SubstitutePlayerHandler(
 
         try
         {
-            // 3. Update the outgoing player's record
+            // 3 & 4. Atomically update the outgoing player's record and insert the incoming player's record
             activeOutgoingPresence.TimeOut = exactSubstitutionTime;
-            await _playerPresenceRepository.RecordPresenceAsync(activeOutgoingPresence, cancellationToken);
-
-            // 4. Create and insert the incoming player's record
             var incomingPresence = request.ToModel(exactSubstitutionTime);
-            await _playerPresenceRepository.RecordPresenceAsync(incomingPresence, cancellationToken);
+
+            await _playerPresenceRepository.RecordSubstitutionAsync(activeOutgoingPresence, incomingPresence, cancellationToken);
 
             _logger.LogInformation("Successfully completed substitution. New presence ID: {PresenceId}", incomingPresence.Id);
 

@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using FluentAssertions;
+using Npgsql;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
@@ -91,6 +92,110 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
 
         updated.Should().NotBeNull();
         updated!.TimeOut.Should().BeCloseTo(exactTimeOut, TimeSpan.FromMilliseconds(100)); // DB precision check
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.RecordSubstitutionAsync"/> atomically updates the outgoing player and inserts the incoming player.
+    /// </summary>
+    [Fact]
+    public async Task RecordSubstitutionAsync_ShouldUpdateOutgoingAndInsertIncoming_Atomically_WhenDataIsValid()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var baseTime = DateTime.UtcNow;
+        var substitutionTime = baseTime.AddMinutes(15);
+
+        // Record initial active presence for the outgoing player
+        var outgoingPresence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = baseTime,
+            TimeOut = null
+        };
+        await _repository.RecordPresenceAsync(outgoingPresence);
+
+        // Prepare the mutation state for substitution
+        outgoingPresence.TimeOut = substitutionTime;
+
+        var incomingPresence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId2,
+            PeriodNumber = 1,
+            TimeIn = substitutionTime,
+            TimeOut = null
+        };
+
+        // Act
+        var resultId = await _repository.RecordSubstitutionAsync(outgoingPresence, incomingPresence);
+
+        // Assert
+        resultId.Should().Be(incomingPresence.Id);
+
+        var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
+
+        var persistedOutgoing = matchPresences.FirstOrDefault(p => p.Id == outgoingPresence.Id);
+        persistedOutgoing.Should().NotBeNull();
+        persistedOutgoing!.TimeOut.Should().BeCloseTo(substitutionTime, TimeSpan.FromMilliseconds(100));
+
+        var persistedIncoming = matchPresences.FirstOrDefault(p => p.Id == incomingPresence.Id);
+        persistedIncoming.Should().NotBeNull();
+        persistedIncoming!.TimeIn.Should().BeCloseTo(substitutionTime, TimeSpan.FromMilliseconds(100));
+        persistedIncoming.TimeOut.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.RecordSubstitutionAsync"/> completely rolls back the transaction if a database constraint fails.
+    /// </summary>
+    [Fact]
+    public async Task RecordSubstitutionAsync_ShouldRollbackTransaction_WhenDatabaseThrowsException()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var baseTime = DateTime.UtcNow;
+        var substitutionTime = baseTime.AddMinutes(15);
+
+        // Record initial active presence for the outgoing player
+        var outgoingPresence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = baseTime,
+            TimeOut = null
+        };
+        await _repository.RecordPresenceAsync(outgoingPresence);
+
+        // Prepare INVALID mutation state to force a database CHECK constraint violation
+        // (TimeOut is set to be BEFORE TimeIn, which violates 'chk_timeout_after_timein' constraint)
+        outgoingPresence.TimeOut = baseTime.AddMinutes(-5);
+
+        var incomingPresence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId2,
+            PeriodNumber = 1,
+            TimeIn = substitutionTime,
+            TimeOut = null
+        };
+
+        // Act
+        var act = async () => await _repository.RecordSubstitutionAsync(outgoingPresence, incomingPresence);
+
+        // Assert
+        await act.Should().ThrowAsync<PostgresException>(); // The DB constraint violation triggers a PostgresException
+
+        // Verify Rollback: Outgoing should NOT have its TimeOut updated, Incoming should NOT be inserted
+        var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
+
+        var persistedOutgoing = matchPresences.FirstOrDefault(p => p.Id == outgoingPresence.Id);
+        persistedOutgoing.Should().NotBeNull();
+        persistedOutgoing!.TimeOut.Should().BeNull(); // Confirms rollback: the session remains active
+
+        var persistedIncoming = matchPresences.FirstOrDefault(p => p.Id == incomingPresence.Id);
+        persistedIncoming.Should().BeNull(); // Confirms rollback: the incoming player was never inserted
     }
 
     /// <summary>

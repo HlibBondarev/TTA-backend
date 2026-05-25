@@ -18,6 +18,15 @@ public interface IPlayerPresenceRepository : IEntityRepositoryBase<Guid, PlayerP
     Task<Guid> RecordPresenceAsync(PlayerPresence entity, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Atomically records a player substitution by updating the outgoing player's session and inserting the incoming player's session within a single database transaction.
+    /// </summary>
+    /// <param name="outgoingPresence">The presence record of the player leaving the field.</param>
+    /// <param name="incomingPresence">The presence record of the player entering the field.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>The unique identifier of the newly created incoming presence record.</returns>
+    Task<Guid> RecordSubstitutionAsync(PlayerPresence outgoingPresence, PlayerPresence incomingPresence, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Retrieves all player presence records associated with a specific match.
     /// Results are returned in chronological order as defined by the storage function.
     /// </summary>
