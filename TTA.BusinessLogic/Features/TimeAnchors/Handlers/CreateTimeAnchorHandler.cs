@@ -72,13 +72,17 @@ public class CreateTimeAnchorHandler(
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to publish PeriodEndedNotification for Match {MatchId}, Period {Period}. Executing compensating delete rollback.",
+                    // Log the rollback action context WITHOUT passing the exception object to avoid SonarCloud double-logging penalty
+                    _logger.LogWarning("Publishing PeriodEndedNotification failed for Match {MatchId}, Period {Period}. Executing compensating delete rollback.",
                         model.MatchId, model.PeriodNumber);
 
                     // Compensating Action: Roll back persistence by explicitly deleting the orphaned anchor record
                     await _timeAnchorRepository.DeleteAsync(result.Id, cancellationToken);
 
-                    throw; // Re-throw to propagate failure context properly to the upper layer
+                    // Wrap and re-throw with context as an inner exception to satisfy SonarCloud rules
+                    throw new InvalidOperationException(
+                        $"Failed to publish PeriodEndedNotification for Match {model.MatchId}, Period {model.PeriodNumber}. Compensating rollback executed.",
+                        ex);
                 }
             }
 
