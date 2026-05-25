@@ -72,14 +72,12 @@ public class CreateTimeAnchorHandler(
                 }
                 catch (Exception ex)
                 {
-                    // Log the rollback action context WITHOUT passing the exception object to avoid SonarCloud double-logging penalty
-                    _logger.LogWarning("Publishing PeriodEndedNotification failed for Match {MatchId}, Period {Period}. Executing compensating delete rollback.",
-                        model.MatchId, model.PeriodNumber);
-
                     // Compensating Action: Roll back persistence by explicitly deleting the orphaned anchor record
                     await _timeAnchorRepository.DeleteAsync(result.Id, cancellationToken);
 
-                    // Wrap and re-throw with context as an inner exception to satisfy SonarCloud rules
+                    // Wrap and re-throw with context as an inner exception. 
+                    // We intentionally do not log here to avoid SonarCloud rule S2139 (double logging),
+                    // as the GlobalExceptionHandler will log this newly thrown exception along with its inner exception.
                     throw new InvalidOperationException(
                         $"Failed to publish PeriodEndedNotification for Match {model.MatchId}, Period {model.PeriodNumber}. Compensating rollback executed.",
                         ex);
