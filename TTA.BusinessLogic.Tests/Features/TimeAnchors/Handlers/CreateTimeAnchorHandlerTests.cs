@@ -45,7 +45,8 @@ public class CreateTimeAnchorHandlerTests
     }
 
     /// <summary>
-    /// Verifies that the handler successfully creates a time anchor when the sequence is valid.
+    /// Verifies that the handler successfully creates a time anchor when the sequence is valid,
+    /// and ensures that no notifications are published for anchor types other than PeriodEnd.
     /// </summary>
     [Fact]
     public async Task Handle_Should_CreateAnchor_When_SequenceIsValid()
@@ -74,6 +75,12 @@ public class CreateTimeAnchorHandlerTests
         // Assert
         result.Should().Be(createdAnchor.Id);
         _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Verify that mediator was NOT invoked for PeriodStart
+        _mediatorMock.Verify(m => m.Publish(
+            It.IsAny<INotification>(),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     /// <summary>
