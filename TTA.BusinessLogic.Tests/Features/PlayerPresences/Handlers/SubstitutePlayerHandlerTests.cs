@@ -39,7 +39,8 @@ public class SubstitutePlayerHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a substitution is successfully processed atomically when the match exists and the outgoing player is actively on the field.
+    /// Verifies that a substitution is successfully processed atomically and that the 
+    /// substitution time boundary (Outgoing.TimeOut == Incoming.TimeIn) is invariant.
     /// </summary>
     [Fact]
     public async Task Handle_Should_SubstitutePlayer_When_RequestIsValid()
@@ -54,7 +55,7 @@ public class SubstitutePlayerHandlerTests
             MatchLineupId = command.PlayerOutLineupId,
             PeriodNumber = command.PeriodNumber,
             TimeIn = DateTime.UtcNow.AddMinutes(-10),
-            TimeOut = null // Indicates player is actively on the field
+            TimeOut = null
         };
 
         _matchRepositoryMock
@@ -65,9 +66,17 @@ public class SubstitutePlayerHandlerTests
             .Setup(r => r.GetMatchPresenceAsync(command.MatchId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PlayerPresence> { activeOutgoingPresence });
 
-        // Setup the atomic repository call to return the ID of the incoming presence
+        // Variables to capture the arguments passed to the repository
+        PlayerPresence? capturedOutgoing = null;
+        PlayerPresence? capturedIncoming = null;
+
         _playerPresenceRepositoryMock
             .Setup(r => r.RecordSubstitutionAsync(It.IsAny<PlayerPresence>(), It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>()))
+            .Callback<PlayerPresence, PlayerPresence, CancellationToken>((outg, inc, ct) =>
+            {
+                capturedOutgoing = outg;
+                capturedIncoming = inc;
+            })
             .ReturnsAsync((PlayerPresence outgoing, PlayerPresence incoming, CancellationToken ct) => incoming.Id);
 
         // Act
@@ -76,10 +85,20 @@ public class SubstitutePlayerHandlerTests
         // Assert
         result.Should().NotBeEmpty();
 
-        // Verify that the atomic substitution method was called exactly once with the correctly mutated outgoing and new incoming entities
+        capturedOutgoing.Should().NotBeNull();
+        capturedIncoming.Should().NotBeNull();
+
+        // Verify invariants:
+        capturedOutgoing!.TimeOut.Should().NotBeNull("Outgoing player must have a TimeOut set.");
+        capturedIncoming!.TimeIn.Should().NotBe(default, "Incoming player must have a TimeIn set.");
+
+        // Enforce the substitution boundary invariant
+        capturedOutgoing.TimeOut.Should().Be(capturedIncoming.TimeIn,
+            "The time the outgoing player exits must exactly match the time the incoming player enters.");
+
         _playerPresenceRepositoryMock.Verify(r => r.RecordSubstitutionAsync(
-            It.Is<PlayerPresence>(p => p.Id == activeOutgoingPresence.Id && p.TimeOut != null),
-            It.Is<PlayerPresence>(p => p.MatchLineupId == command.PlayerInLineupId && p.TimeIn != default && p.TimeOut == null),
+            It.Is<PlayerPresence>(p => p.Id == activeOutgoingPresence.Id),
+            It.Is<PlayerPresence>(p => p.MatchLineupId == command.PlayerInLineupId),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
