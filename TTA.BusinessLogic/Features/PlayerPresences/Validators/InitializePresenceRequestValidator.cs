@@ -18,6 +18,7 @@ public class InitializePresenceRequestValidator : AbstractValidator<InitializePr
             .GreaterThan(0).WithMessage("Period number must be greater than zero.");
 
         RuleFor(x => x.PlayerLineupIds)
+            .Cascade(CascadeMode.Stop) // Stop validation if previous rules fail (e.g. if null/empty)
             .NotEmpty().WithMessage("At least one player lineup identifier must be provided for initialization.")
             .Must(ids => ids.Distinct().Count() == ids.Count()).WithMessage("Player lineup identifiers must be unique.");
 
