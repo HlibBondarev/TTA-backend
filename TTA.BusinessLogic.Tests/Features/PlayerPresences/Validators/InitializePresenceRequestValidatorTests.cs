@@ -42,7 +42,6 @@ public class InitializePresenceRequestValidatorTests
     /// <summary>
     /// Verifies that a validation error is generated when <see cref="InitializePresenceRequest.PeriodNumber"/> is zero or negative.
     /// </summary>
-    /// <param name="invalidPeriod">The invalid period sequence number supplied by the InlineData attribute.</param>
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
@@ -71,7 +70,7 @@ public class InitializePresenceRequestValidatorTests
         // Arrange
         var request = new InitializePresenceRequest(
             PeriodNumber: 1,
-            PlayerLineupIds: new List<Guid>() // Invalid empty collection
+            PlayerLineupIds: new List<Guid>()
         );
 
         // Act
@@ -91,7 +90,7 @@ public class InitializePresenceRequestValidatorTests
         // Arrange
         var request = new InitializePresenceRequest(
             PeriodNumber: 1,
-            PlayerLineupIds: new List<Guid> { Guid.NewGuid(), Guid.Empty } // Contains an invalid empty GUID
+            PlayerLineupIds: new List<Guid> { Guid.NewGuid(), Guid.Empty }
         );
 
         // Act
@@ -100,5 +99,26 @@ public class InitializePresenceRequestValidatorTests
         // Assert
         result.ShouldHaveValidationErrorFor(x => x.PlayerLineupIds)
             .WithErrorMessage("Player lineup identifiers cannot be empty GUIDs.");
+    }
+
+    /// <summary>
+    /// Verifies that a validation error is generated when <see cref="InitializePresenceRequest.PlayerLineupIds"/> contains duplicates.
+    /// </summary>
+    [Fact]
+    public void Validator_Should_HaveError_When_PlayerLineupIdsAreNotUnique()
+    {
+        // Arrange
+        var duplicateId = Guid.NewGuid();
+        var request = new InitializePresenceRequest(
+            PeriodNumber: 1,
+            PlayerLineupIds: new List<Guid> { duplicateId, duplicateId } // Duplicated ID
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldHaveValidationErrorFor(x => x.PlayerLineupIds)
+            .WithErrorMessage("Player lineup identifiers must be unique.");
     }
 }
