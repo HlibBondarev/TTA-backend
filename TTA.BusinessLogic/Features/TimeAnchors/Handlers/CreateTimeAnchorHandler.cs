@@ -13,6 +13,7 @@ namespace TTA.BusinessLogic.Features.TimeAnchors.Handlers;
 /// <summary>
 /// Handles the creation of a new time anchor with match validation.
 /// Relies on GlobalExceptionHandler for unhandled exceptions.
+/// Implements a compensating action pattern to rollback persistence if domain event publishing fails.
 /// </summary>
 /// <param name="timeAnchorRepository">The repository for time anchor data operations.</param>
 /// <param name="matchRepository">The repository for validating match existence.</param>
@@ -31,6 +32,7 @@ public class CreateTimeAnchorHandler(
 
     /// <summary>
     /// Validates the match existence and persists the new time anchor record.
+    /// Rolls back the persisted anchor via deletion if downstream period closing notification fails.
     /// </summary>
     /// <param name="request">The command containing anchor details and match context.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
@@ -64,13 +66,27 @@ public class CreateTimeAnchorHandler(
             // 4. Domain Trigger: Automatically close active player presence sessions if period finishes
             if (model.Type == TimeAnchorType.PeriodEnd)
             {
-                await _mediator.Publish(new PeriodEndedNotification(model.MatchId, model.PeriodNumber, model.Timestamp), cancellationToken);
+                try
+                {
+                    await _mediator.Publish(new PeriodEndedNotification(model.MatchId, model.PeriodNumber, model.Timestamp), cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to publish PeriodEndedNotification for Match {MatchId}, Period {Period}. Executing compensating delete rollback.",
+                        model.MatchId, model.PeriodNumber);
+
+                    // Compensating Action: Roll back persistence by explicitly deleting the orphaned anchor record
+                    await _timeAnchorRepository.DeleteAsync(result.Id, cancellationToken);
+
+                    throw; // Re-throw to propagate failure context properly to the upper layer
+                }
             }
 
             return result.Id;
         }
-        catch (PostgresException ex) when (ex.SqlState == "P0001")
+        catch (PostgresException ex) when (ex.SqlState == "P0001") // Custom PL/pgSQL exception for business rules
         {
+            _logger.LogWarning(ex, "Time anchor creation failed due to database business rule: {Message}", ex.MessageText);
             throw new ConflictException(ex.MessageText, ex);
         }
     }

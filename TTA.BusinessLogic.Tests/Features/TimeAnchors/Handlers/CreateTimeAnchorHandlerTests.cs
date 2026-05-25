@@ -268,6 +268,62 @@ public class CreateTimeAnchorHandlerTests
     }
 
     /// <summary>
+    /// Verifies that if the notification publish fails, the handler rolls back the created time anchor via a compensating delete.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_RollbackAnchor_When_NotificationPublishFails()
+    {
+        // Arrange
+        var command = new CreateTimeAnchorCommand(Guid.NewGuid(), 1, TimeAnchorType.PeriodEnd);
+        var match = new Match { Id = command.MatchId };
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { MatchId = command.MatchId, PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow.AddMinutes(-20) }
+        };
+
+        var createdAnchor = new TimeAnchor
+        {
+            Id = Guid.NewGuid(),
+            MatchId = command.MatchId,
+            PeriodNumber = command.PeriodNumber,
+            Type = command.Type,
+            Timestamp = DateTime.UtcNow
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdAnchor);
+
+        // Setup the mock to simulate a delete success
+        _timeAnchorRepositoryMock
+            .Setup(r => r.DeleteAsync(createdAnchor.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Force the mediator to throw an exception to simulate downstream failure
+        _mediatorMock
+            .Setup(m => m.Publish(It.IsAny<PeriodEndedNotification>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Publish completely failed"));
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>();
+
+        // Verify that the compensating action (Delete) was called exactly once to roll back the persistence
+        _timeAnchorRepositoryMock.Verify(r => r.DeleteAsync(createdAnchor.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="CreateTimeAnchorCommand"/>.
     /// </summary>
     /// <param name="type">The type of anchor to create.</param>
