@@ -244,6 +244,7 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         var context = await SeedPresenceEnvironmentAsync();
         var exactTimeIn = DateTime.UtcNow;
         var lineupIds = new List<Guid> { context.LineupId1, context.LineupId2 };
+        var precision = TimeSpan.FromMilliseconds(500);
 
         // Act
         await _repository.InitializePeriodPresenceAsync(
@@ -255,9 +256,20 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
 
         matchPresences.Count.Should().Be(2);
-        matchPresences.Should().Contain(p => p.MatchLineupId == context.LineupId1 && p.TimeIn.ToString("yyyy-MM-dd HH:mm:ss") == exactTimeIn.ToString("yyyy-MM-dd HH:mm:ss"));
-        matchPresences.Should().Contain(p => p.MatchLineupId == context.LineupId2 && p.TimeIn.ToString("yyyy-MM-dd HH:mm:ss") == exactTimeIn.ToString("yyyy-MM-dd HH:mm:ss"));
-        matchPresences.Should().OnlyContain(p => p.TimeOut == null && p.PeriodNumber == 1);
+
+        // Verify Player 1 presence
+        var presence1 = matchPresences.FirstOrDefault(p => p.MatchLineupId == context.LineupId1);
+        presence1.Should().NotBeNull();
+        presence1!.TimeIn.Should().BeCloseTo(exactTimeIn, precision);
+        presence1.TimeOut.Should().BeNull();
+        presence1.PeriodNumber.Should().Be(1);
+
+        // Verify Player 2 presence
+        var presence2 = matchPresences.FirstOrDefault(p => p.MatchLineupId == context.LineupId2);
+        presence2.Should().NotBeNull();
+        presence2!.TimeIn.Should().BeCloseTo(exactTimeIn, precision);
+        presence2.TimeOut.Should().BeNull();
+        presence2.PeriodNumber.Should().Be(1);
     }
 
     /// <summary>
