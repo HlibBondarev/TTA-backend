@@ -70,17 +70,32 @@ public class CreateTimeAnchorHandler(
                 {
                     await _mediator.Publish(new PeriodEndedNotification(model.MatchId, model.PeriodNumber, model.Timestamp), cancellationToken);
                 }
+                catch (OperationCanceledException)
+                {
+                    // 1. Let cancellation propagate naturally without attempting rollback,
+                    // as the request was intentionally aborted by the client/system.
+                    throw;
+                }
                 catch (Exception ex)
                 {
-                    // Compensating Action: Roll back persistence by explicitly deleting the orphaned anchor record
-                    await _timeAnchorRepository.DeleteAsync(result.Id, cancellationToken);
+                    // 2. Use CancellationToken.None to guarantee the rollback executes even if the parent context was cancelled
+                    bool rollbackSuccess = await _timeAnchorRepository.DeleteAsync(result.Id, CancellationToken.None);
 
-                    // Wrap and re-throw with context as an inner exception. 
-                    // We intentionally do not log here to avoid SonarCloud rule S2139 (double logging),
-                    // as the GlobalExceptionHandler will log this newly thrown exception along with its inner exception.
-                    throw new InvalidOperationException(
-                        $"Failed to publish PeriodEndedNotification for Match {model.MatchId}, Period {model.PeriodNumber}. Compensating rollback executed.",
-                        ex);
+                    // 3 & 4. Evaluate rollback success and throw accordingly. 
+                    // No direct logging here to strictly comply with SonarCloud S2139 (double-logging prevention),
+                    // as the GlobalExceptionHandler will log these descriptive exceptions along with the inner exception.
+                    if (rollbackSuccess)
+                    {
+                        throw new InvalidOperationException(
+                            $"Failed to publish PeriodEndedNotification for Match {model.MatchId}, Period {model.PeriodNumber}. Compensating rollback executed successfully for Anchor {result.Id}.",
+                            ex);
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            $"Failed to publish PeriodEndedNotification for Match {model.MatchId}, Period {model.PeriodNumber}. WARNING: Compensating rollback FAILED for Anchor {result.Id}. Orphaned record may exist.",
+                            ex);
+                    }
                 }
             }
 
