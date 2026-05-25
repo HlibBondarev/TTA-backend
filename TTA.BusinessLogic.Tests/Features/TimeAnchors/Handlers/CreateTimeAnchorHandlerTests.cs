@@ -1,7 +1,9 @@
 ﻿using FluentAssertions;
+using MediatR;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Npgsql;
+using TTA.BusinessLogic.Features.PlayerPresences.Notifications;
 using TTA.BusinessLogic.Features.TimeAnchors.Commands;
 using TTA.BusinessLogic.Features.TimeAnchors.Handlers;
 using TTA.Common.Exceptions;
@@ -20,6 +22,7 @@ public class CreateTimeAnchorHandlerTests
 {
     private readonly Mock<ITimeAnchorRepository> _timeAnchorRepositoryMock;
     private readonly Mock<IMatchRepository> _matchRepositoryMock;
+    private readonly Mock<IMediator> _mediatorMock;
     private readonly Mock<ILogger<CreateTimeAnchorHandler>> _loggerMock;
     private readonly CreateTimeAnchorHandler _handler;
 
@@ -31,16 +34,19 @@ public class CreateTimeAnchorHandlerTests
     {
         _timeAnchorRepositoryMock = new Mock<ITimeAnchorRepository>();
         _matchRepositoryMock = new Mock<IMatchRepository>();
+        _mediatorMock = new Mock<IMediator>();
         _loggerMock = new Mock<ILogger<CreateTimeAnchorHandler>>();
 
         _handler = new CreateTimeAnchorHandler(
             _timeAnchorRepositoryMock.Object,
             _matchRepositoryMock.Object,
+            _mediatorMock.Object,
             _loggerMock.Object);
     }
 
     /// <summary>
-    /// Verifies that the handler successfully creates a time anchor when the sequence is valid.
+    /// Verifies that the handler successfully creates a time anchor when the sequence is valid,
+    /// and ensures that no notifications are published for anchor types other than PeriodEnd.
     /// </summary>
     [Fact]
     public async Task Handle_Should_CreateAnchor_When_SequenceIsValid()
@@ -69,6 +75,12 @@ public class CreateTimeAnchorHandlerTests
         // Assert
         result.Should().Be(createdAnchor.Id);
         _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Verify that mediator was NOT invoked for PeriodStart
+        _mediatorMock.Verify(m => m.Publish(
+            It.IsAny<INotification>(),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     /// <summary>
@@ -217,6 +229,138 @@ public class CreateTimeAnchorHandlerTests
     }
 
     /// <summary>
+    /// Verifies that <see cref="PeriodEndedNotification"/> is published when a PeriodEnd anchor is successfully created.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_PublishPeriodEndedNotification_When_AnchorTypeIsPeriodEnd()
+    {
+        // Arrange
+        var command = new CreateTimeAnchorCommand(Guid.NewGuid(), 1, TimeAnchorType.PeriodEnd);
+        var match = new Match { Id = command.MatchId };
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { MatchId = command.MatchId, PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow.AddMinutes(-20) }
+        };
+
+        var createdAnchor = new TimeAnchor
+        {
+            Id = Guid.NewGuid(),
+            MatchId = command.MatchId,
+            Type = command.Type,
+            PeriodNumber = command.PeriodNumber,
+            Timestamp = DateTime.UtcNow
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdAnchor);
+
+        // Act
+        await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        _mediatorMock.Verify(m => m.Publish(
+            It.Is<PeriodEndedNotification>(n => n.MatchId == command.MatchId && n.PeriodNumber == command.PeriodNumber),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that if the notification publish fails and rollback succeeds, an InvalidOperationException with success message is thrown.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_RollbackAndThrowSuccessMessage_When_NotificationFailsAndRollbackSucceeds()
+    {
+        // Arrange
+        var command = new CreateTimeAnchorCommand(Guid.NewGuid(), 1, TimeAnchorType.PeriodEnd);
+        var createdAnchor = SetupRollbackScenario(command);
+
+        // Setup the mock to simulate a delete SUCCESS
+        _timeAnchorRepositoryMock
+            .Setup(r => r.DeleteAsync(createdAnchor.Id, CancellationToken.None))
+            .ReturnsAsync(true);
+
+        // Force the mediator to throw a general exception to simulate downstream failure
+        _mediatorMock
+            .Setup(m => m.Publish(It.IsAny<PeriodEndedNotification>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("Publish completely failed"));
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"*Compensating rollback executed successfully for Anchor {createdAnchor.Id}*");
+
+        // Verify that DeleteAsync was called with CancellationToken.None
+        _timeAnchorRepositoryMock.Verify(r => r.DeleteAsync(createdAnchor.Id, CancellationToken.None), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that if the notification publish fails and rollback also fails, an InvalidOperationException with a failure warning is thrown.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_ThrowWarningMessage_When_NotificationFailsAndRollbackFails()
+    {
+        // Arrange
+        var command = new CreateTimeAnchorCommand(Guid.NewGuid(), 1, TimeAnchorType.PeriodEnd);
+        var createdAnchor = SetupRollbackScenario(command);
+
+        // Setup the mock to simulate a delete FAILURE
+        _timeAnchorRepositoryMock
+            .Setup(r => r.DeleteAsync(createdAnchor.Id, CancellationToken.None))
+            .ReturnsAsync(false);
+
+        // Force the mediator to throw a general exception
+        _mediatorMock
+            .Setup(m => m.Publish(It.IsAny<PeriodEndedNotification>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("Publish completely failed"));
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"*WARNING: Compensating rollback FAILED for Anchor {createdAnchor.Id}*");
+
+        _timeAnchorRepositoryMock.Verify(r => r.DeleteAsync(createdAnchor.Id, CancellationToken.None), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that an OperationCanceledException propagates without attempting a rollback.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_PropagateCancellation_WithoutAttemptingRollback()
+    {
+        // Arrange
+        var command = new CreateTimeAnchorCommand(Guid.NewGuid(), 1, TimeAnchorType.PeriodEnd);
+        SetupRollbackScenario(command);
+
+        // Force the mediator to throw OperationCanceledException
+        _mediatorMock
+            .Setup(m => m.Publish(It.IsAny<PeriodEndedNotification>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // Verify that DeleteAsync was NEVER called
+        _timeAnchorRepositoryMock.Verify(r => r.DeleteAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="CreateTimeAnchorCommand"/>.
     /// </summary>
     /// <param name="type">The type of anchor to create.</param>
@@ -227,5 +371,41 @@ public class CreateTimeAnchorHandlerTests
             MatchId: Guid.NewGuid(),
             PeriodNumber: 1,
             Type: type);
+    }
+
+    /// <summary>
+    /// Helper method to setup the repository mocks for rollback testing scenarios.
+    /// </summary>
+    /// <returns>The created TimeAnchor object.</returns>
+    private TimeAnchor SetupRollbackScenario(CreateTimeAnchorCommand command)
+    {
+        var match = new Match { Id = command.MatchId };
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { MatchId = command.MatchId, PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow.AddMinutes(-20) }
+        };
+
+        var createdAnchor = new TimeAnchor
+        {
+            Id = Guid.NewGuid(),
+            MatchId = command.MatchId,
+            PeriodNumber = command.PeriodNumber,
+            Type = command.Type,
+            Timestamp = DateTime.UtcNow
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdAnchor);
+
+        return createdAnchor;
     }
 }

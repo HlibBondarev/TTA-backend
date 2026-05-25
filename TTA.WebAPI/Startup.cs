@@ -124,6 +124,7 @@ public static class Startup
         services.AddScoped<IMatchLineupRepository, MatchLineupRepository>();
         services.AddScoped<IGameEventRepository, GameEventRepository>();
         services.AddScoped<ITimeAnchorRepository, TimeAnchorRepository>();
+        services.AddScoped<IPlayerPresenceRepository, PlayerPresenceRepository>();
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
