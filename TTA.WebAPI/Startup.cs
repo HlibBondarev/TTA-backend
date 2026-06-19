@@ -112,6 +112,7 @@ public static class Startup
 
         services.AddScoped<IAccessRepository, AccessRepository>();
         services.AddScoped<IAccessService, AccessService>();
+        services.AddScoped<ITimeNormalizationService, TimeNormalizationService>();
 
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IClubRepository, ClubRepository>();
