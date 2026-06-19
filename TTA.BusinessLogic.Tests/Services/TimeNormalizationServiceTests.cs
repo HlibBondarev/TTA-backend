@@ -187,4 +187,42 @@ public class TimeNormalizationServiceTests
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage($"*evaluated to zero*");
     }
+
+    /// <summary>
+    /// Verifies that the service ignores malformed timeline segments where an active block does not close properly.
+    /// Timeline: PeriodStart (0m) -> Malformed PeriodStart (2m) -> PeriodEnd (10m).
+    /// Segment 1 (0m to 2m) is ignored because it ends with PeriodStart instead of StoppageStart/PeriodEnd.
+    /// Segment 2 (2m to 10m) is accumulated (8 mins active). Nominal 8 / Active 8 = 1.0 coefficient.
+    /// </summary>
+    [Fact]
+    public async Task GetNormalizedTimeCoefficientAsync_ShouldIgnoreInvalidSegments_WhenTimelineIsMalformed()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        const int periodNumber = 1;
+        const int nominalDurationMinutes = 8;
+        var baseTime = DateTime.UtcNow;
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchPeriodDurationMinutesAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(nominalDurationMinutes);
+
+        var malformedAnchors = new List<TimeAnchor>
+        {
+            new() { MatchId = matchId, PeriodNumber = periodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime },
+            new() { MatchId = matchId, PeriodNumber = periodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime.AddMinutes(2) }, // Malformed duplicate start boundary
+            new() { MatchId = matchId, PeriodNumber = periodNumber, Type = TimeAnchorType.PeriodEnd, Timestamp = baseTime.AddMinutes(10) }     // Valid end boundary for segment 2
+        };
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(malformedAnchors);
+
+        // Act
+        var result = await _service.GetNormalizedTimeCoefficientAsync(matchId, periodNumber);
+
+        // Assert
+        // Expected total active minutes = 8 (Segment 1 of 2 minutes is discarded). K = 8 / 8 = 1.0
+        result.Should().Be(1.0);
+    }
 }

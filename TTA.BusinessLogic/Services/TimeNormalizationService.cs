@@ -57,7 +57,14 @@ public class TimeNormalizationService : ITimeNormalizationService
             var nextAnchor = periodAnchors[i + 1];
 
             // A segment is active (the match clock is ticking) if it starts with PeriodStart or StoppageEnd
-            if (currentAnchor.Type == TimeAnchorType.PeriodStart || currentAnchor.Type == TimeAnchorType.StoppageEnd)
+            var isActiveStart = currentAnchor.Type == TimeAnchorType.PeriodStart
+                || currentAnchor.Type == TimeAnchorType.StoppageEnd;
+
+            // A segment must validly terminate with either a StoppageStart or PeriodEnd boundary
+            var isActiveEnd = nextAnchor.Type == TimeAnchorType.StoppageStart
+                || nextAnchor.Type == TimeAnchorType.PeriodEnd;
+
+            if (isActiveStart && isActiveEnd)
             {
                 var segmentDuration = (nextAnchor.Timestamp - currentAnchor.Timestamp).TotalSeconds;
                 if (segmentDuration > 0)
