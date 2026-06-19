@@ -40,4 +40,12 @@ public interface ITimeAnchorRepository : IEntityRepositoryBase<Guid, TimeAnchor>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A task representing the asynchronous operation. Returns true if the operation was successful.</returns>
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves the nominal period duration in minutes for the sport configuration associated with the match.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the target match.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>The nominal period duration in minutes.</returns>
+    Task<int> GetMatchPeriodDurationMinutesAsync(Guid matchId, CancellationToken cancellationToken = default);
 }

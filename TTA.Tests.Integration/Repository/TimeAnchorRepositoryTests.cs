@@ -121,6 +121,39 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
         deletedCheck.Should().BeNull("The record should no longer exist in the database");
     }
 
+    /// <summary>
+    /// Verifies that <see cref="TimeAnchorRepository.GetMatchPeriodDurationMinutesAsync"/> retrieves the correct nominal duration when the match exists.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchPeriodDurationMinutesAsync_ShouldReturnConfiguredMinutes_WhenMatchExists()
+    {
+        // Arrange
+        var matchId = await SeedTimeAnchorEnvironmentAsync();
+
+        // Act
+        var duration = await _repository.GetMatchPeriodDurationMinutesAsync(matchId);
+
+        // Assert
+        // The seed helper environment initializes a sport configuration with a 45-minute nominal period duration.
+        duration.Should().Be(45);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TimeAnchorRepository.GetMatchPeriodDurationMinutesAsync"/> returns zero when the specified match does not exist.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchPeriodDurationMinutesAsync_ShouldReturnZero_WhenMatchDoesNotExist()
+    {
+        // Arrange
+        var nonExistentMatchId = Guid.NewGuid();
+
+        // Act
+        var duration = await _repository.GetMatchPeriodDurationMinutesAsync(nonExistentMatchId);
+
+        // Assert
+        duration.Should().Be(0);
+    }
+
     #endregion
 
     #region Seed Helpers

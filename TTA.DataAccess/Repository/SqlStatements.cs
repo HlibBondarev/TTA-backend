@@ -377,6 +377,12 @@ public static class SqlStatements
         /// </summary>
         public const string DeleteAnchor =
             "SELECT public.delete_time_anchor(@p_id);";
+
+        /// <summary>
+        /// Invokes the storage function to retrieve the nominal period duration in minutes for a specific match.
+        /// </summary>
+        public const string GetMatchPeriodDuration =
+            "SELECT public.get_match_period_duration_minutes(@p_match_id);";
     }
 
     /// <summary>
