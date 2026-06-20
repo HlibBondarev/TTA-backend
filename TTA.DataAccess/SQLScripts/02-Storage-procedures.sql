@@ -1372,6 +1372,27 @@ BEGIN
     RETURN FOUND;
 END;$$ LANGUAGE plpgsql;
 
+/**********************************************************************************
+ * Retrieves the nominal period duration in minutes from the sport configuration
+ * associated with a specific match identifier.
+ * Traverses matches, tournaments, and sportconfigurations tables.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_period_duration_minutes(
+    p_match_id UUID
+)
+RETURNS INT AS $$
+DECLARE
+    v_period_duration INT;
+BEGIN
+    SELECT sc.perioddurationminutes INTO v_period_duration
+    FROM public.matches m
+    JOIN public.tournaments t ON m.tournamentid = t.id
+    JOIN public.sportconfigurations sc ON t.configurationid = sc.id
+    WHERE m.id = p_match_id;
+
+    RETURN COALESCE(v_period_duration, 0);
+END;$$ LANGUAGE plpgsql;
+
 -- =============================================================
 -- PLAYER PRESENCE STORED FUNCTIONS & PROCEDURES
 -- =============================================================

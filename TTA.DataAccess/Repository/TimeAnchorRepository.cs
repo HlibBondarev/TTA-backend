@@ -59,4 +59,17 @@ public class TimeAnchorRepository(IDbConnectionFactory connectionFactory)
             SqlStatements.ForTimeAnchors.DeleteAnchor,
             cancellationToken);
     }
+
+    /// <inheritdoc />
+    public async Task<int> GetMatchPeriodDurationMinutesAsync(Guid matchId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_match_id", matchId);
+
+        // Executes the scalar query within a transaction context using the specialized BaseRepository method.
+        return await ExecuteQueryInTransaction<int>(
+            SqlStatements.ForTimeAnchors.GetMatchPeriodDuration,
+            parameters,
+            cancellationToken);
+    }
 }
