@@ -1288,6 +1288,126 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+/**********************************************************************************
+ * Iterates through all match periods, computes the piecewise-linear time 
+ * normalization coefficient (K), and batch updates the normalized match time 
+ * for all game events belonging to a specific team.
+ * Automatically processes team placeholders (jerseys -1 and -2) for team events.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.normalize_match_events_time(
+    p_match_id UUID,
+    p_team_id UUID
+)
+RETURNS VOID AS $$
+DECLARE
+    v_nominal_minutes INT;
+    v_period RECORD;
+    v_anchor RECORD;
+    v_next_anchor RECORD;
+    v_event RECORD;
+    v_total_active_seconds DOUBLE PRECISION;
+    v_k DOUBLE PRECISION;
+    v_accumulated_seconds DOUBLE PRECISION;
+    v_segment_end TIMESTAMPTZ;
+    v_count INT;
+    v_i INT;
+BEGIN
+    -- 1. Retrieve the nominal period duration from sport configuration
+    SELECT sc.perioddurationminutes INTO v_nominal_minutes
+    FROM public.matches m
+    JOIN public.tournaments t ON m.tournamentid = t.id
+    JOIN public.sportconfigurations sc ON t.configurationid = sc.id
+    WHERE m.id = p_match_id;
+
+    IF v_nominal_minutes IS NULL OR v_nominal_minutes <= 0 THEN
+        RAISE EXCEPTION 'Invalid sport configuration or nominal period duration for match %', p_match_id;
+    END IF;
+
+    -- 2. Loop through each period scope represented in the match anchors
+    FOR v_period IN 
+        SELECT DISTINCT periodnumber 
+        FROM public.timeanchors 
+        WHERE matchid = p_match_id
+    LOOP
+        v_total_active_seconds := 0;
+        
+        -- Create an isolated tracking session table for the current period anchors
+        DROP TABLE IF EXISTS temp_period_anchors;
+        CREATE TEMP TABLE temp_period_anchors AS
+        SELECT type, timestamp, row_number() OVER (ORDER BY timestamp ASC) as row_num
+        FROM public.timeanchors
+        WHERE matchid = p_match_id AND periodnumber = v_period.periodnumber;
+        
+        SELECT COUNT(*) INTO v_count FROM temp_period_anchors;
+        
+        -- Calculate total active real-world play duration for the period coefficient
+        IF v_count >= 2 THEN
+            FOR v_i IN 1..(v_count - 1) LOOP
+                SELECT type, timestamp INTO v_anchor FROM temp_period_anchors WHERE row_num = v_i;
+                SELECT type, timestamp INTO v_next_anchor FROM temp_period_anchors WHERE row_num = v_i + 1;
+                
+                -- Segment is active if it opens with PeriodStart (0) or StoppageEnd (3)
+                IF v_anchor.type = 0 OR v_anchor.type = 3 THEN
+                    v_total_active_seconds := v_total_active_seconds + EXTRACT(EPOCH FROM (v_next_anchor.timestamp - v_anchor.timestamp));
+                END IF;
+            END LOOP;
+        END IF;
+
+        -- Proceed only if the clock has ticked during this period to prevent division by zero
+        IF v_total_active_seconds > 0 THEN
+            v_k := (v_nominal_minutes * 60.0) / v_total_active_seconds;
+            
+            -- Iterate through all game events for the specified team and period scope
+            FOR v_event IN
+                SELECT ge.id, ge.eventtimestamp
+                FROM public.gameevents ge
+                JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
+                LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+                WHERE ml.matchid = p_match_id 
+                  AND ge.periodnumber = v_period.periodnumber
+                  AND (
+                      (ml.playerrosterid IS NOT NULL AND pr.teamid = p_team_id)
+                      OR (ml.playerrosterid IS NULL AND ml.number = -1 AND (SELECT hometeamid FROM public.matches WHERE id = p_match_id) = p_team_id)
+                      OR (ml.playerrosterid IS NULL AND ml.number = -2 AND (SELECT guestteamid FROM public.matches WHERE id = p_match_id) = p_team_id)
+                  )
+            LOOP
+                v_accumulated_seconds := 0;
+                
+                -- Accumulate scaled clean time up to this specific event's timestamp
+                FOR v_i IN 1..(v_count - 1) LOOP
+                    SELECT type, timestamp INTO v_anchor FROM temp_period_anchors WHERE row_num = v_i;
+                    SELECT type, timestamp INTO v_next_anchor FROM temp_period_anchors WHERE row_num = v_i + 1;
+                    
+                    -- Stop processing anchors if they start after the event took place
+                    IF v_anchor.timestamp > v_event.eventtimestamp THEN
+                        EXIT;
+                    END IF;
+                    
+                    IF v_anchor.type = 0 OR v_anchor.type = 3 THEN
+                        -- Cap the segment boundary at the event timestamp if it occurred mid-segment
+                        IF v_next_anchor.timestamp < v_event.eventtimestamp THEN
+                            v_segment_end := v_next_anchor.timestamp;
+                        ELSE
+                            v_segment_end := v_event.eventtimestamp;
+                        END IF;
+                        
+                        IF v_segment_end > v_anchor.timestamp THEN
+                            v_accumulated_seconds := v_accumulated_seconds + (EXTRACT(EPOCH FROM (v_segment_end - v_anchor.timestamp)) * v_k);
+                        END IF;
+                    END IF;
+                END LOOP;
+                
+                -- Apply the final calculated interval to the target event row
+                UPDATE public.gameevents
+                SET normalizedmatchtime = v_accumulated_seconds * INTERVAL '1 second'
+                WHERE id = v_event.id;
+            END LOOP;
+        END IF;
+    END LOOP;
+    
+    DROP TABLE IF EXISTS temp_period_anchors;
+END;$$ LANGUAGE plpgsql;
+
 -- =============================================================
 -- TIME ANCHORS STORED FUNCTIONS
 -- =============================================================
