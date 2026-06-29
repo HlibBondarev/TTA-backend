@@ -48,4 +48,14 @@ public interface IGameEventRepository : IEntityRepositoryBase<Guid, GameEvent>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A task representing the asynchronous operation. Returns true if the operation was successful.</returns>
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Executes the batch storage function to recalculate and update the normalized match time 
+    /// for all game events belonging to a specific team in a match.
+    /// </summary>
+    /// <param name="matchId">The unique database reference key for the target match.</param>
+    /// <param name="teamId">The unique database reference key for the target team.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    Task NormalizeMatchEventsTimeAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default);
 }

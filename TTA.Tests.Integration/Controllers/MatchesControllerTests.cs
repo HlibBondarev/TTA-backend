@@ -881,6 +881,93 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     #endregion
 
+    #region Batch Event Time Normalization API Tests
+
+    /// <summary>
+    /// Verifies that the <c>PUT /api/matches/{matchId}/teams/{teamId}/events/normalize</c> endpoint 
+    /// returns HTTP 204 No Content when called by an authorized team representative and the parameters are valid.
+    /// </summary>
+    [Fact]
+    public async Task NormalizeMatchTimeByTeam_ShouldReturnNoContent_WhenRequestIsValidAndAuthorized()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var cityId = Guid.NewGuid();
+        var tournamentId = Guid.NewGuid();
+
+        // Use exclusively the real existing helper methods from the bottom of this class
+        await SeedRequiredLocationDataAsync(cityId);
+        await SeedSportDataAsync(sportId, $"WaterPolo_Api_{Guid.NewGuid():N}");
+        var configId = await SeedConfigurationAsync(sportId);
+
+        // Seed user first to satisfy the tournament foreign key constraint (tournaments_ownerid_fkey)
+        await SeedUserAsync(TestUserId);
+        await SeedTournamentAsync(tournamentId, sportId, configId, cityId, TestUserId, "Spring Cup");
+
+        // Seed both participating teams using the existing helper method
+        var homeTeamId = await SeedTeamAsync(cityId, sportId, "Team A");
+        var guestTeamId = await SeedTeamAsync(cityId, sportId, "Team B");
+
+        // Seed access policy to pass the [Authorize(Policy = "TeamEditor")] requirements (Role 1 = Editor, TargetType 2 = Team)
+        await SeedAccessPolicyAsync(TestUserId, 1, 2, homeTeamId);
+
+        // Seed match and baseline time anchor using the existing helper methods
+        await SeedMatchAsync(matchId, tournamentId, homeTeamId, guestTeamId, $"M-NORM-{Guid.NewGuid().ToString("N").Substring(0, 5)}");
+        await SeedTimeAnchorAsync(matchId, 1, 0); // 0 corresponds to PeriodStart type
+
+        var url = $"{BaseUrl}/{matchId}/teams/{homeTeamId}/events/normalize";
+
+        // Act
+        var response = await Client.PutAsync(url, null);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent,
+            "The endpoint must return 204 No Content upon successful batch time normalization pipeline routing.");
+    }
+
+    /// <summary>
+    /// Verifies that the <c>PUT /api/matches/{matchId}/teams/{teamId}/events/normalize-admin</c> endpoint 
+    /// returns HTTP 204 No Content when executed by a tournament organizer.
+    /// </summary>
+    [Fact]
+    public async Task NormalizeMatchTime_AdminEndpoint_ShouldReturnNoContent_WhenOrganizerIsValid()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var cityId = Guid.NewGuid();
+        var tournamentId = Guid.NewGuid();
+
+        // Use exclusively the real existing helper methods from the bottom of this class
+        await SeedRequiredLocationDataAsync(cityId);
+        await SeedSportDataAsync(sportId, $"WaterPolo_Admin_{Guid.NewGuid():N}");
+        var configId = await SeedConfigurationAsync(sportId);
+
+        // Seed user first to satisfy the tournament foreign key constraint (tournaments_ownerid_fkey)
+        await SeedUserAsync(TestUserId);
+        await SeedTournamentAsync(tournamentId, sportId, configId, cityId, TestUserId, "Admin Tournament");
+
+        // Seed both participating teams using the existing helper method
+        var homeTeamId = await SeedTeamAsync(cityId, sportId, "Team Admin A");
+        var guestTeamId = await SeedTeamAsync(cityId, sportId, "Team Admin B");
+
+        // Seed match and baseline time anchor using the existing helper methods
+        await SeedMatchAsync(matchId, tournamentId, homeTeamId, guestTeamId, $"M-NORM-ADM-{Guid.NewGuid().ToString("N").Substring(0, 5)}");
+        await SeedTimeAnchorAsync(matchId, 1, 0); // 0 corresponds to PeriodStart type
+
+        var url = $"{BaseUrl}/{matchId}/teams/{homeTeamId}/events/normalize-admin";
+
+        // Act
+        var response = await Client.PutAsync(url, null);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent,
+            "The administrative endpoint must return 204 No Content when tournament ownership constraints match.");
+    }
+
+    #endregion
+
     #region Helpers for Player Presences
 
     /// <summary>

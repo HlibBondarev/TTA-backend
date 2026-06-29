@@ -10,21 +10,29 @@ try
 {
     Log.Information("TTA Application starting up...");
 
-    // 2. Use the built-in builder. In .NET 9, this automatically handles 
+    // 2. Load variables from .env file safely without overwriting system or orchestrator variables
+    DotNetEnv.Env.NoClobber().Load();
+
+    // 3. Get ports from environment variables or use defaults
+    var httpsPort = Environment.GetEnvironmentVariable("API_PORT_HTTPS") ?? "5001";
+    var httpPort = Environment.GetEnvironmentVariable("API_PORT_HTTP") ?? "5002";
+
+    // 4. Use the built-in builder. In .NET 9, this automatically handles 
     // appsettings.json and appsettings.{Environment}.json based on the project context.
     var builder = WebApplication.CreateBuilder(args);
+    builder.WebHost.UseUrls($"https://localhost:{httpsPort};http://localhost:{httpPort}");
 
-    // Bind Serilog to the host configuration
+    // 5. Bind Serilog to the host configuration
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services));
 
-    // 3. Register application services via extension method
+    // 6. Register application services via extension method
     builder.AddApplicationServices();
 
     var app = builder.Build();
 
-    // 4. Setup middleware pipeline via extension method
+    // 7. Setup middleware pipeline via extension method
     app.Configure();
 
     Log.Information("TTA Application has started successfully");

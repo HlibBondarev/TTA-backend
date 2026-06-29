@@ -52,7 +52,7 @@ jobs:
         run: |
           dotnet test TTA-backend.sln --no-build --verbosity normal \
           --collect:"XPlat Code Coverage" \
-          --settings coverlet.runsettings
+          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
 
       - name: End Sonar Analysis
         env:

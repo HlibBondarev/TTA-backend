@@ -75,4 +75,33 @@ public class GameEventRepository(IDbConnectionFactory connectionFactory)
             SqlStatements.ForGameEvents.DeleteEvent,
             cancellationToken);
     }
+
+    /// <inheritdoc />
+    public async Task NormalizeMatchEventsTimeAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_match_id", matchId);
+        parameters.Add("p_team_id", teamId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        using var transaction = connection.BeginTransaction();
+
+        try
+        {
+            // Executes the batch operation within a strict transaction block using the BaseRepository command helper.
+            await ExecuteCommandAsync(
+                SqlStatements.ForGameEvents.NormalizeMatchEventsTime,
+                parameters,
+                connection,
+                transaction,
+                cancellationToken);
+
+            transaction.Commit();
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
 }

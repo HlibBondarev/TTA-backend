@@ -3,6 +3,7 @@ using DbUp;
 using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.OpenApi.Models;
+using Npgsql;
 using Serilog;
 using Serilog.Exceptions;
 using System.Text.Json.Serialization;
@@ -41,8 +42,52 @@ public static class Startup
         var services = builder.Services;
         var configuration = builder.Configuration;
 
-        // Get connection string from configuration (secrets.json)
+        // 1. Retrieve the base connection string from configuration (secrets.json)
         var connectionString = configuration.GetConnectionString("DefaultConnection");
+
+        // 2. Prevent credentials drift between docker-compose/env variables and secrets.json
+        // Isolate this shift to ignore the "Testing" environment so it never interferes with Testcontainers
+        if (!builder.Environment.IsEnvironment("Testing"))
+        {
+            var postgresUser = Environment.GetEnvironmentVariable("POSTGRES_USER");
+            var postgresPassword = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD");
+            var postgresDb = Environment.GetEnvironmentVariable("POSTGRES_DB");
+
+            var hasPostgresUser = !string.IsNullOrWhiteSpace(postgresUser);
+            var hasPostgresPassword = !string.IsNullOrWhiteSpace(postgresPassword);
+            var hasPostgresDb = !string.IsNullOrWhiteSpace(postgresDb);
+            var hasPostgresOverride = hasPostgresUser || hasPostgresPassword || hasPostgresDb;
+            var hasCompletePostgresOverride = hasPostgresUser && hasPostgresPassword && hasPostgresDb;
+
+            // Enforce all-or-nothing override constraint to prevent mixed credential states
+            if (hasPostgresOverride && !hasCompletePostgresOverride)
+            {
+                throw new InvalidOperationException(
+                    "POSTGRES_USER, POSTGRES_PASSWORD, and POSTGRES_DB environment variables must be provided together as a complete set.");
+            }
+
+            // If a complete environment override set is available, replace base credentials cleanly
+            if (hasCompletePostgresOverride)
+            {
+                var baseConnectionString = string.IsNullOrEmpty(connectionString)
+                    ? "Host=localhost;Port=5432;"
+                    : connectionString;
+
+                // Use NpgsqlConnectionStringBuilder for robust and case-insensitive string manipulation
+                var npgsqlBuilder = new NpgsqlConnectionStringBuilder(baseConnectionString)
+                {
+                    Username = postgresUser,
+                    Password = postgresPassword,
+                    Database = postgresDb
+                };
+
+                connectionString = npgsqlBuilder.ConnectionString;
+
+                // Overwrite the configuration value inline so that NpgsqlConnectionFactory 
+                // and DbUp inside EnsureDatabaseUpsert resolve the exact same synchronized string
+                configuration["ConnectionStrings:DefaultConnection"] = connectionString;
+            }
+        }
 
         // Run DbUp migrations
         EnsureDatabaseUpsert(connectionString);

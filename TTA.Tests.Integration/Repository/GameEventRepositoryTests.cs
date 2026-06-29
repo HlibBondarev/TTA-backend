@@ -127,6 +127,112 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         deletedCheck.Should().BeNull("The record should no longer exist in the database");
     }
 
+    /// <summary>
+    /// Verifies that <see cref="GameEventRepository.NormalizeMatchEventsTimeAsync"/> successfully invokes 
+    /// the database storage function to batch update event timestamps using piecewise-linear scale coefficients.
+    /// Scenario setup:
+    /// - Nominal period duration: 8 minutes.
+    /// - Play time anchors setup: PeriodStart (0s real) -> PeriodEnd (600s real, i.e., 10 mins real play).
+    /// - Scale factor K calculation: 8 minutes * 60 seconds / 600 seconds = 0.8
+    /// - Game Event added at 300s real-world timestamp.
+    /// - Expected normalized match time: 300 seconds * 0.8 = 240 seconds (4 minutes).
+    /// </summary>
+    [Fact]
+    public async Task NormalizeMatchEventsTimeAsync_ShouldBatchUpdateNormalizedMatchTime_BasedOnTimeAnchors()
+    {
+        // Arrange
+        var context = await SeedEventEnvironmentAsync();
+        var baseTime = DateTime.UtcNow;
+        var configId = Guid.Empty;
+        var originalDuration = 0;
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            // Capture the shared configuration ID and its original duration to prevent state pollution
+            var configData = await conn.QuerySingleAsync<(Guid Id, int Duration)>(@"
+                SELECT id, perioddurationminutes 
+                FROM public.sportconfigurations 
+                WHERE id = (SELECT configurationid FROM public.tournaments WHERE id = (SELECT tournamentid FROM public.matches WHERE id = @mid));",
+                new { mid = context.MatchId });
+
+            configId = configData.Id;
+            originalDuration = configData.Duration;
+
+            // 1. Force sport configuration override to 8 minutes nominal duration (standard Water Polo configuration context)
+            await conn.ExecuteAsync(@"
+                UPDATE public.sportconfigurations 
+                SET perioddurationminutes = 8 
+                WHERE id = @id;",
+                new { id = configId });
+
+            // 2. Clear out any existing default seeded anchors to ensure strict timeline boundaries
+            await conn.ExecuteAsync("DELETE FROM public.timeanchors WHERE matchid = @mid;", new { mid = context.MatchId });
+
+            // 3. Seed deterministic timeline play anchors without non-existent 'createdat' column
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) VALUES 
+                (@id1, @mid, 1, 0, @t0), -- PeriodStart at 0 seconds elapsed
+                (@id2, @mid, 1, 1, @t10); -- PeriodEnd at 600 seconds elapsed",
+                new
+                {
+                    id1 = Guid.NewGuid(),
+                    id2 = Guid.NewGuid(),
+                    mid = context.MatchId,
+                    t0 = baseTime,
+                    t10 = baseTime.AddSeconds(600)
+                });
+        }
+
+        try
+        {
+            // 4. Instantiate a new event occurring precisely mid-way through the real-world execution window (300 seconds)
+            var gameEvent = CreateEventModel(context.LineupId, context.DefinitionId);
+            gameEvent.PeriodNumber = 1;
+            gameEvent.EventTimestamp = baseTime.AddSeconds(300);
+            gameEvent.NormalizedMatchTime = TimeSpan.Zero; // Reset to verify the database operation updates this explicitly
+
+            await _repository.UpsertAsync(gameEvent);
+
+            // Fetch team ID associated with this match context boundary
+            Guid teamId;
+            using (var conn = Fixture.ConnectionFactory.CreateConnection())
+            {
+                teamId = await conn.QuerySingleAsync<Guid>(@"
+                    SELECT pr.teamid 
+                    FROM public.matchlineups ml
+                    JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+                    WHERE ml.id = @lid;", new { lid = context.LineupId });
+            }
+
+            // Act
+            await _repository.NormalizeMatchEventsTimeAsync(context.MatchId, teamId);
+
+            // Assert
+            var updatedEvent = await _repository.GetByIdAsync(gameEvent.Id);
+            updatedEvent.Should().NotBeNull();
+
+            // K = (8 * 60) / 600 = 0.8
+            // Event elapsed seconds = 300. Normalized time = 300 * 0.8 = 240 seconds.
+            var expectedNormalizedTime = TimeSpan.FromSeconds(240);
+            updatedEvent!.NormalizedMatchTime.Should().Be(expectedNormalizedTime);
+        }
+        finally
+        {
+            // Revert the shared sport configuration row back to its original seed state to maintain test isolation
+            if (configId != Guid.Empty)
+            {
+                using (var conn = Fixture.ConnectionFactory.CreateConnection())
+                {
+                    await conn.ExecuteAsync(@"
+                        UPDATE public.sportconfigurations 
+                        SET perioddurationminutes = @Minutes 
+                        WHERE id = @Id;",
+                        new { Minutes = originalDuration, Id = configId });
+                }
+            }
+        }
+    }
+
     #endregion
 
     #region Seed Helpers

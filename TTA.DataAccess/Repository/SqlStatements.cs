@@ -338,6 +338,12 @@ public static class SqlStatements
         /// </summary>
         public const string DeleteEvent =
             "SELECT public.delete_game_event(@p_id);";
+
+        /// <summary>
+        /// Invokes the batch storage function to calculate and update normalized match time for a team's events.
+        /// </summary>
+        public const string NormalizeMatchEventsTime =
+            "SELECT public.normalize_match_events_time(@p_match_id, @p_team_id);";
     }
 
     /// <summary>
