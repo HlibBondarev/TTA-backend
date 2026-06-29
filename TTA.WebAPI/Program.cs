@@ -10,8 +10,8 @@ try
 {
     Log.Information("TTA Application starting up...");
 
-    // 2. Load variables from .env file
-    DotNetEnv.Env.Load();
+    // 2. Load variables from .env file safely without overwriting system or orchestrator variables
+    DotNetEnv.Env.NoClobber().Load();
 
     // 3. Get ports from environment variables or use defaults
     var httpsPort = Environment.GetEnvironmentVariable("API_PORT_HTTPS") ?? "5001";
