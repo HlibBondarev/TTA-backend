@@ -1323,6 +1323,29 @@ BEGIN
         RAISE EXCEPTION 'Invalid sport configuration or nominal period duration for match %', p_match_id;
     END IF;
 
+    -- Check if time anchors are missing AND target team events actually exist
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.timeanchors
+        WHERE matchid = p_match_id
+    ) THEN
+        IF EXISTS (
+            SELECT 1 
+            FROM public.gameevents ge
+            JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
+            LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+            WHERE ml.matchid = p_match_id
+              AND (
+                  (ml.playerrosterid IS NOT NULL AND pr.teamid = p_team_id)
+                  OR (ml.playerrosterid IS NULL AND ml.number = -1 AND (SELECT hometeamid FROM public.matches WHERE id = p_match_id) = p_team_id)
+                  OR (ml.playerrosterid IS NULL AND ml.number = -2 AND (SELECT guestteamid FROM public.matches WHERE id = p_match_id) = p_team_id)
+              )
+        ) THEN
+            RAISE EXCEPTION 'No time anchors found for match %, but target team events exist', p_match_id
+                USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
     -- 2. Loop through each period scope represented in the match anchors
     FOR v_period IN 
         SELECT DISTINCT periodnumber 
@@ -1353,7 +1376,28 @@ BEGIN
             END LOOP;
         END IF;
 
-        -- Proceed only if the clock has ticked during this period to prevent division by zero
+        -- Ensure active play time exists if there are target team events to prevent data corruption
+        IF v_total_active_seconds <= 0 THEN
+            IF EXISTS (
+                SELECT 1 
+                FROM public.gameevents ge
+                JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
+                LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+                WHERE ml.matchid = p_match_id 
+                  AND ge.periodnumber = v_period.periodnumber
+                  AND (
+                      (ml.playerrosterid IS NOT NULL AND pr.teamid = p_team_id)
+                      OR (ml.playerrosterid IS NULL AND ml.number = -1 AND (SELECT hometeamid FROM public.matches WHERE id = p_match_id) = p_team_id)
+                      OR (ml.playerrosterid IS NULL AND ml.number = -2 AND (SELECT guestteamid FROM public.matches WHERE id = p_match_id) = p_team_id)
+                  )
+            ) THEN
+                RAISE EXCEPTION 'Cannot normalize match %, period % without active play time while target team events exist',
+                    p_match_id, v_period.periodnumber
+                    USING ERRCODE = 'P0001';
+            END IF;
+        END IF;
+
+        -- Run calculations only if active play time is available and events exist
         IF v_total_active_seconds > 0 THEN
             v_k := (v_nominal_minutes * 60.0) / v_total_active_seconds;
             
