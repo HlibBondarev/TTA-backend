@@ -53,19 +53,33 @@ public static class Startup
             var postgresPassword = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD");
             var postgresDb = Environment.GetEnvironmentVariable("POSTGRES_DB");
 
-            // If environment tokens are explicitly defined, override credentials dynamically
-            if (!string.IsNullOrEmpty(postgresUser) || !string.IsNullOrEmpty(postgresPassword) || !string.IsNullOrEmpty(postgresDb))
+            var hasPostgresUser = !string.IsNullOrWhiteSpace(postgresUser);
+            var hasPostgresPassword = !string.IsNullOrWhiteSpace(postgresPassword);
+            var hasPostgresDb = !string.IsNullOrWhiteSpace(postgresDb);
+            var hasPostgresOverride = hasPostgresUser || hasPostgresPassword || hasPostgresDb;
+            var hasCompletePostgresOverride = hasPostgresUser && hasPostgresPassword && hasPostgresDb;
+
+            // Enforce all-or-nothing override constraint to prevent mixed credential states
+            if (hasPostgresOverride && !hasCompletePostgresOverride)
+            {
+                throw new InvalidOperationException(
+                    "POSTGRES_USER, POSTGRES_PASSWORD, and POSTGRES_DB environment variables must be provided together as a complete set.");
+            }
+
+            // If a complete environment override set is available, replace base credentials cleanly
+            if (hasCompletePostgresOverride)
             {
                 var baseConnectionString = string.IsNullOrEmpty(connectionString)
                     ? "Host=localhost;Port=5432;"
                     : connectionString;
 
                 // Use NpgsqlConnectionStringBuilder for robust and case-insensitive string manipulation
-                var npgsqlBuilder = new NpgsqlConnectionStringBuilder(baseConnectionString);
-
-                if (!string.IsNullOrEmpty(postgresUser)) npgsqlBuilder.Username = postgresUser;
-                if (!string.IsNullOrEmpty(postgresPassword)) npgsqlBuilder.Password = postgresPassword;
-                if (!string.IsNullOrEmpty(postgresDb)) npgsqlBuilder.Database = postgresDb;
+                var npgsqlBuilder = new NpgsqlConnectionStringBuilder(baseConnectionString)
+                {
+                    Username = postgresUser,
+                    Password = postgresPassword,
+                    Database = postgresDb
+                };
 
                 connectionString = npgsqlBuilder.ConnectionString;
 
