@@ -46,6 +46,12 @@ public class MatchesController(
     private readonly ILogger<MatchesController> _logger = logger;
     private readonly Auth0Settings _auth0Settings = auth0Settings;
 
+    #region Match section
+
+    // ==========================================================================================
+    // Match section
+    // ==========================================================================================
+
     /// <summary>
     /// Retrieves detailed information about a specific match.
     /// </summary>
@@ -274,10 +280,12 @@ public class MatchesController(
         return Ok(result);
     }
 
-    #region Game Events Section
+    #endregion
+
+    #region Game Events section
 
     // ==========================================================================================
-    // Game Events Section
+    // Game Events section
     // ==========================================================================================
 
     /// <summary>
@@ -569,12 +577,103 @@ public class MatchesController(
         return NoContent();
     }
 
+    /// <summary>
+    /// Triggers batch event time normalization for a match in the context of a specific team.
+    /// Access is strictly restricted to team editors via security policies.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="validator">The shared fluent validator instance injected from DI.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    [HttpPut("{matchId:guid}/teams/{teamId:guid}/events/normalize")]
+    [Authorize(Policy = "TeamEditor")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> NormalizeMatchTimeByTeam(
+        [FromRoute] Guid matchId,
+        [FromRoute] Guid teamId,
+        [FromServices] IValidator<NormalizeMatchTimeRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Team editor for team {TeamId} is attempting to normalize time logs for match {MatchId}.", teamId, matchId);
+
+        // 1. Validate the incoming route parameters packed into the shared DTO
+        var request = new NormalizeMatchTimeRequest(matchId, teamId);
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation failed for NormalizeMatchTimeRequest in team normalization context for match {MatchId}.", matchId);
+            return BadRequest(validationResult.Errors);
+        }
+
+        // 2. Access Control Invariant: Verify that the team actually participates in this specific match protocol.
+        // GetMatchByIdWithDetailsQuery automatically triggers a NotFoundException via middleware if the match is missing.
+        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId), cancellationToken);
+
+        if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
+        {
+            _logger.LogWarning("Authorization breach: Team {TeamId} is not a participant in Match {MatchId}.", teamId, matchId);
+            return Forbid();
+        }
+
+        // 3. Map to MediatR execution command payload
+        var command = new NormalizeMatchTimeCommand(matchId, teamId);
+        await _mediator.Send(command, cancellationToken);
+
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Triggers batch event time normalization for a team's events as a tournament organizer.
+    /// Access is authorized based on global tournament ownership metrics.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the target team whose events require updates.</param>
+    /// <param name="validator">The shared fluent validator instance injected from DI.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    [HttpPut("{matchId:guid}/teams/{teamId:guid}/events/normalize-admin")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> NormalizeMatchTime(
+        [FromRoute] Guid matchId,
+        [FromRoute] Guid teamId,
+        [FromServices] IValidator<NormalizeMatchTimeRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Tournament organizer is executing batch match time normalization for match {MatchId} and team {TeamId}.", matchId, teamId);
+
+        // 1. Validate the request parameters context using the same shared DTO
+        var request = new NormalizeMatchTimeRequest(matchId, teamId);
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation failed for NormalizeMatchTimeRequest in admin normalization context for match {MatchId}.", matchId);
+            return BadRequest(validationResult.Errors);
+        }
+
+        // 2. Authorization validation: Enforce that the user owns the tournament associated with this match
+        var accessError = await ValidateTournamentOwnership(matchId);
+        if (accessError != null) return accessError;
+
+        // 3. Dispatch the task across the mediator pipelines
+        var command = new NormalizeMatchTimeCommand(matchId, teamId);
+        await _mediator.Send(command, cancellationToken);
+
+        return NoContent();
+    }
+
     #endregion
 
-    #region Time Anchors
+    #region Time Anchors section
 
     // ==========================================================================================
-    // Time Anchors Section
+    // Time Anchors section
     // ==========================================================================================
 
     /// <summary>
@@ -699,10 +798,10 @@ public class MatchesController(
 
     #endregion
 
-    #region Player Presences
+    #region Player Presences section
 
     // ==========================================================================================
-    // Player Presences Section
+    // Player Presences section
     // ==========================================================================================
 
     /// <summary>
