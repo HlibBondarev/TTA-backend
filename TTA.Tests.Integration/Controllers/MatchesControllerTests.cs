@@ -879,6 +879,199 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         resultList[1].TimeOut.Should().BeNull();
     }
 
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetPlayersTimeInMatchByTeam"/> returns 200 OK 
+    /// with a valid collection of player time responses when the request satisfies all tenancy, validation, and TeamEditor policy rules.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayersTimeInMatchByTeam_ShouldReturnOk_WhenRequestIsValidAndTeamBelongsToMatch()
+    {
+        // Arrange
+        var context = await SeedAnalyticsEnvironmentAsync(ownerId: "auth0|different-owner");
+
+        // Grant TeamEditor permission (targettype 2 = Team, role 1 = Editor) to the current test user
+        await GrantAccessPolicyAsync(BaseApiTest.TestUserId, targetType: 2, targetId: context.TeamId, role: 1);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{context.MatchId}/teams/{context.TeamId}/presence/calculate");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var analytics = await response.Content.ReadFromJsonAsync<IEnumerable<PlayerTimeInMatchResponse>>();
+        analytics.Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetPlayersTimeInMatchByTeam"/> returns 403 Forbidden
+    /// when the requested team ID does not belong to the home or guest team boundaries of the targeted match.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayersTimeInMatchByTeam_ShouldReturnForbidden_WhenTeamIdIsOutsideMatchBoundaries()
+    {
+        // Arrange
+        var context = await SeedAnalyticsEnvironmentAsync(ownerId: "auth0|different-owner");
+        var completelyRandomTeamId = Guid.NewGuid();
+
+        // Grant TeamEditor permission to the random team ID so the top-level authorization policy filter passes,
+        // allowing execution to safely reach the controller's internal domain multi-tenancy boundary checks.
+        await GrantAccessPolicyAsync(BaseApiTest.TestUserId, targetType: 2, targetId: completelyRandomTeamId, role: 1);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{context.MatchId}/teams/{completelyRandomTeamId}/presence/calculate");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetPlayersTimeInMatchByTeam"/> returns 400 Bad Request
+    /// when the input route parameters fail the FluentValidation empty GUID checks.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayersTimeInMatchByTeam_ShouldReturnBadRequest_WhenParametersAreEmptyGuids()
+    {
+        // Arrange
+        var validTeamId = Guid.NewGuid();
+
+        // Grant Global Editor permission (targettype 0 = Global, targetId = null, role = 1 = Editor)
+        // to bypass the top-level route authorization policy and ensure execution enters the action method's validator execution block.
+        await GrantAccessPolicyAsync(BaseApiTest.TestUserId, targetType: 0, targetId: null, role: 1);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{Guid.Empty}/teams/{validTeamId}/presence/calculate");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Verifies that the administrative endpoint <see cref="MatchesController.GetPlayersTimeInMatch"/> returns 200 OK
+    /// when invoked by a user who successfully passes the tournament ownership validation block.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayersTimeInMatch_Admin_ShouldReturnOk_WhenUserIsTournamentOwner()
+    {
+        // Arrange
+        // Current logged-in user in BaseApiTest context is defined as BaseApiTest.TestUserId ("auth0|test-user")
+        var context = await SeedAnalyticsEnvironmentAsync(ownerId: BaseApiTest.TestUserId);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{context.MatchId}/teams/{context.TeamId}/presence/calculate-admin");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var analytics = await response.Content.ReadFromJsonAsync<IEnumerable<PlayerTimeInMatchResponse>>();
+        analytics.Should().NotBeNull();
+    }
+
+    #region Seed Helpers for Analytics
+
+    /// <summary>
+    /// Seeds a complete relational aggregate structure (Country, City, Tournament, Club, Team, Match) 
+    /// inside the containerized PostgreSQL instance to isolate integration test contexts.
+    /// </summary>
+    /// <param name="ownerId">The Auth0 user identifier assigned as the owner of the tournament.</param>
+    /// <returns>A tuple containing the generated MatchId and TeamId.</returns>
+    private async Task<(Guid MatchId, Guid TeamId)> SeedAnalyticsEnvironmentAsync(string ownerId)
+    {
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // 1. Geography
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.countries (name, code) 
+            VALUES ('Integration Country', 'INC') 
+            ON CONFLICT (name) DO NOTHING");
+        var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE code = 'INC'");
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.regions (countryid, name) 
+            VALUES (@cid, 'Integration Region') 
+            ON CONFLICT (countryid, name) DO NOTHING",
+            new { cid = countryId });
+        var regionId = await conn.QuerySingleAsync<int>("SELECT id FROM public.regions WHERE name = 'Integration Region' AND countryid = @cid", new { cid = countryId });
+
+        var cityId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.cities (id, regionid, name) 
+            VALUES (@id, @rid, 'Integration City') 
+            ON CONFLICT (regionid, name) DO NOTHING",
+            new { id = cityId, rid = regionId });
+        cityId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.cities WHERE regionid = @rid AND name = 'Integration City'", new { rid = regionId });
+
+        // 2. User & Sport
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.users (id, email, displayname, createdat) 
+            VALUES (@id, @email, 'Tester', NOW()) 
+            ON CONFLICT (id) DO NOTHING",
+            new { id = ownerId, email = $"{ownerId}@tta.com" });
+
+        var sportId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name) 
+            VALUES (@id, 'Integration Sport') 
+            ON CONFLICT (name) DO NOTHING",
+            new { id = sportId });
+        sportId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sports WHERE name = 'Integration Sport'");
+
+        var configId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
+            SELECT @id, @sid, true, 4, 8, '30x20', 15, 7 
+            WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
+            new { id = configId, sid = sportId });
+        configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId });
+
+        // 3. Organization (Club, Tournament, Team)
+        var clubId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityid, @name, NOW())",
+            new { id = clubId, cityid = cityId, name = $"Club_{Guid.NewGuid():N}" });
+
+        var tournamentId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
+            VALUES (@id, @sid, @cfgid, @cityid, @oid, @name, NOW(), NOW())",
+            new { id = tournamentId, sid = sportId, cfgid = configId, cityid = cityId, oid = ownerId, name = $"Tournament_{Guid.NewGuid():N}" });
+
+        var teamId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @cid, @sid, @name, 0, NOW())",
+            new { id = teamId, cid = clubId, sid = sportId, name = $"Team_{Guid.NewGuid():N}" });
+
+        var matchId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, createdat) 
+            VALUES (@id, @tid, @teamid, @teamid, NOW(), NOW())",
+            new { id = matchId, tid = tournamentId, teamid = teamId });
+
+        return (matchId, teamId);
+    }
+
+    /// <summary>
+    /// Grants a specific authorization permission policy to a user inside the test database context.
+    /// Safely ensures the referenced user exists inside public.users to satisfy database foreign key requirements.
+    /// </summary>
+    private async Task GrantAccessPolicyAsync(string userId, int targetType, Guid? targetId, int role)
+    {
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // Ensure the targeted user profile exists prior to injecting authorization rows
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.users (id, email, displayname, createdat)
+            VALUES (@id, @email, 'Integration Policy User', NOW())
+            ON CONFLICT (id) DO NOTHING",
+            new { id = userId, email = $"{userId.Replace("|", "_")}@tta.com" });
+
+        // Insert the access policy rule cleanly
+        await conn.ExecuteAsync(@"
+            INSERT INTO auth.accesspolicies (id, userid, targettype, targetid, role, createdat)
+            VALUES (@id, @userid, @targettype, @targetid, @role, NOW())
+            ON CONFLICT DO NOTHING",
+            new { id = Guid.NewGuid(), userid = userId, targettype = targetType, targetid = targetId, role = role });
+    }
+
+    #endregion
+
     #endregion
 
     #region Batch Event Time Normalization API Tests

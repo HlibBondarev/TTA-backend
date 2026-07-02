@@ -1,5 +1,6 @@
 ﻿using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Base;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository.Api;
 
@@ -52,4 +53,13 @@ public interface IPlayerPresenceRepository : IEntityRepositoryBase<Guid, PlayerP
     /// <param name="timeOut">The exact UTC timestamp marking when the period ended, used to close open player sessions.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests during the asynchronous operation.</param>
     Task CloseActivePresencesAsync(Guid matchId, int periodNumber, DateTime timeOut, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves the raw linear ("dirty") time spent in the water per player lineup row, grouped by match periods.
+    /// </summary>
+    /// <param name="matchId">The unique database reference key for the target match.</param>
+    /// <param name="teamId">The unique reference key for the target team.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests during the asynchronous operation.</param>
+    /// <returns>A collection of typed projections containing lineup reference, period index, and total dirty seconds.</returns>
+    Task<IEnumerable<PlayersDirtyTimeByPeriodProjection>> GetPlayersDirtyTimeByPeriodAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default);
 }

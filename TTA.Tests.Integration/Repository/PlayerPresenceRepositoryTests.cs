@@ -312,6 +312,100 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         newlyClosedSessions.Should().OnlyContain(p => p.TimeOut.HasValue && p.TimeOut.Value.ToString("yyyy-MM-dd HH:mm:ss") == exactTimeOut.ToString("yyyy-MM-dd HH:mm:ss"));
     }
 
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.GetPlayersDirtyTimeByPeriodAsync"/> returns an empty collection
+    /// when no player presence tracking records exist for the given match and team context.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayersDirtyTimeByPeriodAsync_ShouldReturnEmpty_WhenNoPresenceRecordsExist()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var teamId = await conn.QuerySingleAsync<Guid>(
+            "SELECT hometeamid FROM public.matches WHERE id = @MatchId",
+            new { context.MatchId });
+
+        // Act
+        var result = await _repository.GetPlayersDirtyTimeByPeriodAsync(context.MatchId, teamId);
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.GetPlayersDirtyTimeByPeriodAsync"/> correctly calculates
+    /// and groups the total linear elapsed seconds spent in the water per player lineup row and match period scope.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayersDirtyTimeByPeriodAsync_ShouldCalculateCorrectDirtySeconds_WhenPresenceRecordsExist()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var teamId = await conn.QuerySingleAsync<Guid>(
+            "SELECT hometeamid FROM public.matches WHERE id = @MatchId",
+            new { context.MatchId });
+
+        var baseTime = DateTime.UtcNow;
+
+        // Player 1 plays 300 seconds in Period 1
+        var presence1 = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = baseTime,
+            TimeOut = baseTime.AddSeconds(300)
+        };
+        await _repository.RecordPresenceAsync(presence1);
+
+        // Player 1 plays another 150 seconds in Period 2
+        var presence2 = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 2,
+            TimeIn = baseTime.AddHours(1),
+            TimeOut = baseTime.AddHours(1).AddSeconds(150)
+        };
+        await _repository.RecordPresenceAsync(presence2);
+
+        // Player 2 plays 450 seconds in Period 1
+        var presence3 = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId2,
+            PeriodNumber = 1,
+            TimeIn = baseTime,
+            TimeOut = baseTime.AddSeconds(450)
+        };
+        await _repository.RecordPresenceAsync(presence3);
+
+        // Act
+        var result = (await _repository.GetPlayersDirtyTimeByPeriodAsync(context.MatchId, teamId)).ToList();
+
+        // Assert
+        result.Should().HaveCount(3);
+
+        // Verify Player 1 - Period 1 tracking metrics (300.0 seconds expected)
+        var record1 = result.FirstOrDefault(r => r.MatchLineupId == context.LineupId1 && r.PeriodNumber == 1);
+        record1.Should().NotBeNull();
+        record1!.DirtySeconds.Should().Be(300.0);
+
+        // Verify Player 1 - Period 2 tracking metrics (150.0 seconds expected)
+        var record2 = result.FirstOrDefault(r => r.MatchLineupId == context.LineupId1 && r.PeriodNumber == 2);
+        record2.Should().NotBeNull();
+        record2!.DirtySeconds.Should().Be(150.0);
+
+        // Verify Player 2 - Period 1 tracking metrics (450.0 seconds expected)
+        var record3 = result.FirstOrDefault(r => r.MatchLineupId == context.LineupId2 && r.PeriodNumber == 1);
+        record3.Should().NotBeNull();
+        record3!.DirtySeconds.Should().Be(450.0);
+    }
+
     #endregion
 
     #region Seed Helpers

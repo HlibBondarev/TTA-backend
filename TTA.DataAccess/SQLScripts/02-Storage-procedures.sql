@@ -1633,3 +1633,35 @@ BEGIN
       AND pp.periodnumber = p_period_number
       AND pp.timeout IS NULL;
 END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Calculates the total elapsed linear seconds ("dirty" time) spent by each player 
+ * of a specific team in a selected match, grouped by period.
+ * Returns the exact seconds as DOUBLE PRECISION for clean .NET TimeSpan mapping.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.calculate_players_dirty_time_by_period(
+    p_match_id UUID,
+    p_team_id UUID
+)
+RETURNS TABLE (
+    matchlineupid UUID,
+    periodnumber INT,
+    dirtyseconds DOUBLE PRECISION
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        ml.id AS matchlineupid,
+        pp.periodnumber,
+        SUM(EXTRACT(EPOCH FROM (pp.timeout - pp.timein)))::DOUBLE PRECISION AS dirtyseconds
+    FROM public.playerpresences pp
+    JOIN public.matchlineups ml ON pp.matchlineupid = ml.id
+    LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    WHERE ml.matchid = p_match_id
+      AND (
+          pr.teamid = p_team_id
+          OR (ml.playerrosterid IS NULL AND ml.number = -1 AND (SELECT hometeamid FROM public.matches WHERE id = p_match_id) = p_team_id)
+          OR (ml.playerrosterid IS NULL AND ml.number = -2 AND (SELECT guestteamid FROM public.matches WHERE id = p_match_id) = p_team_id)
+      )
+    GROUP BY ml.id, pp.periodnumber;
+END;$$ LANGUAGE plpgsql;
