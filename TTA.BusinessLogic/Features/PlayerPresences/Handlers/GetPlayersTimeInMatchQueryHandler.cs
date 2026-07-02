@@ -49,8 +49,17 @@ public class GetPlayersTimeInMatchQueryHandler(
 
         foreach (var periodNumber in uniquePeriods)
         {
-            double coefficientK = await _timeNormalizationService.GetNormalizedTimeCoefficientAsync(request.MatchId, periodNumber);
-            periodCoefficients[periodNumber] = coefficientK;
+            try
+            {
+                double coefficientK = await _timeNormalizationService.GetNormalizedTimeCoefficientAsync(request.MatchId, periodNumber);
+                periodCoefficients[periodNumber] = coefficientK;
+            }
+            catch (Exception ex)
+            {
+                // CodeRabbit Fix: Prevent a single period normalization error from aborting the entire request.
+                // Incomplete matches or missing anchors will degrade gracefully using the fallback path.
+                _logger.LogWarning(ex, "Failed to retrieve normalization coefficient for Match {MatchId}, Period {PeriodNumber}. Falling back to raw linear time.", request.MatchId, periodNumber);
+            }
         }
 
         // 3. Group the projection rows by individual player (MatchLineupId)
@@ -73,7 +82,7 @@ public class GetPlayersTimeInMatchQueryHandler(
                 }
                 else
                 {
-                    // Fallback to raw linear time if coefficient map boundary is missed
+                    // Fallback to raw linear time if coefficient map boundary is missed or service lookup threw an error
                     totalCleanSeconds += row.DirtySeconds;
                 }
             }

@@ -121,4 +121,46 @@ public class GetPlayersTimeInMatchQueryHandlerTests
         _timeNormalizationServiceMock.Verify(s => s.GetNormalizedTimeCoefficientAsync(query.MatchId, 1), Times.Once);
         _timeNormalizationServiceMock.Verify(s => s.GetNormalizedTimeCoefficientAsync(query.MatchId, 2), Times.Once);
     }
+
+    /// <summary>
+    /// Verifies that the handler gracefully degrades and falls back to raw linear time for a specific period
+    /// if the <see cref="ITimeNormalizationService"/> throws an exception during coefficient pre-fetching loops.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_FallbackToRawLinearTime_When_NormalizationServiceThrowsException()
+    {
+        // Arrange
+        var query = new GetPlayersTimeInMatchQuery(Guid.NewGuid(), Guid.NewGuid());
+        var playerLineupId = Guid.NewGuid();
+
+        // Setup mock to return a single track record
+        var databaseProjections = new List<PlayersDirtyTimeByPeriodProjection>
+        {
+            new(playerLineupId, 1, 300.0)
+        };
+
+        _playerPresenceRepositoryMock
+            .Setup(r => r.GetPlayersDirtyTimeByPeriodAsync(query.MatchId, query.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(databaseProjections);
+
+        // Simulate service failure (e.g., missing anchors or division by zero condition)
+        _timeNormalizationServiceMock
+            .Setup(s => s.GetNormalizedTimeCoefficientAsync(query.MatchId, 1))
+            .ThrowsAsync(new InvalidOperationException("Missing matching time anchors for the specified period."));
+
+        // Act
+        var result = (await _handler.Handle(query, CancellationToken.None)).ToList();
+
+        // Assert
+        result.Should().HaveCount(1);
+
+        var playerResult = result.Single();
+        playerResult.MatchLineupId.Should().Be(playerLineupId);
+        playerResult.DirtyTimeInMatch.Should().Be(TimeSpan.FromSeconds(300));
+
+        // Due to the catch block, coefficient mapping is missing, triggering a 1:1 raw fallback calculation step
+        playerResult.CleanTimeInMatch.Should().Be(TimeSpan.FromSeconds(300));
+
+        _timeNormalizationServiceMock.Verify(s => s.GetNormalizedTimeCoefficientAsync(query.MatchId, 1), Times.Once);
+    }
 }
