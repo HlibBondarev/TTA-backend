@@ -48,7 +48,8 @@
 *   **Flow:** DB (PostgreSQL) ➔ Functions/Procedures (SQL) ➔ Repository (Dapper) ➔ MediatR Handlers ➔ Controller (API).
 *   **Repositories:**
     *   Use `IDbConnection` with Dapper to call stored functions.
-    *   **Dynamic Mapping:** Queries for match lists or details use `dynamic` objects to include metadata (e.g., `HomeTeamName`, `TournamentName`).
+    *   **Dynamic Mapping:** Operational and informational lookups (such as match protocols or team lineups) utilize dynamic objects to natively bind joined metadata, eliminating intermediate boilerplate model classes before mapping to final DTOs in handlers. 
+    *   **Strongly-Typed Projections:** Complex analytical, calculated, or aggregated data models that do not natively exist inside static database tables (e.g., GameEventProjection, PlayersDirtyTimeByPeriodProjection) use explicitly defined C# records to guarantee compile-time type safety for algorithmic transformations.
     *   **Strict Mapping:** Entity retrieval (e.g., `GetMatchById`) returns only columns matching the base table schema.
 
 ### 7. Scoped Access Control Model
