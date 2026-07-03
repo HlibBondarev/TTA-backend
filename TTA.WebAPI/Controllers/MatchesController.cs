@@ -949,13 +949,8 @@ public class MatchesController(
             return BadRequest(validationResult.Errors);
         }
 
-        // 2. Dispatch query to validate tenancy and boundaries
+        // 2. Dispatch query to validate tenancy and boundaries (Throws NotFoundException internally if missing)
         var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId), cancellationToken);
-        if (match == null)
-        {
-            _logger.LogWarning("Tenancy validation failed: Match {MatchId} not found.", matchId);
-            return NotFound($"Match with ID {matchId} was not found.");
-        }
 
         // 3. Enforce boundary rules: teamId must belong to either Home or Guest team of the match context
         if (teamId != match.HomeTeamId && teamId != match.GuestTeamId)
