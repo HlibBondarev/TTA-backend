@@ -881,7 +881,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.GetPlayersTimeInMatchByTeam"/> returns 200 OK 
-    /// with a valid collection of player time responses when the request satisfies all tenancy, validation, and TeamEditor policy rules.
+    /// with an accurately calculated collection of clean and dirty play time metrics when the pipeline executes end-to-end.
     /// </summary>
     [Fact]
     public async Task GetPlayersTimeInMatchByTeam_ShouldReturnOk_WhenRequestIsValidAndTeamBelongsToMatch()
@@ -898,8 +898,17 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var analytics = await response.Content.ReadFromJsonAsync<IEnumerable<PlayerTimeInMatchResponse>>();
-        analytics.Should().NotBeNull();
+        var analytics = (await response.Content.ReadFromJsonAsync<IEnumerable<PlayerTimeInMatchResponse>>())?.ToList();
+        analytics.Should().NotBeNull().And.NotBeEmpty();
+        analytics.Should().HaveCount(1);
+
+        // Assert end-to-end piecewise-linear mathematical calculation accuracy:
+        // Nominal duration: 8 mins, Real duration: 10 mins -> K = 0.8
+        // Dirty time: 300 seconds -> Clean time: 300 * 0.8 = 240 seconds
+        var playerRecord = analytics!.First();
+        playerRecord.MatchLineupId.Should().Be(context.LineupId);
+        playerRecord.DirtyTimeInMatch.Should().Be(TimeSpan.FromSeconds(300));
+        playerRecord.CleanTimeInMatch.Should().Be(TimeSpan.FromSeconds(240));
     }
 
     /// <summary>
@@ -947,7 +956,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that the administrative endpoint <see cref="MatchesController.GetPlayersTimeInMatch"/> returns 200 OK
-    /// when invoked by a user who successfully passes the tournament ownership validation block.
+    /// and accurately processes the full analytic calculations when invoked by an authorized tournament owner.
     /// </summary>
     [Fact]
     public async Task GetPlayersTimeInMatch_Admin_ShouldReturnOk_WhenUserIsTournamentOwner()
@@ -962,19 +971,26 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var analytics = await response.Content.ReadFromJsonAsync<IEnumerable<PlayerTimeInMatchResponse>>();
-        analytics.Should().NotBeNull();
+        var analytics = (await response.Content.ReadFromJsonAsync<IEnumerable<PlayerTimeInMatchResponse>>())?.ToList();
+        analytics.Should().NotBeNull().And.NotBeEmpty();
+        analytics.Should().HaveCount(1);
+
+        // Assert end-to-end piecewise-linear mathematical calculation accuracy for admin flow
+        var playerRecord = analytics!.First();
+        playerRecord.MatchLineupId.Should().Be(context.LineupId);
+        playerRecord.DirtyTimeInMatch.Should().Be(TimeSpan.FromSeconds(300));
+        playerRecord.CleanTimeInMatch.Should().Be(TimeSpan.FromSeconds(240));
     }
 
     #region Seed Helpers for Analytics
 
     /// <summary>
-    /// Seeds a complete relational aggregate structure (Country, City, Tournament, Club, Team, Match) 
-    /// inside the containerized PostgreSQL instance to isolate integration test contexts.
+    /// Seeds a complete relational aggregate structure (Geography, Sport, Club, Tournament, Team, Match, Lineups, Time Anchors, Presences) 
+    /// inside the containerized PostgreSQL instance to isolate integration test contexts and enforce complete performance calculations.
     /// </summary>
     /// <param name="ownerId">The Auth0 user identifier assigned as the owner of the tournament.</param>
-    /// <returns>A tuple containing the generated MatchId and TeamId.</returns>
-    private async Task<(Guid MatchId, Guid TeamId)> SeedAnalyticsEnvironmentAsync(string ownerId)
+    /// <returns>A tuple containing the generated MatchId, TeamId, and target active MatchLineupId.</returns>
+    private async Task<(Guid MatchId, Guid TeamId, Guid LineupId)> SeedAnalyticsEnvironmentAsync(string ownerId)
     {
         using var conn = Fixture.ConnectionFactory.CreateConnection();
 
@@ -1000,7 +1016,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             new { id = cityId, rid = regionId });
         cityId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.cities WHERE regionid = @rid AND name = 'Integration City'", new { rid = regionId });
 
-        // 2. User & Sport
+        // 2. User & Sport Configuration (8 minutes nominal duration defined)
         await conn.ExecuteAsync(@"
             INSERT INTO public.users (id, email, displayname, createdat) 
             VALUES (@id, @email, 'Tester', NOW()) 
@@ -1023,7 +1039,15 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             new { id = configId, sid = sportId });
         configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId });
 
-        // 3. Organization (Club, Tournament, Team)
+        var posId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
+            SELECT @id, @sid, 'Center Forward', 'CF' 
+            WHERE NOT EXISTS (SELECT 1 FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF')",
+            new { id = posId, sid = sportId });
+        posId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF' LIMIT 1", new { sid = sportId });
+
+        // 3. Organization (Club, Tournament, Team, Match setup)
         var clubId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityid, @name, NOW())",
             new { id = clubId, cityid = cityId, name = $"Club_{Guid.NewGuid():N}" });
@@ -1044,7 +1068,46 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             VALUES (@id, @tid, @teamid, @teamid, NOW(), NOW())",
             new { id = matchId, tid = tournamentId, teamid = teamId });
 
-        return (matchId, teamId);
+        // 4. Performance Analytics Computational Mock Data (Player, Roster, Lineup)
+        var playerId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'Analytics', 'Player', '2000-01-01', 0, NOW())", new { id = playerId, cid = clubId });
+
+        var rosterId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 7, @posid, NOW())", new { id = rosterId, pid = playerId, tid = tournamentId, teamid = teamId, posid = posId });
+
+        var lineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) VALUES (@id, @mid, @rid, 7, true, @posid)", new { id = lineupId, mid = matchId, rid = rosterId, posid = posId });
+
+        // 5. Setup Time Anchors for Period 1: PeriodStart (0) and PeriodEnd (1)
+        // Real duration: 10 minutes (600 seconds) -> Scaling coefficient K = 8 / 10 = 0.8
+        var baseTime = DateTime.UtcNow;
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp)
+            VALUES 
+            (@id1, @mid, 1, 0, @timeStart),
+            (@id2, @mid, 1, 1, @timeEnd)",
+            new
+            {
+                id1 = Guid.NewGuid(),
+                id2 = Guid.NewGuid(),
+                mid = matchId,
+                timeStart = baseTime,
+                timeEnd = baseTime.AddSeconds(600)
+            });
+
+        // 6. Setup active Player Presence entry representing exactly 300 linear ("dirty") seconds in the water
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout)
+            VALUES (@id, @lineupId, 1, @timeIn, @timeOut)",
+            new
+            {
+                id = Guid.NewGuid(),
+                lineupId = lineupId,
+                timeIn = baseTime.AddSeconds(60),
+                timeOut = baseTime.AddSeconds(360)
+            });
+
+        return (matchId, teamId, lineupId);
     }
 
     /// <summary>
@@ -1055,14 +1118,12 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     {
         using var conn = Fixture.ConnectionFactory.CreateConnection();
 
-        // Ensure the targeted user profile exists prior to injecting authorization rows
         await conn.ExecuteAsync(@"
             INSERT INTO public.users (id, email, displayname, createdat)
             VALUES (@id, @email, 'Integration Policy User', NOW())
             ON CONFLICT (id) DO NOTHING",
             new { id = userId, email = $"{userId.Replace("|", "_")}@tta.com" });
 
-        // Insert the access policy rule cleanly
         await conn.ExecuteAsync(@"
             INSERT INTO auth.accesspolicies (id, userid, targettype, targetid, role, createdat)
             VALUES (@id, @userid, @targettype, @targetid, @role, NOW())
