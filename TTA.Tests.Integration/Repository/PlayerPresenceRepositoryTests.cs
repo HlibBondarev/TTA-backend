@@ -406,6 +406,48 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         record3!.DirtySeconds.Should().Be(450.0);
     }
 
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.GetPlayersDirtyTimeByPeriodAsync"/> handles active presence tracking
+    /// records (where TimeOut is NULL) gracefully by returning 0.0 seconds, leveraging the database COALESCE protection loop.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayersDirtyTimeByPeriodAsync_ShouldReturnZeroDirtySeconds_WhenPresenceRecordIsOpen()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var teamId = await conn.QuerySingleAsync<Guid>(
+            "SELECT hometeamid FROM public.matches WHERE id = @MatchId",
+            new { context.MatchId });
+
+        var baseTime = DateTime.UtcNow;
+
+        // Record an active player presence with an unset TimeOut (NULL boundary state)
+        var activePresence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = baseTime,
+            TimeOut = null
+        };
+        await _repository.RecordPresenceAsync(activePresence);
+
+        // Act
+        var result = (await _repository.GetPlayersDirtyTimeByPeriodAsync(context.MatchId, teamId)).ToList();
+
+        // Assert
+        result.Should().HaveCount(1);
+
+        var record = result.First();
+        record.MatchLineupId.Should().Be(context.LineupId1);
+        record.PeriodNumber.Should().Be(1);
+
+        // COALESCE statement in storage function converts SUM(NULL) directly to 0.0, avoiding Dapper mapping exceptions
+        record.DirtySeconds.Should().Be(0.0);
+    }
+
     #endregion
 
     #region Seed Helpers
