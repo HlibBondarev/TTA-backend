@@ -1653,7 +1653,7 @@ BEGIN
     SELECT 
         ml.id AS matchlineupid,
         pp.periodnumber,
-        SUM(EXTRACT(EPOCH FROM (pp.timeout - pp.timein)))::DOUBLE PRECISION AS dirtyseconds
+        COALESCE(SUM(EXTRACT(EPOCH FROM (pp.timeout - pp.timein))), 0)::DOUBLE PRECISION AS dirtyseconds
     FROM public.playerpresences pp
     JOIN public.matchlineups ml ON pp.matchlineupid = ml.id
     LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
