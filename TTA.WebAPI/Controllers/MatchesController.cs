@@ -917,6 +917,98 @@ public class MatchesController(
         return Ok(response);
     }
 
+    /// <summary>
+    /// Calculates the clean and dirty play time performance analytics for players of a specific team in a match.
+    /// Accessible only by users holding the TeamEditor policy.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the targeted match.</param>
+    /// <param name="teamId">The unique identifier of the team whose player analytics are being calculated.</param>
+    /// <param name="validator">The FluentValidation instance injected from services to verify parameters.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests during processing.</param>
+    /// <returns>An <see cref="IActionResult"/> wrapping the collection of calculated player time-in-match metrics.</returns>
+    [HttpGet("{matchId:guid}/teams/{teamId:guid}/presence/calculate")]
+    [Authorize(Policy = "TeamEditor")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(IEnumerable<PlayerTimeInMatchResponse>))]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetPlayersTimeInMatchByTeam(
+        [FromRoute] Guid matchId,
+        [FromRoute] Guid teamId,
+        [FromServices] IValidator<PlayerTimeInMatchRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Initiating team-level player time-in-match calculation for Match: {MatchId}, Team: {TeamId}.", matchId, teamId);
+
+        // 1. Instantiate the request record and execute FluentValidation boundary checks
+        var request = new PlayerTimeInMatchRequest(matchId, teamId);
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation failed for team-level player analytics request in Match {MatchId}.", matchId);
+            return BadRequest(validationResult.Errors);
+        }
+
+        // 2. Dispatch query to validate tenancy and boundaries (Throws NotFoundException internally if missing)
+        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId), cancellationToken);
+
+        // 3. Enforce boundary rules: teamId must belong to either Home or Guest team of the match context
+        if (teamId != match.HomeTeamId && teamId != match.GuestTeamId)
+        {
+            _logger.LogWarning("Access denied: Team {TeamId} does not belong to Match {MatchId} context boundaries.", teamId, matchId);
+            return Forbid();
+        }
+
+        // 4. Dispatch the core performance analytics query pipeline
+        var analyticsResult = await _mediator.Send(new GetPlayersTimeInMatchQuery(matchId, teamId), cancellationToken);
+
+        return Ok(analyticsResult);
+    }
+
+    /// <summary>
+    /// Calculates the clean and dirty play time performance analytics for tournament administrators.
+    /// Protected via centralized tournament ownership routine verification blocks.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the targeted match.</param>
+    /// <param name="teamId">The unique identifier of the team whose player analytics are being calculated.</param>
+    /// <param name="validator">The FluentValidation instance injected from services to verify parameters.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests during processing.</param>
+    /// <returns>An <see cref="IActionResult"/> wrapping the collection of calculated player time-in-match metrics.</returns>
+    [HttpGet("{matchId:guid}/teams/{teamId:guid}/presence/calculate-admin")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(IEnumerable<PlayerTimeInMatchResponse>))]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetPlayersTimeInMatch(
+        [FromRoute] Guid matchId,
+        [FromRoute] Guid teamId,
+        [FromServices] IValidator<PlayerTimeInMatchRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Initiating admin-level player time-in-match calculation for Match: {MatchId}, Team: {TeamId}.", matchId, teamId);
+
+        // 1. Instantiate the request record and execute FluentValidation boundary checks
+        var request = new PlayerTimeInMatchRequest(matchId, teamId);
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation failed for admin-level player analytics request in Match {MatchId}.", matchId);
+            return BadRequest(validationResult.Errors);
+        }
+
+        // 2. Execute administrative tournament ownership validation routine block (fixed signature)
+        var validationResultBlock = await ValidateTournamentOwnership(matchId);
+        if (validationResultBlock != null)
+        {
+            return validationResultBlock;
+        }
+
+        // 3. Dispatch the identical core performance analytics query pipeline
+        var analyticsResult = await _mediator.Send(new GetPlayersTimeInMatchQuery(matchId, teamId), cancellationToken);
+
+        return Ok(analyticsResult);
+    }
+
     #endregion
 
     #region Helper Methods

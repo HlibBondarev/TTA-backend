@@ -2,6 +2,7 @@
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository;
 
@@ -98,6 +99,20 @@ public class PlayerPresenceRepository(IDbConnectionFactory connectionFactory)
         using var connection = await OpenConnectionAsync(cancellationToken);
         await connection.ExecuteAsync(new CommandDefinition(
             SqlStatements.ForPlayerPresence.CloseActivePresences,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async Task<IEnumerable<PlayersDirtyTimeByPeriodProjection>> GetPlayersDirtyTimeByPeriodAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_match_id", matchId);
+        parameters.Add("p_team_id", teamId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.QueryAsync<PlayersDirtyTimeByPeriodProjection>(new CommandDefinition(
+            SqlStatements.ForPlayerPresence.CalculatePlayersDirtyTimeByPeriod,
             parameters,
             cancellationToken: cancellationToken));
     }

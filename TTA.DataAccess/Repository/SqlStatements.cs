@@ -426,5 +426,11 @@ public static class SqlStatements
         /// </summary>
         public const string CloseActivePresences =
             "SELECT public.close_active_presences(@p_match_id, @p_period_number, @p_time_out);";
+
+        /// <summary>
+        /// Invokes the storage function to calculate raw dirty play time by period for a specific team in a match.
+        /// </summary>
+        public const string CalculatePlayersDirtyTimeByPeriod =
+            "SELECT * FROM public.calculate_players_dirty_time_by_period(@p_match_id, @p_team_id);";
     }
 }
