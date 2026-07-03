@@ -163,4 +163,54 @@ public class GetPlayersTimeInMatchQueryHandlerTests
 
         _timeNormalizationServiceMock.Verify(s => s.GetNormalizedTimeCoefficientAsync(query.MatchId, 1), Times.Once);
     }
+
+    /// <summary>
+    /// Verifies that the handler accurately aggregates performance records in a mixed scenario where one match period 
+    /// normalizes successfully and another period throws an exception, confirming partial fallback and accumulation stability.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_CalculateMixedTimes_When_OnePeriodSucceedsAndAnotherThrows()
+    {
+        // Arrange
+        var query = new GetPlayersTimeInMatchQuery(Guid.NewGuid(), Guid.NewGuid());
+        var playerLineupId = Guid.NewGuid();
+
+        // Setup mock projections: Player A plays in Period 1 (300s) and Period 2 (200s)
+        var databaseProjections = new List<PlayersDirtyTimeByPeriodProjection>
+        {
+            new(playerLineupId, 1, 300.0),
+            new(playerLineupId, 2, 200.0)
+        };
+
+        _playerPresenceRepositoryMock
+            .Setup(r => r.GetPlayersDirtyTimeByPeriodAsync(query.MatchId, query.TeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(databaseProjections);
+
+        // Period 1 succeeds with an analytical coefficient K = 0.8
+        _timeNormalizationServiceMock
+            .Setup(s => s.GetNormalizedTimeCoefficientAsync(query.MatchId, 1))
+            .ReturnsAsync(0.8);
+
+        // Period 2 throws an exception simulating missing anchors or configuration errors
+        _timeNormalizationServiceMock
+            .Setup(s => s.GetNormalizedTimeCoefficientAsync(query.MatchId, 2))
+            .ThrowsAsync(new InvalidOperationException("Missing matching anchors for period 2."));
+
+        // Act
+        var result = (await _handler.Handle(query, CancellationToken.None)).ToList();
+
+        // Assert
+        result.Should().HaveCount(1);
+
+        // Verify Mixed Partial Accumulation Calculations:
+        // Total Dirty time: 300 + 200 = 500 seconds
+        // Total Clean time: (300 * 0.8) + (200 raw 1:1 fallback) = 240 + 200 = 440 seconds
+        var playerResult = result.Single();
+        playerResult.MatchLineupId.Should().Be(playerLineupId);
+        playerResult.DirtyTimeInMatch.Should().Be(TimeSpan.FromSeconds(500));
+        playerResult.CleanTimeInMatch.Should().Be(TimeSpan.FromSeconds(440));
+
+        _timeNormalizationServiceMock.Verify(s => s.GetNormalizedTimeCoefficientAsync(query.MatchId, 1), Times.Once);
+        _timeNormalizationServiceMock.Verify(s => s.GetNormalizedTimeCoefficientAsync(query.MatchId, 2), Times.Once);
+    }
 }
