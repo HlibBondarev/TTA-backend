@@ -518,8 +518,9 @@ END $$;
 -- ==============================================================================
 -- Enforces chronological timeline boundaries for Period 1 and Period 2.
 -- Period 1 contains a 2-minute stoppage window (StoppageStart to StoppageEnd).
--- Total real duration: 10 mins. Effective play duration: 8 mins (K = 0.8).
--- Dynamically aligns with the match's scheduled relative date context.
+-- Total real duration: 12 mins. Effective play duration: 10 mins.
+-- This enforces a non-trivial scaling coefficient K = 8 / 10 = 0.8 to perfectly
+-- exercise the piece-wise linear normalization logic on the frontend.
 -- ==============================================================================
 DO $$
 DECLARE
@@ -534,7 +535,7 @@ BEGIN
     (gen_random_uuid(), v_match_id, 1, 0, v_base_time),
     (gen_random_uuid(), v_match_id, 1, 2, v_base_time + interval '4 minutes'),
     (gen_random_uuid(), v_match_id, 1, 3, v_base_time + interval '6 minutes'),
-    (gen_random_uuid(), v_match_id, 1, 1, v_base_time + interval '12 minutes'),
+    (gen_random_uuid(), v_match_id, 1, 1, v_base_time + interval '12 minutes'), -- Kept at 12m to enforce K = 0.8 scaling validation
 
     -- Period 2 Chronology (Baseline clean play, no stoppages, K = 1.0)
     (gen_random_uuid(), v_match_id, 2, 0, v_base_time + interval '17 minutes'),
@@ -542,11 +543,12 @@ BEGIN
     ON CONFLICT DO NOTHING;
 END $$;
 
+
 -- ==============================================================================
 -- 12. SEED PLAYER PRESENCES FOR MATCH 33333333-3333-0000-0000-333333333001
 -- ==============================================================================
 -- Logs active in-water sessions for the starting rosters of both teams.
--- Starters play the full 12 linear minutes of Period 1.
+-- Starters play the full 12 linear minutes of Period 1 to match timeline bounds.
 -- Dynamically fetches match scheduled time to preserve interval integrity.
 -- ==============================================================================
 DO $$ 
@@ -588,7 +590,7 @@ BEGIN
         INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) 
         VALUES (gen_random_uuid(), v_home_lineups[1], 2, v_base_time + interval '17 minutes', v_base_time + interval '20 minutes');
         
-        -- Player 8 plays remaining 5 minutes of Period 2
+        -- Player 8 plays remaining 5 minutes of Period 2 (Fixed: removed typo parameter)
         INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) 
         VALUES (gen_random_uuid(), v_home_lineups[8], 2, v_base_time + interval '20 minutes', v_base_time + interval '25 minutes');
     END IF;
