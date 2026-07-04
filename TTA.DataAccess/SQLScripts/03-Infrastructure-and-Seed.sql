@@ -547,8 +547,10 @@ END $$;
 -- 12. SEED PLAYER PRESENCES FOR MATCH 33333333-3333-0000-0000-333333333001
 -- ==============================================================================
 -- Logs active in-water sessions for the starting rosters of both teams.
--- Starters play the full 12 linear minutes of Period 1.
--- Fixed: Implemented loop-index deterministic UUIDs to avoid duplication.
+-- Starters play the full 12 linear minutes of Period 1 to preserve K = 0.8 test.
+-- Dynamically fetches match scheduled time to preserve interval integrity.
+-- Implements loops with deterministic index-based UUIDs and explicit array sorting
+-- via ORDER BY to guarantee absolute idempotency across execution environments.
 -- ==============================================================================
 DO $$ 
 DECLARE 
@@ -563,11 +565,11 @@ BEGIN
     -- Extract the relative match scheduled time to align timeline anchors
     SELECT scheduledat INTO v_base_time FROM public.matches WHERE id = v_match_id;
 
-    -- Fetch active lineup IDs mapped during Step 10
-    SELECT array_agg(ml.id) INTO v_home_lineups FROM public.matchlineups ml 
+    -- Fetch active lineup IDs mapped during Step 10 with strict deterministic ordering
+    SELECT array_agg(ml.id ORDER BY ml.id) INTO v_home_lineups FROM public.matchlineups ml 
     JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = v_match_id AND pr.teamid = v_home_team;
 
-    SELECT array_agg(ml.id) INTO v_guest_lineups FROM public.matchlineups ml 
+    SELECT array_agg(ml.id ORDER BY ml.id) INTO v_guest_lineups FROM public.matchlineups ml 
     JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = v_match_id AND pr.teamid = v_guest_team;
 
     -- Seed Period 1 Starters (First 7 players stay on field for 12 linear minutes)
@@ -605,8 +607,9 @@ END $$;
 -- ==============================================================================
 -- Populates raw technical action rows inside active game segments.
 -- Normalizedmatchtime is omitted intentionally (remains NULL).
--- Fixed: Replaced random UUIDs with static deterministic keys for idempotency.
+-- It will be calculated dynamically via the MatchesController normalization endpoint.
 -- Strictly utilizes pre-seeded system event definitions from the database.
+-- Employs static deterministic primary keys to ensure repeatable and safe deployments.
 -- ==============================================================================
 DO $$ 
 DECLARE 
@@ -642,11 +645,11 @@ BEGIN
     SELECT id INTO v_excl_def_id FROM public.eventdefinitions 
     WHERE (name LIKE '%Exclusion%' OR shortname = 'EX' OR shortname = 'E') AND sportid = v_sport_id LIMIT 1;
 
-    -- Grab match lineups arrays
-    SELECT array_agg(ml.id) INTO v_home_lineups FROM public.matchlineups ml 
+    -- Grab match lineups arrays with strict deterministic ordering to preserve index references
+    SELECT array_agg(ml.id ORDER BY ml.id) INTO v_home_lineups FROM public.matchlineups ml 
     JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = v_match_id AND pr.teamid = v_home_team;
 
-    SELECT array_agg(ml.id) INTO v_guest_lineups FROM public.matchlineups ml 
+    SELECT array_agg(ml.id ORDER BY ml.id) INTO v_guest_lineups FROM public.matchlineups ml 
     JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = v_match_id AND pr.teamid = v_guest_team;
 
     -- Event 1: Guest Player 1 commits a severe foul at 2 minutes from start.
