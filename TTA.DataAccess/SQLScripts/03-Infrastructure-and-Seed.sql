@@ -608,6 +608,7 @@ END $$;
 -- Populates raw technical action rows inside active game segments.
 -- Normalizedmatchtime is omitted intentionally (remains NULL).
 -- It will be calculated dynamically via the MatchesController normalization endpoint.
+-- Fixed: Refactored v_excl_def_id to use a highly resilient exact IN filter.
 -- Strictly utilizes pre-seeded system event definitions from the database.
 -- Employs static deterministic primary keys to ensure repeatable and safe deployments.
 -- ==============================================================================
@@ -635,15 +636,18 @@ BEGIN
     JOIN public.tournaments t ON m.tournamentid = t.id
     WHERE m.id = v_match_id;
 
-    -- Fetch existing definitions from public.eventdefinitions (Resilient lookup by Name or Shortname)
+    -- Fetch existing definitions from public.eventdefinitions 
     SELECT id INTO v_goal_def_id FROM public.eventdefinitions 
-    WHERE (name = 'Goal' OR shortname = 'G') AND sportid = v_sport_id LIMIT 1;
+    WHERE name = 'Goal' AND sportid = v_sport_id;
     
     SELECT id INTO v_assist_def_id FROM public.eventdefinitions 
-    WHERE (name = 'Assist' OR shortname = 'A') AND sportid = v_sport_id LIMIT 1;
+    WHERE name = 'Assist' AND sportid = v_sport_id;
     
+    -- Fixed: Highly resilient exact lookup checking standard water polo variations to prevent NULL skipping
     SELECT id INTO v_excl_def_id FROM public.eventdefinitions 
-    WHERE (name LIKE '%Exclusion%' OR shortname = 'EX' OR shortname = 'E') AND sportid = v_sport_id LIMIT 1;
+    WHERE sportid = v_sport_id 
+      AND (shortname IN ('EX', 'E', 'Ex', 'Excl') OR name IN ('Exclusion', 'Exclusion (20s)', 'Exclusion Received'))
+    LIMIT 1;
 
     -- Grab match lineups arrays with strict deterministic ordering to preserve index references
     SELECT array_agg(ml.id ORDER BY ml.id) INTO v_home_lineups FROM public.matchlineups ml 
