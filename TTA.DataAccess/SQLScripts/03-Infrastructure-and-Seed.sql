@@ -512,3 +512,175 @@ BEGIN
 
     RAISE NOTICE 'Lineups for match % initialized with specific selection.', v_match_id;
 END $$;
+
+-- ==============================================================================
+-- 11. SEED TIME ANCHORS FOR MATCH 33333333-3333-0000-0000-333333333001
+-- ==============================================================================
+-- Enforces chronological timeline boundaries for Period 1 and Period 2.
+-- Period 1 contains a 2-minute stoppage window (StoppageStart to StoppageEnd).
+-- Total real duration: 12 mins. Effective play duration: 10 mins.
+-- Fixed: Replaced random UUIDs with deterministic IDs to guarantee idempotency.
+-- ==============================================================================
+DO $$
+DECLARE
+    v_match_id uuid := '33333333-3333-0000-0000-333333333001';
+    v_base_time timestamptz;
+BEGIN
+    -- Extract the relative match scheduled time to prevent chronological drift
+    SELECT scheduledat INTO v_base_time FROM public.matches WHERE id = v_match_id;
+
+    INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) VALUES
+    -- Period 1 Chronology (Types: 0=PeriodStart, 1=PeriodEnd, 2=StoppageStart, 3=StoppageEnd)
+    ('44444444-4444-0000-0001-000000000001', v_match_id, 1, 0, v_base_time),
+    ('44444444-4444-0000-0001-000000000002', v_match_id, 1, 2, v_base_time + interval '4 minutes'),
+    ('44444444-4444-0000-0001-000000000003', v_match_id, 1, 3, v_base_time + interval '6 minutes'),
+    ('44444444-4444-0000-0001-000000000004', v_match_id, 1, 1, v_base_time + interval '12 minutes'),
+
+    -- Period 2 Chronology (Baseline clean play, no stoppages, K = 1.0)
+    ('44444444-4444-0000-0001-000000000005', v_match_id, 2, 0, v_base_time + interval '17 minutes'),
+    ('44444444-4444-0000-0001-000000000006', v_match_id, 2, 1, v_base_time + interval '25 minutes')
+    ON CONFLICT (id) DO NOTHING;
+END $$;
+
+
+-- ==============================================================================
+-- 12. SEED PLAYER PRESENCES FOR MATCH 33333333-3333-0000-0000-333333333001
+-- ==============================================================================
+-- Logs active in-water sessions for the starting rosters of both teams.
+-- Starters play the full 12 linear minutes of Period 1 to preserve K = 0.8 test.
+-- Dynamically fetches match scheduled time to preserve interval integrity.
+-- Implements loops with deterministic index-based UUIDs and explicit array sorting
+-- via ORDER BY to guarantee absolute idempotency across execution environments.
+-- ==============================================================================
+DO $$ 
+DECLARE 
+    v_match_id uuid := '33333333-3333-0000-0000-333333333001';
+    v_home_team uuid := '22222222-2222-2222-2222-222222222215';
+    v_guest_team uuid := '22222222-2222-2222-2222-222222222216';
+    v_home_lineups uuid[];
+    v_guest_lineups uuid[];
+    v_base_time timestamptz;
+    v_idx int;
+BEGIN
+    -- Extract the relative match scheduled time to align timeline anchors
+    SELECT scheduledat INTO v_base_time FROM public.matches WHERE id = v_match_id;
+
+    -- Fetch active lineup IDs mapped during Step 10 with strict deterministic ordering
+    SELECT array_agg(ml.id ORDER BY ml.id) INTO v_home_lineups FROM public.matchlineups ml 
+    JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = v_match_id AND pr.teamid = v_home_team;
+
+    SELECT array_agg(ml.id ORDER BY ml.id) INTO v_guest_lineups FROM public.matchlineups ml 
+    JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = v_match_id AND pr.teamid = v_guest_team;
+
+    -- Seed Period 1 Starters (First 7 players stay on field for 12 linear minutes)
+    FOR v_idx IN 1..7 LOOP
+        IF v_home_lineups[v_idx] IS NOT NULL THEN
+            INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) 
+            VALUES (cast('55555555-5555-0000-0001-' || lpad(v_idx::text, 12, '0') as uuid), v_home_lineups[v_idx], 1, v_base_time, v_base_time + interval '12 minutes')
+            ON CONFLICT (id) DO NOTHING;
+        END IF;
+        
+        IF v_guest_lineups[v_idx] IS NOT NULL THEN
+            INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) 
+            VALUES (cast('55555555-5555-0000-0002-' || lpad(v_idx::text, 12, '0') as uuid), v_guest_lineups[v_idx], 1, v_base_time, v_base_time + interval '12 minutes')
+            ON CONFLICT (id) DO NOTHING;
+        END IF;
+    END LOOP;
+
+    -- Seed Tactical Substitution for Period 2 (Home Player 8 replaces Home Player 1)
+    IF v_home_lineups[1] IS NOT NULL AND v_home_lineups[8] IS NOT NULL THEN
+        -- Player 1 plays from 0 to 3 minutes of Period 2
+        INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) 
+        VALUES ('55555555-5555-0000-0003-000000000001', v_home_lineups[1], 2, v_base_time + interval '17 minutes', v_base_time + interval '20 minutes')
+        ON CONFLICT (id) DO NOTHING;
+        
+        -- Player 8 plays remaining 5 minutes of Period 2
+        INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) 
+        VALUES ('55555555-5555-0000-0003-000000000002', v_home_lineups[8], 2, v_base_time + interval '20 minutes', v_base_time + interval '25 minutes')
+        ON CONFLICT (id) DO NOTHING;
+    END IF;
+END $$;
+
+
+-- ==============================================================================
+-- 13. SEED GAME EVENTS FOR MATCH 33333333-3333-0000-0000-333333333001
+-- ==============================================================================
+-- Populates raw technical action rows inside active game segments.
+-- Normalizedmatchtime is omitted intentionally (remains NULL).
+-- It will be calculated dynamically via the MatchesController normalization endpoint.
+-- Fixed: Refactored v_excl_def_id to use a highly resilient exact IN filter.
+-- Strictly utilizes pre-seeded system event definitions from the database.
+-- Employs static deterministic primary keys to ensure repeatable and safe deployments.
+-- ==============================================================================
+DO $$ 
+DECLARE 
+    v_match_id uuid := '33333333-3333-0000-0000-333333333001';
+    v_home_team uuid := '22222222-2222-2222-2222-222222222215';
+    v_guest_team uuid := '22222222-2222-2222-2222-222222222216';
+    
+    v_home_lineups uuid[];
+    v_guest_lineups uuid[];
+    
+    v_goal_def_id uuid;
+    v_assist_def_id uuid;
+    v_excl_def_id uuid;
+    v_base_time timestamptz;
+    v_sport_id uuid;
+BEGIN
+    -- Extract the relative match scheduled time to align match timeline events
+    SELECT scheduledat INTO v_base_time FROM public.matches WHERE id = v_match_id;
+
+    -- Extract the parent sport identifier from the tournament
+    SELECT t.sportid INTO v_sport_id 
+    FROM public.matches m
+    JOIN public.tournaments t ON m.tournamentid = t.id
+    WHERE m.id = v_match_id;
+
+    -- Fetch existing definitions from public.eventdefinitions 
+    SELECT id INTO v_goal_def_id FROM public.eventdefinitions 
+    WHERE name = 'Goal' AND sportid = v_sport_id;
+    
+    SELECT id INTO v_assist_def_id FROM public.eventdefinitions 
+    WHERE name = 'Assist' AND sportid = v_sport_id;
+    
+    -- Fixed: Highly resilient exact lookup checking standard water polo variations to prevent NULL skipping
+    SELECT id INTO v_excl_def_id FROM public.eventdefinitions 
+    WHERE sportid = v_sport_id 
+      AND (shortname IN ('EX', 'E', 'Ex', 'Excl') OR name IN ('Exclusion', 'Exclusion (20s)', 'Exclusion Received'))
+    LIMIT 1;
+
+    -- Grab match lineups arrays with strict deterministic ordering to preserve index references
+    SELECT array_agg(ml.id ORDER BY ml.id) INTO v_home_lineups FROM public.matchlineups ml 
+    JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = v_match_id AND pr.teamid = v_home_team;
+
+    SELECT array_agg(ml.id ORDER BY ml.id) INTO v_guest_lineups FROM public.matchlineups ml 
+    JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = v_match_id AND pr.teamid = v_guest_team;
+
+    -- Event 1: Guest Player 1 commits a severe foul at 2 minutes from start.
+    IF v_guest_lineups[1] IS NOT NULL AND v_excl_def_id IS NOT NULL THEN
+        INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, isleadtogoal, createdat) 
+        VALUES ('66666666-6666-0000-0001-000000000001', v_guest_lineups[1], v_excl_def_id, 1, v_base_time + interval '2 minutes', false, v_base_time + interval '2 minutes')
+        ON CONFLICT (id) DO NOTHING;
+    END IF;
+
+    -- Event 2: Home Team Power Play! Home Player 2 makes an Assist at 3 minutes from start.
+    IF v_home_lineups[2] IS NOT NULL AND v_assist_def_id IS NOT NULL THEN
+        INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, isleadtogoal, createdat) 
+        VALUES ('66666666-6666-0000-0001-000000000002', v_home_lineups[2], v_assist_def_id, 1, v_base_time + interval '3 minutes', true, v_base_time + interval '3 minutes')
+        ON CONFLICT (id) DO NOTHING;
+    END IF;
+
+    -- Event 3: Home Player 3 scores a Goal from that assist at 3 minutes 2 seconds from start.
+    IF v_home_lineups[3] IS NOT NULL AND v_goal_def_id IS NOT NULL THEN
+        INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, isleadtogoal, createdat) 
+        VALUES ('66666666-6666-0000-0001-000000000003', v_home_lineups[3], v_goal_def_id, 1, v_base_time + interval '3 minutes 2 seconds', false, v_base_time + interval '3 minutes 2 seconds')
+        ON CONFLICT (id) DO NOTHING;
+    END IF;
+
+    -- Event 4: Period 2 check. Substituted Home Player 8 scores a Goal at 5 minutes into Period 2 (Base + 22 minutes).
+    IF v_home_lineups[8] IS NOT NULL AND v_goal_def_id IS NOT NULL THEN
+        INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, isleadtogoal, createdat) 
+        VALUES ('66666666-6666-0000-0001-000000000004', v_home_lineups[8], v_goal_def_id, 2, v_base_time + interval '22 minutes', false, v_base_time + interval '22 minutes')
+        ON CONFLICT (id) DO NOTHING;
+    END IF;
+END $$;
