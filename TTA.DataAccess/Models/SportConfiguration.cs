@@ -12,4 +12,8 @@ public class SportConfiguration : IKeyedEntity<Guid>
     public string? FieldSize { get; set; }
     public int RosterLimit { get; set; }
     public int LineupLimit { get; set; }
+    /// <summary>
+    /// Gets or sets the maximum number of active players on the field for this sport configuration.
+    /// </summary>
+    public int ActivePlayersLimit { get; set; }
 }

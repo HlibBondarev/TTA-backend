@@ -60,6 +60,7 @@ CREATE TABLE sportconfigurations (
     fieldsize VARCHAR(50) NOT NULL,
     rosterlimit INT NOT NULL,
     lineuplimit INT NOT NULL,
+    activeplayerslimit INT NOT NULL DEFAULT 7, -- Max active players inside the field during a match
     UNIQUE (sportid, id)
 );
 
