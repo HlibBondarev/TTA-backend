@@ -854,6 +854,13 @@ public class SportConfigurationTests
         var config = new SportConfiguration { LineupLimit = 11 };
         Assert.Equal(11, config.LineupLimit);
     }
+
+    [Fact]
+    public void SportConfiguration_ActivePlayersLimit_CanBeSetAndRetrieved()
+    {
+        var config = new SportConfiguration { ActivePlayersLimit = 7 };
+        Assert.Equal(7, config.ActivePlayersLimit);
+    }
 }
 
 public class TeamTests
