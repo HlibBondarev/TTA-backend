@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TTA.BusinessLogic.Features.EventDefinitions.DTOs;
 using TTA.BusinessLogic.Features.GameEvents.DTOs;
 using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.MatchLineups.DTOs;
@@ -375,6 +376,90 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    #endregion
+
+    #region Event Definitions Tests
+
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetEventDefinitionsForMatch"/> 
+    /// returns 200 OK with the list of event definitions associated with the sport of the specified match.
+    /// </summary>
+    [Fact]
+    public async Task GetEventDefinitionsForMatch_ShouldReturnOkWithDefinitions_WhenMatchAndDefinitionsExist()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-EVDEF-01");
+
+        var goalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", true);
+        var foulDefId = await SeedEventDefinitionAsync(context.SportId, "Foul", false);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/eventdefinitions");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionForMatchResponse>>();
+
+        result.Should().NotBeNull();
+        var definitions = result!.ToList();
+        definitions.Should().HaveCount(2);
+        definitions.Should().Contain(d => d.Id == goalDefId && d.Name == "Goal" && d.IsPositive);
+        definitions.Should().Contain(d => d.Id == foulDefId && d.Name == "Foul" && !d.IsPositive);
+        definitions.Should().OnlyContain(d => d.SportId == context.SportId);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetEventDefinitionsForMatch"/> 
+    /// returns 200 OK with an empty collection when no event definitions exist for the match's sport.
+    /// </summary>
+    [Fact]
+    public async Task GetEventDefinitionsForMatch_ShouldReturnOkWithEmptyList_WhenNoDefinitionsExistForSport()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-EVDEF-02");
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/eventdefinitions");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionForMatchResponse>>();
+
+        result.Should().NotBeNull();
+        result.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetEventDefinitionsForMatch"/> 
+    /// returns 200 OK with an empty collection when the specified match identifier does not exist.
+    /// </summary>
+    [Fact]
+    public async Task GetEventDefinitionsForMatch_ShouldReturnOkWithEmptyList_WhenMatchDoesNotExist()
+    {
+        // Arrange
+        var nonExistentMatchId = Guid.NewGuid();
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{nonExistentMatchId}/eventdefinitions");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionForMatchResponse>>();
+
+        result.Should().NotBeNull();
+        result.Should().BeEmpty();
     }
 
     #endregion

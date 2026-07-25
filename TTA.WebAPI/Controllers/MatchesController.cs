@@ -2,6 +2,8 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TTA.BusinessLogic.Features.EventDefinitions.DTOs;
+using TTA.BusinessLogic.Features.EventDefinitions.Queries;
 using TTA.BusinessLogic.Features.GameEvents.Commands;
 using TTA.BusinessLogic.Features.GameEvents.DTOs;
 using TTA.BusinessLogic.Features.GameEvents.Queries;
@@ -287,6 +289,24 @@ public class MatchesController(
     // ==========================================================================================
     // Game Events section
     // ==========================================================================================
+
+    /// <summary>
+    /// Retrieves all game event definitions for the sport associated with a specific match.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A collection of event definitions allowed for the match.</returns>
+    /// <response code="200">Returns the list of event definitions (or an empty list if none exist/match not found).</response>
+    [AllowAnonymous]
+    [HttpGet("{matchId:guid}/eventdefinitions")]
+    [ProducesResponseType(typeof(IEnumerable<EventDefinitionForMatchResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetEventDefinitionsForMatch([FromRoute] Guid matchId, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Retrieving event definitions for match {MatchId}.", matchId);
+        var result = await _mediator.Send(new GetEventDefinitionsForMatchQuery(matchId), cancellationToken);
+
+        return Ok(result);
+    }
 
     /// <summary>
     /// Retrieves the chronological timeline of all game events for a specific match.
