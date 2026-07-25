@@ -291,6 +291,18 @@ public static class SqlStatements
     }
 
     /// <summary>
+    /// SQL constants for Event Definition related database operations.
+    /// </summary>
+    public static class ForEventDefinitions
+    {
+        /// <summary>
+        /// Invokes the storage function to retrieve all event definitions associated with the sport of a specific match.
+        /// </summary>
+        public const string GetMatchEventDefinitions =
+            "SELECT * FROM public.get_match_event_definitions(@p_match_id);";
+    }
+
+    /// <summary>
     /// SQL command constants for Game Events related operations.
     /// These constants invoke storage functions defined in the public schema.
     /// </summary>

@@ -171,6 +171,7 @@ public static class Startup
         services.AddScoped<IGameEventRepository, GameEventRepository>();
         services.AddScoped<ITimeAnchorRepository, TimeAnchorRepository>();
         services.AddScoped<IPlayerPresenceRepository, PlayerPresenceRepository>();
+        services.AddScoped<IEventDefinitionRepository, EventDefinitionRepository>();
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 

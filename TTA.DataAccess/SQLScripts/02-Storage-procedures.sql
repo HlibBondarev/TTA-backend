@@ -1104,6 +1104,40 @@ BEGIN
     );
 END;$$ LANGUAGE plpgsql;
 
+-- =============================================================
+-- EVENT DEFINITION STORED FUNCTIONS
+-- =============================================================
+
+/**********************************************************************************
+ * Retrieves all game event definitions for a specific match.
+ * Resolves the sport context via matches -> tournaments -> eventdefinitions.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_event_definitions(
+    p_match_id UUID
+)
+RETURNS TABLE (
+    id UUID,
+    sportid UUID,
+    name VARCHAR,
+    shortname VARCHAR,
+    ispositive BOOLEAN,
+    createdat TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        ed.id,
+        ed.sportid,
+        ed.name,
+        ed.shortname,
+        ed.ispositive,
+        ed.createdat
+    FROM public.eventdefinitions ed
+    INNER JOIN public.tournaments t ON ed.sportid = t.sportid
+    INNER JOIN public.matches m ON t.id = m.tournamentid
+    WHERE m.id = p_match_id
+    ORDER BY ed.name ASC;
+END;$$ LANGUAGE plpgsql;
 
 -- =============================================================
 -- GAME EVENTS STORED FUNCTIONS
