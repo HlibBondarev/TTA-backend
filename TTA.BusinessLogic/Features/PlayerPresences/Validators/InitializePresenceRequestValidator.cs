@@ -17,12 +17,25 @@ public class InitializePresenceRequestValidator : AbstractValidator<InitializePr
         RuleFor(x => x.PeriodNumber)
             .GreaterThan(0).WithMessage("Period number must be greater than zero.");
 
-        RuleFor(x => x.PlayerLineupIds)
-            .Cascade(CascadeMode.Stop) // Stop validation if previous rules fail (e.g. if null/empty)
-            .NotEmpty().WithMessage("At least one player lineup identifier must be provided for initialization.")
-            .Must(ids => ids.Distinct().Count() == ids.Count()).WithMessage("Player lineup identifiers must be unique.");
+        RuleFor(x => x.TimeIn)
+            .NotEmpty().WithMessage("TimeIn timestamp must be specified.");
 
-        RuleForEach(x => x.PlayerLineupIds)
-            .NotEmpty().WithMessage("Player lineup identifiers cannot be empty GUIDs.");
+        RuleFor(x => x.PresenceItems)
+            .Cascade(CascadeMode.Stop)
+            .NotEmpty().WithMessage("At least one player presence item must be provided for initialization.")
+            .Must(items => items.Select(i => i.MatchLineupId).Distinct().Count() == items.Count())
+            .WithMessage("Player lineup identifiers must be unique within the request.")
+            .Must(items => items.Select(i => i.Id).Distinct().Count() == items.Count())
+            .WithMessage("Presence identifiers must be unique within the request.");
+
+        RuleForEach(x => x.PresenceItems)
+            .ChildRules(item =>
+            {
+                item.RuleFor(i => i.Id)
+                    .NotEmpty().WithMessage("Presence identifier cannot be an empty GUID.");
+
+                item.RuleFor(i => i.MatchLineupId)
+                    .NotEmpty().WithMessage("Player lineup identifier cannot be an empty GUID.");
+            });
     }
 }

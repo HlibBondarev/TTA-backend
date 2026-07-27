@@ -1626,20 +1626,25 @@ BEGIN
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
- * Bulk inserts presence records (TimeIn) for an explicit list of player lineup IDs
- * who are starting a specific match period (Handles both Period 1 and periods > 1).
- * Deduplicates the input array to prevent duplicate presence records.
+ * Bulk inserts presence records with client-generated IDs and TimeIn timestamp.
+ * Deduplicates the input array by lineup ID to prevent duplicate active records.
+ * Handles idempotency via ON CONFLICT (id) DO NOTHING.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.init_period_presence(
     p_period_number INT,
     p_time_in TIMESTAMPTZ,
+    p_ids UUID[],
     p_lineup_ids UUID[]
 )
 RETURNS VOID AS $$
 BEGIN
     INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein)
-    SELECT gen_random_uuid(), unique_lineup_id, p_period_number, p_time_in
-    FROM (SELECT DISTINCT unnest(p_lineup_ids) AS unique_lineup_id) AS distinct_lineups;
+    SELECT item.id, item.lineup_id, p_period_number, p_time_in
+    FROM (
+        SELECT DISTINCT ON (lineup_id) id, lineup_id
+        FROM unnest(p_ids, p_lineup_ids) AS t(id, lineup_id)
+    ) AS item
+    ON CONFLICT (id) DO NOTHING;
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************

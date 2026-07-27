@@ -37,13 +37,17 @@ public interface IPlayerPresenceRepository : IEntityRepositoryBase<Guid, PlayerP
     Task<IEnumerable<PlayerPresence>> GetMatchPresenceAsync(Guid matchId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Bulk inserts presence records for an explicit array of player lineup IDs starting the period.
+    /// Bulk inserts presence records using client-generated identifiers and explicit entry timestamps.
     /// </summary>
     /// <param name="periodNumber">The specific match period sequence number being initialized.</param>
-    /// <param name="timeIn">The exact UTC timestamp marking when the period started and players entered the field.</param>
-    /// <param name="lineupIds">The collection of unique player lineup identifiers for the active players starting this period.</param>
+    /// <param name="timeIn">The exact UTC timestamp marking when players entered the field.</param>
+    /// <param name="presences">Collection of tuples containing client-generated presence IDs and match lineup IDs.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests during the asynchronous operation.</param>
-    Task InitializePeriodPresenceAsync(int periodNumber, DateTime timeIn, IEnumerable<Guid> lineupIds, CancellationToken cancellationToken = default);
+    Task InitializePeriodPresenceAsync(
+        int periodNumber,
+        DateTime timeIn,
+        IEnumerable<(Guid Id, Guid LineupId)> presences,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Updates the timeout column for all active presence records within the specified match and period scope.

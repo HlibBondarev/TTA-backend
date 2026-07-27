@@ -74,12 +74,19 @@ public class PlayerPresenceRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
-    public async Task InitializePeriodPresenceAsync(int periodNumber, DateTime timeIn, IEnumerable<Guid> lineupIds, CancellationToken cancellationToken = default)
+    public async Task InitializePeriodPresenceAsync(
+        int periodNumber,
+        DateTime timeIn,
+        IEnumerable<(Guid Id, Guid LineupId)> presences,
+        CancellationToken cancellationToken = default)
     {
+        var presenceList = presences.ToList();
+
         var parameters = new DynamicParameters();
         parameters.Add("p_period_number", periodNumber);
         parameters.Add("p_time_in", timeIn);
-        parameters.Add("p_lineup_ids", lineupIds.ToArray()); // Dapper maps IEnumerable to PostgreSQL array automatically
+        parameters.Add("p_ids", presenceList.Select(x => x.Id).ToArray());
+        parameters.Add("p_lineup_ids", presenceList.Select(x => x.LineupId).ToArray());
 
         using var connection = await OpenConnectionAsync(cancellationToken);
         await connection.ExecuteAsync(new CommandDefinition(
