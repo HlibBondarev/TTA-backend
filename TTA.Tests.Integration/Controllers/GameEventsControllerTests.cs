@@ -210,8 +210,8 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
         // 8. Lineup
         var lineupId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
-            INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) 
-            VALUES (@id, @mId, @rId, 10, true, @posId)",
+            INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) 
+            VALUES (@id, @mId, @rId, 10, @posId)",
             new { id = lineupId, mId = matchId, rId = rosterId, posId });
 
         // 9. Event Definition & Game Event

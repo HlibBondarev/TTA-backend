@@ -47,7 +47,6 @@ public class GetMatchLineupByIdHandler(
             FirstName: result.firstname,
             LastName: result.lastname,
             Number: result.number,
-            IsInStartingLineup: result.isinstartinglineup,
             PositionId: result.positionid,
             PositionName: result.positionname
         );

@@ -51,7 +51,6 @@ public class GetMatchLineupHandler(
             FirstName: row.firstname,
             LastName: row.lastname,
             Number: row.number,
-            IsInStartingLineup: row.isinstartinglineup,
             PositionId: row.positionid,
             PositionName: row.positionname
         )).ToList();

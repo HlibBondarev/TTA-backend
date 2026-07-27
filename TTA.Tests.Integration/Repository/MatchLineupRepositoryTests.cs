@@ -42,7 +42,6 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             MatchId = matchId,
             PlayerRosterId = playerRosterId,
             Number = 10,
-            IsInStartingLineup = true,
             PositionId = positionId
         };
 
@@ -69,21 +68,18 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             MatchId = matchId,
             PlayerRosterId = playerRosterId,
             Number = 5,
-            IsInStartingLineup = true,
             PositionId = positionId
         };
         await _repository.UpsertLineupItemAsync(lineup);
 
         // Act
         lineup.Number = 11;
-        lineup.IsInStartingLineup = false;
         var result = await _repository.UpsertLineupItemAsync(lineup);
 
         // Assert
         result.Number.Should().Be(11);
         var fromDb = await _repository.GetByIdAsync(id);
         fromDb!.Number.Should().Be(11);
-        fromDb.IsInStartingLineup.Should().BeFalse();
     }
 
     #endregion
@@ -104,7 +100,6 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             MatchId = matchId,
             PlayerRosterId = playerRosterId,
             Number = 7,
-            IsInStartingLineup = true,
             PositionId = positionId
         });
 
@@ -133,7 +128,6 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             MatchId = matchId,
             PlayerRosterId = playerRosterId,
             Number = 22,
-            IsInStartingLineup = true,
             PositionId = positionId
         });
 
@@ -162,7 +156,6 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             PlayerRosterId = playerRosterId,
             PositionId = positionId,
             Number = 1,
-            IsInStartingLineup = true
         });
 
         // Act
@@ -195,7 +188,6 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             PlayerRosterId = playerRosterId,
             PositionId = positionId,
             Number = 99,
-            IsInStartingLineup = false
         });
 
         // Act
@@ -277,7 +269,6 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             PlayerRosterId = playerRosterId,
             PositionId = positionId,
             Number = 10,
-            IsInStartingLineup = true
         });
 
         // Seed a game event linked to this lineup item using corrected schema
@@ -308,7 +299,6 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             PlayerRosterId = playerRosterId,
             PositionId = positionId,
             Number = 10,
-            IsInStartingLineup = true
         });
 
         // Act

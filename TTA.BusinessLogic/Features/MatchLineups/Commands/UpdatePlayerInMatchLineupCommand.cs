@@ -9,12 +9,10 @@ namespace TTA.BusinessLogic.Features.MatchLineups.Commands;
 /// </summary>
 /// <param name="Id">The unique identifier of the existing lineup entry.</param>
 /// <param name="Number">The updated jersey number.</param>
-/// <param name="IsInStartingLineup">The updated starting lineup status.</param>
 /// <param name="PositionId">The updated position identifier.</param>
 public record UpdatePlayerInMatchLineupCommand(
     Guid Id,
     int Number,
-    bool IsInStartingLineup,
     Guid PositionId) : IRequest<Guid>;
 
 /// <summary>
@@ -31,7 +29,6 @@ public static class UpdateMatchLineupCommandExtensions
     public static MatchLineup SetToModel(this UpdatePlayerInMatchLineupCommand cmd, MatchLineup model)
     {
         model.Number = cmd.Number;
-        model.IsInStartingLineup = cmd.IsInStartingLineup;
         model.PositionId = cmd.PositionId;
 
         return model;

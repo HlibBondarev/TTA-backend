@@ -247,7 +247,7 @@ public static class SqlStatements
         /// </summary>
         public const string UpsertLineupItem = @"
             SELECT * FROM public.upsert_match_lineup(
-                @Id, @MatchId, @PlayerRosterId, @Number, @IsInStartingLineup, @PositionId
+                @Id, @MatchId, @PlayerRosterId, @Number, @PositionId
             );";
 
         /// <summary>

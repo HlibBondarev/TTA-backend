@@ -322,8 +322,8 @@ public class GameEventRepositoryTests : BaseIntegrationTest
 
         var lineupId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
-            INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) 
-            VALUES (@id, @mid, @rid, 10, true, @posid)",
+            INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) 
+            VALUES (@id, @mid, @rid, 10, @posid)",
             new { id = lineupId, mid = matchId, rid = rosterId, posid = posId });
 
         var defId = Guid.Parse("44444444-4444-4444-4444-444444444444");

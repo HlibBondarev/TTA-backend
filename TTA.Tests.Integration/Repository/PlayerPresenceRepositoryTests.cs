@@ -550,8 +550,8 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
 
         var lineupId1 = Guid.NewGuid();
         var lineupId2 = Guid.NewGuid();
-        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) VALUES (@id, @mid, @rid, 1, true, @posid)", new { id = lineupId1, mid = matchId, rid = rosterId1, posid = posId });
-        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) VALUES (@id, @mid, @rid, 2, true, @posid)", new { id = lineupId2, mid = matchId, rid = rosterId2, posid = posId });
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 1, @posid)", new { id = lineupId1, mid = matchId, rid = rosterId1, posid = posId });
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 2, @posid)", new { id = lineupId2, mid = matchId, rid = rosterId2, posid = posId });
 
         return (matchId, lineupId1, lineupId2);
     }

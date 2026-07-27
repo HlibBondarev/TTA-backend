@@ -386,20 +386,6 @@ public class MatchLineupTests
     }
 
     [Fact]
-    public void MatchLineup_IsInStartingLineup_DefaultsToFalse()
-    {
-        var lineup = new MatchLineup();
-        Assert.False(lineup.IsInStartingLineup);
-    }
-
-    [Fact]
-    public void MatchLineup_IsInStartingLineup_CanBeSetToTrue()
-    {
-        var lineup = new MatchLineup { IsInStartingLineup = true };
-        Assert.True(lineup.IsInStartingLineup);
-    }
-
-    [Fact]
     public void MatchLineup_PositionId_CanBeSetAndRetrieved()
     {
         var posId = Guid.NewGuid();
@@ -590,14 +576,6 @@ public class PlayerPresenceTests
         var id = Guid.NewGuid();
         var presence = new PlayerPresence { Id = id };
         Assert.Equal(id, presence.Id);
-    }
-
-    [Fact]
-    public void PlayerPresence_MatchId_CanBeSetAndRetrieved()
-    {
-        var matchId = Guid.NewGuid();
-        var presence = new PlayerPresence { MatchId = matchId };
-        Assert.Equal(matchId, presence.MatchId);
     }
 
     [Fact]

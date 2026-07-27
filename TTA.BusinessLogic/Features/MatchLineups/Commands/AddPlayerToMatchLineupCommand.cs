@@ -10,13 +10,11 @@ namespace TTA.BusinessLogic.Features.MatchLineups.Commands;
 /// <param name="MatchId">The unique identifier of the match.</param>
 /// <param name="PlayerRosterId">The identifier of the player's registration in the tournament roster.</param>
 /// <param name="Number">The jersey number assigned to the player.</param>
-/// <param name="IsInStartingLineup">Indicates if the player is in the starting lineup.</param>
 /// <param name="PositionId">The unique identifier for the player's position.</param>
 public record AddPlayerToMatchLineupCommand(
     Guid MatchId,
     Guid PlayerRosterId,
     int Number,
-    bool IsInStartingLineup,
     Guid PositionId) : IRequest<Guid>;
 
 /// <summary>
@@ -35,7 +33,6 @@ public static class CreateMatchLineupCommandExtensions
         MatchId = cmd.MatchId,
         PlayerRosterId = cmd.PlayerRosterId,
         Number = cmd.Number,
-        IsInStartingLineup = cmd.IsInStartingLineup,
         PositionId = cmd.PositionId
     };
 
