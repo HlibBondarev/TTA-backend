@@ -235,7 +235,8 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="PlayerPresenceRepository.InitializePeriodPresenceAsync"/> executes a bulk insert for multiple lineup IDs.
+    /// Verifies that <see cref="PlayerPresenceRepository.InitializePeriodPresenceAsync"/> executes a bulk insert for multiple lineup IDs using client-generated presence IDs,
+    /// and operates idempotently when called multiple times with the same payload.
     /// </summary>
     [Fact]
     public async Task InitializePeriodPresenceAsync_ShouldBulkInsert_ForProvidedLineupIds()
@@ -243,16 +244,26 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         // Arrange
         var context = await SeedPresenceEnvironmentAsync();
         var exactTimeIn = DateTime.UtcNow;
-        var lineupIds = new List<Guid> { context.LineupId1, context.LineupId2 };
+        var presences = new List<(Guid Id, Guid LineupId)>
+        {
+            (Guid.NewGuid(), context.LineupId1),
+            (Guid.NewGuid(), context.LineupId2)
+        };
         var precision = TimeSpan.FromMilliseconds(500);
 
-        // Act
+        // Act - First call (initial bulk insert)
         await _repository.InitializePeriodPresenceAsync(
             periodNumber: 1,
             timeIn: exactTimeIn,
-            lineupIds: lineupIds);
+            presences: presences);
 
-        // Assert
+        // Act - Second call (idempotency verification)
+        await _repository.InitializePeriodPresenceAsync(
+            periodNumber: 1,
+            timeIn: exactTimeIn,
+            presences: presences);
+
+        // Assert - Exactly two unchanged rows should remain in the DB
         var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
 
         matchPresences.Count.Should().Be(2);
@@ -260,14 +271,16 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         // Verify Player 1 presence
         var presence1 = matchPresences.FirstOrDefault(p => p.MatchLineupId == context.LineupId1);
         presence1.Should().NotBeNull();
-        presence1!.TimeIn.Should().BeCloseTo(exactTimeIn, precision);
+        presence1!.Id.Should().Be(presences[0].Id);
+        presence1.TimeIn.Should().BeCloseTo(exactTimeIn, precision);
         presence1.TimeOut.Should().BeNull();
         presence1.PeriodNumber.Should().Be(1);
 
         // Verify Player 2 presence
         var presence2 = matchPresences.FirstOrDefault(p => p.MatchLineupId == context.LineupId2);
         presence2.Should().NotBeNull();
-        presence2!.TimeIn.Should().BeCloseTo(exactTimeIn, precision);
+        presence2!.Id.Should().Be(presences[1].Id);
+        presence2.TimeIn.Should().BeCloseTo(exactTimeIn, precision);
         presence2.TimeOut.Should().BeNull();
         presence2.PeriodNumber.Should().Be(1);
     }
@@ -282,10 +295,14 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         var context = await SeedPresenceEnvironmentAsync();
         var exactTimeIn = DateTime.UtcNow;
         var exactTimeOut = exactTimeIn.AddMinutes(15);
-        var lineupIds = new List<Guid> { context.LineupId1, context.LineupId2 };
+        var presences = new List<(Guid Id, Guid LineupId)>
+        {
+            (Guid.NewGuid(), context.LineupId1),
+            (Guid.NewGuid(), context.LineupId2)
+        };
 
         // Bulk insert two players with open sessions for Period 1
-        await _repository.InitializePeriodPresenceAsync(1, exactTimeIn, lineupIds);
+        await _repository.InitializePeriodPresenceAsync(1, exactTimeIn, presences);
 
         // Insert a third record that is already CLOSED (TimeOut is not null) - should not be modified
         var closedPresenceId = Guid.NewGuid();

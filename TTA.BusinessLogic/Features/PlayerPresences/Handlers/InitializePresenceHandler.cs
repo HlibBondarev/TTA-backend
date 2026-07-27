@@ -33,7 +33,7 @@ public class InitializePresenceHandler(
     public async Task Handle(InitializePresenceCommand request, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Initializing presence for {Count} players in Match {MatchId}, Period {Period}.",
-            request.PlayerLineupIds.Count(), request.MatchId, request.PeriodNumber);
+            request.PresenceItems.Count(), request.MatchId, request.PeriodNumber);
 
         var match = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken);
         if (match == null)
@@ -41,14 +41,12 @@ public class InitializePresenceHandler(
             throw new NotFoundException($"Match with ID {request.MatchId} was not found.");
         }
 
-        var exactStartTime = DateTime.UtcNow;
-
         try
         {
             await _playerPresenceRepository.InitializePeriodPresenceAsync(
                 request.PeriodNumber,
-                exactStartTime,
-                request.PlayerLineupIds,
+                request.TimeIn,
+                request.PresenceItems.Select(x => (x.Id, x.MatchLineupId)),
                 cancellationToken);
         }
         catch (PostgresException ex) when (ex.SqlState == "23503")

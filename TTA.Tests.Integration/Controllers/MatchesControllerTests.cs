@@ -12,6 +12,7 @@ using TTA.BusinessLogic.Features.MatchLineups.DTOs;
 using TTA.BusinessLogic.Features.PlayerPresences.DTOs;
 using TTA.BusinessLogic.Features.TimeAnchors.DTOs;
 using TTA.DataAccess.Enums;
+using TTA.DataAccess.Models;
 using TTA.Tests.Integration.Infrastructure;
 using Xunit.Abstractions;
 
@@ -899,17 +900,25 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.InitializePeriodPresence"/> returns HTTP 204 No Content 
-    /// when an authorized user submits a valid bulk starting lineup initialization request.
+    /// when an authorized user submits a valid bulk starting lineup initialization request, and persists exact client IDs and timestamps.
     /// </summary>
     [Fact]
     public async Task InitializePeriodPresence_ShouldReturnNoContent_WhenRequestIsValidAndUserHasAccess()
     {
         // Arrange
         var context = await SetupPresenceMatchContextAsync(TestUserId);
+        var presenceId1 = Guid.NewGuid();
+        var presenceId2 = Guid.NewGuid();
+        var timeIn = DateTime.UtcNow;
 
         var request = new InitializePresenceRequest(
             PeriodNumber: 1,
-            PlayerLineupIds: new List<Guid> { context.LineupId1, context.LineupId2 }
+            TimeIn: timeIn,
+            PresenceItems: new List<PlayerPresenceItemDto>
+            {
+                new(presenceId1, context.LineupId1),
+                new(presenceId2, context.LineupId2)
+            }
         );
 
         // Act
@@ -918,12 +927,23 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
-        // Secondary DB verify check
+        // Secondary DB verify check asserting exact client-supplied IDs and TimeIn
         using var conn = Fixture.ConnectionFactory.CreateConnection();
-        var counts = await conn.QuerySingleAsync<int>(
-            "SELECT COUNT(1) FROM public.playerpresences WHERE periodnumber = 1 AND matchlineupid IN (@id1, @id2)",
-            new { id1 = context.LineupId1, id2 = context.LineupId2 });
-        counts.Should().Be(2);
+        var matchPresences = (await conn.QueryAsync<PlayerPresence>(
+            "SELECT id, matchlineupid, periodnumber, timein FROM public.playerpresences WHERE periodnumber = 1 AND matchlineupid IN (@id1, @id2)",
+            new { id1 = context.LineupId1, id2 = context.LineupId2 })).ToList();
+
+        matchPresences.Should().HaveCount(2);
+
+        var presence1 = matchPresences.FirstOrDefault(x => x.Id == presenceId1);
+        presence1.Should().NotBeNull();
+        presence1!.MatchLineupId.Should().Be(context.LineupId1);
+        presence1.TimeIn.Should().BeCloseTo(timeIn, TimeSpan.FromMilliseconds(500));
+
+        var presence2 = matchPresences.FirstOrDefault(x => x.Id == presenceId2);
+        presence2.Should().NotBeNull();
+        presence2!.MatchLineupId.Should().Be(context.LineupId2);
+        presence2.TimeIn.Should().BeCloseTo(timeIn, TimeSpan.FromMilliseconds(500));
     }
 
     /// <summary>

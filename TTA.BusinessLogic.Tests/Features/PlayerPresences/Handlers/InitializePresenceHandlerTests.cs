@@ -47,7 +47,14 @@ public class InitializePresenceHandlerTests
     public async Task Handle_Should_InitializePresence_When_RequestIsValid()
     {
         // Arrange
-        var command = new InitializePresenceCommand(Guid.NewGuid(), 1, new List<Guid> { Guid.NewGuid(), Guid.NewGuid() });
+        var presenceItems = new List<PlayerPresenceItem>
+        {
+            new(Guid.NewGuid(), Guid.NewGuid()),
+            new(Guid.NewGuid(), Guid.NewGuid())
+        };
+        var expectedPresences = presenceItems.Select(x => (x.Id, x.MatchLineupId)).ToList();
+        var timeIn = DateTime.UtcNow.AddMinutes(-10);
+        var command = new InitializePresenceCommand(Guid.NewGuid(), 1, timeIn, presenceItems);
         var match = new Match { Id = command.MatchId };
 
         _matchRepositoryMock
@@ -57,8 +64,8 @@ public class InitializePresenceHandlerTests
         _playerPresenceRepositoryMock
             .Setup(r => r.InitializePeriodPresenceAsync(
                 command.PeriodNumber,
-                It.IsAny<DateTime>(),
-                command.PlayerLineupIds,
+                command.TimeIn,
+                It.IsAny<IEnumerable<(Guid Id, Guid LineupId)>>(),
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -71,8 +78,8 @@ public class InitializePresenceHandlerTests
         _matchRepositoryMock.Verify(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()), Times.Once);
         _playerPresenceRepositoryMock.Verify(r => r.InitializePeriodPresenceAsync(
             command.PeriodNumber,
-            It.IsAny<DateTime>(),
-            command.PlayerLineupIds,
+            command.TimeIn,
+            It.Is<IEnumerable<(Guid Id, Guid LineupId)>>(p => p.SequenceEqual(expectedPresences)),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -83,7 +90,8 @@ public class InitializePresenceHandlerTests
     public async Task Handle_Should_Throw_NotFoundException_When_MatchDoesNotExist()
     {
         // Arrange
-        var command = new InitializePresenceCommand(Guid.NewGuid(), 1, new List<Guid> { Guid.NewGuid() });
+        var presenceItems = new List<PlayerPresenceItem> { new(Guid.NewGuid(), Guid.NewGuid()) };
+        var command = new InitializePresenceCommand(Guid.NewGuid(), 1, DateTime.UtcNow, presenceItems);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
@@ -100,7 +108,7 @@ public class InitializePresenceHandlerTests
         _playerPresenceRepositoryMock.Verify(r => r.InitializePeriodPresenceAsync(
             It.IsAny<int>(),
             It.IsAny<DateTime>(),
-            It.IsAny<IEnumerable<Guid>>(),
+            It.IsAny<IEnumerable<(Guid Id, Guid LineupId)>>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -112,7 +120,8 @@ public class InitializePresenceHandlerTests
     public async Task Handle_Should_Throw_ConflictException_When_DatabaseThrowsForeignKeyViolation()
     {
         // Arrange
-        var command = new InitializePresenceCommand(Guid.NewGuid(), 1, new List<Guid> { Guid.NewGuid() });
+        var presenceItems = new List<PlayerPresenceItem> { new(Guid.NewGuid(), Guid.NewGuid()) };
+        var command = new InitializePresenceCommand(Guid.NewGuid(), 1, DateTime.UtcNow, presenceItems);
         var match = new Match { Id = command.MatchId };
 
         // Simulating foreign key violation (SqlState 23503)
@@ -125,8 +134,8 @@ public class InitializePresenceHandlerTests
         _playerPresenceRepositoryMock
             .Setup(r => r.InitializePeriodPresenceAsync(
                 command.PeriodNumber,
-                It.IsAny<DateTime>(),
-                command.PlayerLineupIds,
+                command.TimeIn,
+                It.IsAny<IEnumerable<(Guid Id, Guid LineupId)>>(),
                 It.IsAny<CancellationToken>()))
             .ThrowsAsync(pgException);
 

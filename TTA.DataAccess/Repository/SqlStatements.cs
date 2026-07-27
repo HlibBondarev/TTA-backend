@@ -428,10 +428,10 @@ public static class SqlStatements
             "SELECT * FROM public.get_match_presence(@p_match_id);";
 
         /// <summary>
-        /// Invokes the storage function to bulk insert explicit lineup IDs for the period start.
+        /// Invokes the storage function to bulk insert explicit client presence IDs and lineup IDs for period start.
         /// </summary>
         public const string InitializePeriodPresence =
-            "SELECT public.init_period_presence(@p_period_number, @p_time_in, @p_lineup_ids);";
+            "SELECT public.init_period_presence(@p_period_number, @p_time_in, @p_ids, @p_lineup_ids);";
 
         /// <summary>
         /// Invokes the storage function to automatically set the timeout for all active players when a period finishes.
