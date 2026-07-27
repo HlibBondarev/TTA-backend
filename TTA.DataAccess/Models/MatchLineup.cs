@@ -29,11 +29,6 @@ public class MatchLineup : IKeyedEntity<Guid>
     public int Number { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether the player is in the starting lineup.
-    /// </summary>
-    public bool IsInStartingLineup { get; set; }
-
-    /// <summary>
     /// Gets or sets the position identifier for the player in this match.
     /// </summary>
     public Guid PositionId { get; set; }

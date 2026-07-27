@@ -503,13 +503,6 @@ BEGIN
     PERFORM public.copy_team_roster_to_match_lineup(v_match_id, v_team_home, v_home_players);
     PERFORM public.copy_team_roster_to_match_lineup(v_match_id, v_team_guest, v_guest_players);
 
-    -- Set starting 7
-    UPDATE public.matchlineups 
-    SET isinstartinglineup = true 
-    WHERE matchid = v_match_id 
-      AND number > 0
-      AND number <= 7;
-
     RAISE NOTICE 'Lineups for match % initialized with specific selection.', v_match_id;
 END $$;
 

@@ -138,7 +138,7 @@ public class UpdatePlayerInMatchLineupHandlerTests
     /// Creates a standard <see cref="UpdatePlayerInMatchLineupCommand"/> for testing purposes.
     /// </summary>
     private static UpdatePlayerInMatchLineupCommand CreateCommand() =>
-        new(Guid.NewGuid(), 10, true, Guid.NewGuid());
+        new(Guid.NewGuid(), 10, Guid.NewGuid());
 
     /// <summary>
     /// Helper method to create a <see cref="PostgresException"/> with a specific SQL state.

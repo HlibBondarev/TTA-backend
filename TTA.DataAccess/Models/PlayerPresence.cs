@@ -14,11 +14,6 @@ public class PlayerPresence : IKeyedEntity<Guid>
     public Guid Id { get; set; }
 
     /// <summary>
-    /// Gets or sets the match identifier.
-    /// </summary>
-    public Guid MatchId { get; set; }
-
-    /// <summary>
     /// Gets or sets the identifier of the player's entry in the match protocol.
     /// Links this presence to a specific player in the match lineup.
     /// </summary>

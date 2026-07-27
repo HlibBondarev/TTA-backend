@@ -128,7 +128,7 @@ public class AddPlayerToMatchLineupHandlerTests
     /// Creates a default command instance for testing.
     /// </summary>
     private static AddPlayerToMatchLineupCommand CreateCommand() =>
-        new(Guid.NewGuid(), Guid.NewGuid(), 10, true, Guid.NewGuid());
+        new(Guid.NewGuid(), Guid.NewGuid(), 10, Guid.NewGuid());
 
     /// <summary>
     /// Factory method to create a <see cref="PostgresException"/> for simulation.

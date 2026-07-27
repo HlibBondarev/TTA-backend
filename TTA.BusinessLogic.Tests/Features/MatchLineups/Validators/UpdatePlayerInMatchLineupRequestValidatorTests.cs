@@ -24,7 +24,7 @@ public class UpdatePlayerInMatchLineupRequestValidatorTests
     public void Should_Have_Error_When_PositionId_Is_Empty()
     {
         // Arrange
-        var request = new UpdatePlayerInMatchLineupRequest(10, true, Guid.Empty);
+        var request = new UpdatePlayerInMatchLineupRequest(10, Guid.Empty);
 
         // Act
         var result = _validator.TestValidate(request);
@@ -43,7 +43,7 @@ public class UpdatePlayerInMatchLineupRequestValidatorTests
     public void Should_Have_Error_When_Number_Is_Out_Of_Range(int invalidNumber)
     {
         // Arrange
-        var request = new UpdatePlayerInMatchLineupRequest(invalidNumber, true, Guid.NewGuid());
+        var request = new UpdatePlayerInMatchLineupRequest(invalidNumber, Guid.NewGuid());
 
         // Act
         var result = _validator.TestValidate(request);
@@ -63,7 +63,7 @@ public class UpdatePlayerInMatchLineupRequestValidatorTests
     public void Should_Not_Have_Error_When_Number_Is_Within_Range(int validNumber)
     {
         // Arrange
-        var request = new UpdatePlayerInMatchLineupRequest(validNumber, true, Guid.NewGuid());
+        var request = new UpdatePlayerInMatchLineupRequest(validNumber, Guid.NewGuid());
 
         // Act
         var result = _validator.TestValidate(request);
@@ -79,7 +79,7 @@ public class UpdatePlayerInMatchLineupRequestValidatorTests
     public void Should_Not_Have_Error_When_Request_Is_Valid()
     {
         // Arrange
-        var request = new UpdatePlayerInMatchLineupRequest(11, true, Guid.NewGuid());
+        var request = new UpdatePlayerInMatchLineupRequest(11, Guid.NewGuid());
 
         // Act
         var result = _validator.TestValidate(request);

@@ -68,7 +68,6 @@ public class MatchLineupsControllerTests(DatabaseFixture fixture, ITestOutputHel
 
         var request = new UpdatePlayerInMatchLineupRequest(
             Number: 99,
-            IsInStartingLineup: false,
             PositionId: context.PositionId
         );
 
@@ -91,7 +90,7 @@ public class MatchLineupsControllerTests(DatabaseFixture fixture, ITestOutputHel
         var context = await SetupMatchContextAsync("auth0|someone-else");
         var entryId = await SeedMatchLineupEntryAsync(context.MatchId, context.RosterId, context.PositionId);
 
-        var request = new UpdatePlayerInMatchLineupRequest(7, true, context.PositionId);
+        var request = new UpdatePlayerInMatchLineupRequest(7, context.PositionId);
 
         // Act
         var response = await Client.PutAsJsonAsync($"{BaseUrl}/{entryId}", request);
@@ -158,8 +157,8 @@ public class MatchLineupsControllerTests(DatabaseFixture fixture, ITestOutputHel
         await conn.OpenAsync();
         var id = Guid.NewGuid();
         const string sql = @"
-            INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid)
-            VALUES (@id, @mId, @rId, 10, true, @pId)";
+            INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid)
+            VALUES (@id, @mId, @rId, 10, @pId)";
 
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", id);

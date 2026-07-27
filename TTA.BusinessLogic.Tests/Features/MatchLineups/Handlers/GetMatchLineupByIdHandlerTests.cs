@@ -64,8 +64,6 @@ public class GetMatchLineupByIdHandlerTests
         result.FirstName.Should().Be("John");
         result.LastName.Should().Be("Doe");
         result.PositionName.Should().Be("Forward");
-        result.IsInStartingLineup.Should().BeTrue();
-
         _matchLineupRepoMock.Verify(x => x.GetMatchLineupByIdWithDetailsAsync(query.Id, It.IsAny<CancellationToken>()), Times.Once);
     }
 

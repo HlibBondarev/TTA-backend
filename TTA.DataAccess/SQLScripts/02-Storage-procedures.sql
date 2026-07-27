@@ -817,8 +817,7 @@ $$ LANGUAGE plpgsql;
 /*****************************************************************************
  * Trigger function to automatically create team placeholders in matchlineups
  *****************************************************************************/
-
--- We create two records so that team-specific events (like timeouts) can be attributed correctly
+ -- We create two records so that team-specific events (like timeouts) can be attributed correctly
 CREATE OR REPLACE FUNCTION public.fn_create_team_placeholders()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -829,12 +828,12 @@ DECLARE
     c_guest_placeholder CONSTANT INT := -2;
 BEGIN
     -- Placeholder for Home Team
-    INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid)
-    VALUES (gen_random_uuid(), NEW.id, NULL, c_home_placeholder, false, NULL);
+    INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid)
+    VALUES (gen_random_uuid(), NEW.id, NULL, c_home_placeholder, NULL);
 
     -- Placeholder for Guest Team
-    INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid)
-    VALUES (gen_random_uuid(), NEW.id, NULL, c_guest_placeholder, false, NULL);
+    INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid)
+    VALUES (gen_random_uuid(), NEW.id, NULL, c_guest_placeholder, NULL);
 
     RETURN NEW;
 END;
@@ -857,7 +856,6 @@ CREATE OR REPLACE FUNCTION public.upsert_match_lineup(
     p_matchid UUID,
     p_playerrosterid UUID,
     p_number INT,
-    p_isinstartinglineup BOOLEAN,
     p_positionid UUID
 )
 RETURNS SETOF public.matchlineups AS $$
@@ -913,14 +911,13 @@ BEGIN
     -- 5. Atomic Upsert
     RETURN QUERY
     INSERT INTO public.matchlineups (
-        id, matchid, playerrosterid, number, isinstartinglineup, positionid
+        id, matchid, playerrosterid, number, positionid
     )
     VALUES (
-        v_final_id, p_matchid, p_playerrosterid, p_number, p_isinstartinglineup, p_positionid
+        v_final_id, p_matchid, p_playerrosterid, p_number, p_positionid
     )
     ON CONFLICT (id) DO UPDATE SET
         number = EXCLUDED.number,
-        isinstartinglineup = EXCLUDED.isinstartinglineup,
         positionid = EXCLUDED.positionid
     RETURNING *;
 END;$$ LANGUAGE plpgsql;
@@ -937,7 +934,6 @@ RETURNS TABLE (
     firstname VARCHAR,
     lastname VARCHAR,
     number INT,
-    isinstartinglineup BOOLEAN,
     positionid UUID,
     positionname VARCHAR
 ) AS $$
@@ -945,7 +941,7 @@ BEGIN
     RETURN QUERY
     SELECT 
         ml.id, ml.matchid, pr.teamid, ml.playerrosterid,
-        p.firstname, p.lastname, ml.number, ml.isinstartinglineup,
+        p.firstname, p.lastname, ml.number,
         ml.positionid, ppd.name
     FROM public.matchlineups ml
     JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
@@ -1031,14 +1027,13 @@ BEGIN
 
     -- 5. Bulk insert from the provided array
     INSERT INTO public.matchlineups (
-        id, matchid, playerrosterid, number, isinstartinglineup, positionid
+        id, matchid, playerrosterid, number, positionid
     )
     SELECT 
         gen_random_uuid(), 
         p_matchid, 
         pr.id, 
         pr.number, 
-        FALSE, 
         pr.positionid 
     FROM public.playerrosters pr
     WHERE pr.id = ANY(p_player_roster_ids)
@@ -1073,7 +1068,6 @@ RETURNS TABLE (
     firstname VARCHAR,
     lastname VARCHAR,
     number INT,
-    isinstartinglineup BOOLEAN,
     positionid UUID,
     positionname VARCHAR
 ) AS $$
@@ -1081,7 +1075,7 @@ BEGIN
     RETURN QUERY
     SELECT 
         ml.id, ml.matchid, pr.teamid, ml.playerrosterid,
-        p.firstname, p.lastname, ml.number, ml.isinstartinglineup,
+        p.firstname, p.lastname, ml.number,
         ml.positionid, ppd.name
     FROM public.matchlineups ml
     JOIN public.playerrosters pr ON ml.playerrosterid = pr.id

@@ -10,7 +10,6 @@
 /// <param name="FirstName">The player's first name.</param>
 /// <param name="LastName">The player's last name.</param>
 /// <param name="Number">The jersey number assigned for this match.</param>
-/// <param name="IsInStartingLineup">Indicates if the player is in the starting lineup.</param>
 /// <param name="PositionId">The identifier of the assigned position definition.</param>
 /// <param name="PositionName">The human-readable name of the position.</param>
 public record MatchLineupResponse(
@@ -21,6 +20,5 @@ public record MatchLineupResponse(
     string FirstName,
     string LastName,
     int Number,
-    bool IsInStartingLineup,
     Guid PositionId,
     string PositionName);

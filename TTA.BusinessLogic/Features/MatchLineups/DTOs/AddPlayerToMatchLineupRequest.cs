@@ -6,11 +6,9 @@ namespace TTA.BusinessLogic.Features.MatchLineups.DTOs;
 /// Data transfer object for adding a new player to the match protocol.
 /// </summary>
 /// <param name="Number">The jersey number assigned to the player.</param>
-/// <param name="IsInStartingLineup">Indicates if the player is in the starting lineup.</param>
 /// <param name="PositionId">The unique identifier for the player's position.</param>
 public record AddPlayerToMatchLineupRequest(
     int Number,
-    bool IsInStartingLineup,
     Guid PositionId);
 
 /// <summary>
@@ -29,6 +27,5 @@ public static class AddPlayerToMatchLineupRequestExtensions
          MatchId: matchId,
          PlayerRosterId: playerRosterId,
          Number: request.Number,
-         IsInStartingLineup: request.IsInStartingLineup,
          PositionId: request.PositionId);
 }

@@ -100,7 +100,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var posId = await GetFirstPositionIdAsync(context.SportId);
         var request = new AddPlayerToMatchLineupRequest(
             Number: 10,
-            IsInStartingLineup: true,
             PositionId: posId
         );
 
@@ -1161,7 +1160,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 7, @posid, NOW())", new { id = rosterId, pid = playerId, tid = tournamentId, teamid = teamId, posid = posId });
 
         var lineupId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) VALUES (@id, @mid, @rid, 7, true, @posid)", new { id = lineupId, mid = matchId, rid = rosterId, posid = posId });
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 7, @posid)", new { id = lineupId, mid = matchId, rid = rosterId, posid = posId });
 
         // 5. Setup Time Anchors for Period 1: PeriodStart (0) and PeriodEnd (1)
         // Real duration: 10 minutes (600 seconds) -> Scaling coefficient K = 8 / 10 = 0.8
@@ -1394,8 +1393,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         var lineupId1 = Guid.NewGuid();
         var lineupId2 = Guid.NewGuid();
-        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) VALUES (@id, @mid, @rid, 11, true, @posid)", new { id = lineupId1, mid = matchId, rid = rosterId1, posid = posId });
-        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) VALUES (@id, @mid, @rid, 22, true, @posid)", new { id = lineupId2, mid = matchId, rid = rosterId2, posid = posId });
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 11, @posid)", new { id = lineupId1, mid = matchId, rid = rosterId1, posid = posId });
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 22, @posid)", new { id = lineupId2, mid = matchId, rid = rosterId2, posid = posId });
 
         return (matchId, lineupId1, lineupId2);
     }
@@ -1496,8 +1495,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         var lineupId = Guid.NewGuid();
         await conn.ExecuteAsync(
-            @"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, isinstartinglineup, positionid) 
-              VALUES (@lineupId, @matchId, @rosterId, 7, true, @positionId)",
+            @"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) 
+              VALUES (@lineupId, @matchId, @rosterId, 7, @positionId)",
             new { lineupId, matchId, rosterId, positionId });
 
         return lineupId;
