@@ -52,6 +52,7 @@ public class InitializePresenceHandlerTests
             new(Guid.NewGuid(), Guid.NewGuid()),
             new(Guid.NewGuid(), Guid.NewGuid())
         };
+        var expectedPresences = presenceItems.Select(x => (x.Id, x.MatchLineupId)).ToList();
         var timeIn = DateTime.UtcNow.AddMinutes(-10);
         var command = new InitializePresenceCommand(Guid.NewGuid(), 1, timeIn, presenceItems);
         var match = new Match { Id = command.MatchId };
@@ -78,7 +79,7 @@ public class InitializePresenceHandlerTests
         _playerPresenceRepositoryMock.Verify(r => r.InitializePeriodPresenceAsync(
             command.PeriodNumber,
             command.TimeIn,
-            It.Is<IEnumerable<(Guid Id, Guid LineupId)>>(p => p.Count() == presenceItems.Count),
+            It.Is<IEnumerable<(Guid Id, Guid LineupId)>>(p => p.SequenceEqual(expectedPresences)),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

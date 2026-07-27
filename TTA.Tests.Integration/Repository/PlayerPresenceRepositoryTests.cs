@@ -235,7 +235,8 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="PlayerPresenceRepository.InitializePeriodPresenceAsync"/> executes a bulk insert for multiple lineup IDs using client-generated presence IDs.
+    /// Verifies that <see cref="PlayerPresenceRepository.InitializePeriodPresenceAsync"/> executes a bulk insert for multiple lineup IDs using client-generated presence IDs,
+    /// and operates idempotently when called multiple times with the same payload.
     /// </summary>
     [Fact]
     public async Task InitializePeriodPresenceAsync_ShouldBulkInsert_ForProvidedLineupIds()
@@ -250,13 +251,19 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         };
         var precision = TimeSpan.FromMilliseconds(500);
 
-        // Act
+        // Act - First call (initial bulk insert)
         await _repository.InitializePeriodPresenceAsync(
             periodNumber: 1,
             timeIn: exactTimeIn,
             presences: presences);
 
-        // Assert
+        // Act - Second call (idempotency verification)
+        await _repository.InitializePeriodPresenceAsync(
+            periodNumber: 1,
+            timeIn: exactTimeIn,
+            presences: presences);
+
+        // Assert - Exactly two unchanged rows should remain in the DB
         var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
 
         matchPresences.Count.Should().Be(2);
