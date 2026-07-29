@@ -10,7 +10,6 @@ using TTA.DataAccess.Repository.Api;
 using Match = TTA.DataAccess.Models.Match;
 
 namespace TTA.BusinessLogic.Tests.Features.PlayerPresences.Handlers;
-
 /// <summary>
 /// Unit tests for the <see cref="SubstitutePlayerHandler"/> class.
 /// Ensures validation logic, active player state checks, atomic repository interaction, and exception mapping are correct.
@@ -39,8 +38,8 @@ public class SubstitutePlayerHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a substitution is successfully processed atomically and that the 
-    /// substitution time boundary (Outgoing.TimeOut == Incoming.TimeIn) is invariant.
+    /// Verifies that a substitution is successfully processed atomically using client-provided ID and timestamp,
+    /// and that the substitution time boundary (Outgoing.TimeOut == Incoming.TimeIn) is invariant.
     /// </summary>
     [Fact]
     public async Task Handle_Should_SubstitutePlayer_When_RequestIsValid()
@@ -54,7 +53,7 @@ public class SubstitutePlayerHandlerTests
             Id = Guid.NewGuid(),
             MatchLineupId = command.PlayerOutLineupId,
             PeriodNumber = command.PeriodNumber,
-            TimeIn = DateTime.UtcNow.AddMinutes(-10),
+            TimeIn = command.SubstitutionTime.AddMinutes(-10),
             TimeOut = null
         };
 
@@ -83,22 +82,23 @@ public class SubstitutePlayerHandlerTests
         var result = await _handler.Handle(command, CancellationToken.None);
 
         // Assert
-        result.Should().NotBeEmpty();
+        result.Should().Be(command.IncomingPresenceId);
 
         capturedOutgoing.Should().NotBeNull();
         capturedIncoming.Should().NotBeNull();
 
-        // Verify invariants:
-        capturedOutgoing!.TimeOut.Should().NotBeNull("Outgoing player must have a TimeOut set.");
-        capturedIncoming!.TimeIn.Should().NotBe(default, "Incoming player must have a TimeIn set.");
+        // Verify invariants and explicit client mapping:
+        capturedOutgoing!.TimeOut.Should().Be(command.SubstitutionTime);
+        capturedIncoming!.Id.Should().Be(command.IncomingPresenceId);
+        capturedIncoming.TimeIn.Should().Be(command.SubstitutionTime);
 
         // Enforce the substitution boundary invariant
         capturedOutgoing.TimeOut.Should().Be(capturedIncoming.TimeIn,
             "The time the outgoing player exits must exactly match the time the incoming player enters.");
 
         _playerPresenceRepositoryMock.Verify(r => r.RecordSubstitutionAsync(
-            It.Is<PlayerPresence>(p => p.Id == activeOutgoingPresence.Id),
-            It.Is<PlayerPresence>(p => p.MatchLineupId == command.PlayerInLineupId),
+            It.Is<PlayerPresence>(p => p.Id == activeOutgoingPresence.Id && p.TimeOut == command.SubstitutionTime),
+            It.Is<PlayerPresence>(p => p.Id == command.IncomingPresenceId && p.MatchLineupId == command.PlayerInLineupId && p.TimeIn == command.SubstitutionTime),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -142,8 +142,8 @@ public class SubstitutePlayerHandlerTests
             Id = Guid.NewGuid(),
             MatchLineupId = command.PlayerOutLineupId,
             PeriodNumber = command.PeriodNumber,
-            TimeIn = DateTime.UtcNow.AddMinutes(-20),
-            TimeOut = DateTime.UtcNow.AddMinutes(-5)
+            TimeIn = command.SubstitutionTime.AddMinutes(-20),
+            TimeOut = command.SubstitutionTime.AddMinutes(-5)
         };
 
         _matchRepositoryMock
@@ -181,7 +181,6 @@ public class SubstitutePlayerHandlerTests
         _matchRepositoryMock.Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(match);
         _playerPresenceRepositoryMock.Setup(r => r.GetMatchPresenceAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(new List<PlayerPresence> { activeOutgoingPresence });
 
-        // Setup atomic call to throw
         _playerPresenceRepositoryMock.Setup(r => r.RecordSubstitutionAsync(It.IsAny<PlayerPresence>(), It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>())).ThrowsAsync(pgException);
 
         // Act
@@ -207,7 +206,6 @@ public class SubstitutePlayerHandlerTests
         _matchRepositoryMock.Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(match);
         _playerPresenceRepositoryMock.Setup(r => r.GetMatchPresenceAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(new List<PlayerPresence> { activeOutgoingPresence });
 
-        // Setup atomic call to throw
         _playerPresenceRepositoryMock.Setup(r => r.RecordSubstitutionAsync(It.IsAny<PlayerPresence>(), It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>())).ThrowsAsync(pgException);
 
         // Act
@@ -234,7 +232,6 @@ public class SubstitutePlayerHandlerTests
         _matchRepositoryMock.Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(match);
         _playerPresenceRepositoryMock.Setup(r => r.GetMatchPresenceAsync(command.MatchId, It.IsAny<CancellationToken>())).ReturnsAsync(new List<PlayerPresence> { activeOutgoingPresence });
 
-        // Setup atomic call to throw
         _playerPresenceRepositoryMock.Setup(r => r.RecordSubstitutionAsync(It.IsAny<PlayerPresence>(), It.IsAny<PlayerPresence>(), It.IsAny<CancellationToken>())).ThrowsAsync(pgException);
 
         // Act
@@ -245,16 +242,101 @@ public class SubstitutePlayerHandlerTests
     }
 
     /// <summary>
+    /// Verifies that <see cref="SubstitutePlayerHandler.Handle"/> returns the existing presence identifier without executing another DB insert
+    /// when an identical substitution command is retransmitted (idempotent replay scenario).
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_ReturnExistingPresenceId_When_IdenticalRequestIsReplayed()
+    {
+        // Arrange
+        var command = CreateCommand();
+        var match = new Match { Id = command.MatchId };
+
+        var existingIncomingPresence = new PlayerPresence
+        {
+            Id = command.IncomingPresenceId,
+            MatchLineupId = command.PlayerInLineupId,
+            PeriodNumber = command.PeriodNumber,
+            TimeIn = command.SubstitutionTime,
+            TimeOut = null
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _playerPresenceRepositoryMock
+            .Setup(r => r.GetMatchPresenceAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PlayerPresence> { existingIncomingPresence });
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        result.Should().Be(command.IncomingPresenceId);
+
+        // Ensure repository mutation was NEVER invoked on replay
+        _playerPresenceRepositoryMock.Verify(r => r.RecordSubstitutionAsync(
+            It.IsAny<PlayerPresence>(),
+            It.IsAny<PlayerPresence>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that a <see cref="ConflictException"/> is thrown when <see cref="SubstitutePlayerCommand.IncomingPresenceId"/>
+    /// is reused with different substitution parameters.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_ConflictException_When_IncomingPresenceIdIsReusedWithMismatchedPayload()
+    {
+        // Arrange
+        var command = CreateCommand();
+        var match = new Match { Id = command.MatchId };
+
+        // Existing presence has the same ID, but a different player lineup ID
+        var mismatchedExistingPresence = new PlayerPresence
+        {
+            Id = command.IncomingPresenceId,
+            MatchLineupId = Guid.NewGuid(), // Mismatched player
+            PeriodNumber = command.PeriodNumber,
+            TimeIn = command.SubstitutionTime,
+            TimeOut = null
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _playerPresenceRepositoryMock
+            .Setup(r => r.GetMatchPresenceAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PlayerPresence> { mismatchedExistingPresence });
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage($"IncomingPresenceId '{command.IncomingPresenceId}' has already been used with different substitution parameters.");
+
+        _playerPresenceRepositoryMock.Verify(r => r.RecordSubstitutionAsync(
+            It.IsAny<PlayerPresence>(),
+            It.IsAny<PlayerPresence>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="SubstitutePlayerCommand"/> for testing.
     /// </summary>
-    /// <returns>A populated command instance.</returns>
+    /// <returns>A populated command instance containing client-generated ID and timestamp.</returns>
     private static SubstitutePlayerCommand CreateCommand()
     {
         return new SubstitutePlayerCommand(
             MatchId: Guid.NewGuid(),
             PeriodNumber: 1,
             PlayerOutLineupId: Guid.NewGuid(),
-            PlayerInLineupId: Guid.NewGuid()
+            PlayerInLineupId: Guid.NewGuid(),
+            IncomingPresenceId: Guid.NewGuid(),
+            SubstitutionTime: DateTime.UtcNow.AddMinutes(-5)
         );
     }
 }

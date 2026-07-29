@@ -812,18 +812,17 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> returns HTTP 201 Created 
-    /// and the generated presence identifier when an authorized user submits a valid substitution request.
+    /// and the exact client-supplied presence identifier when an authorized user submits a valid substitution request.
     /// </summary>
     [Fact]
     public async Task SubstitutePlayer_ShouldReturnCreated_WhenRequestIsValidAndUserHasAccess()
     {
         // Arrange
         var context = await SetupPresenceMatchContextAsync(TestUserId);
+        var incomingPresenceId = Guid.NewGuid();
+        var substitutionTime = DateTime.UtcNow;
 
         // Record an initial active presence for the outgoing player.
-        // We use "NOW() - INTERVAL '5 minutes'" to strictly guarantee that TimeIn is in the past.
-        // This avoids Database Check Constraint (23514) violations caused by millisecond clock drift 
-        // between the C# application (DateTime.UtcNow) and the PostgreSQL container.
         using (var conn = Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.ExecuteAsync(
@@ -834,25 +833,41 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var request = new SubstitutePlayerRequest(
             PeriodNumber: 1,
             PlayerOutLineupId: context.LineupId1,
-            PlayerInLineupId: context.LineupId2
+            PlayerInLineupId: context.LineupId2,
+            IncomingPresenceId: incomingPresenceId,
+            SubstitutionTime: substitutionTime
         );
 
         // Act
         var response = await Client.PostAsJsonAsync($"{BaseUrl}/{context.MatchId}/substitutions", request);
 
         // Assert
-        // If this returns 409, reading the response content usually reveals the "Substitution time is invalid" message.
         var errorContent = response.StatusCode != HttpStatusCode.Created ? await response.Content.ReadAsStringAsync() : string.Empty;
 
         response.StatusCode.Should().Be(HttpStatusCode.Created, $"because valid substitution should succeed. Error: {errorContent}");
 
         var createdId = await response.Content.ReadFromJsonAsync<Guid>();
-        createdId.Should().NotBeEmpty();
+        createdId.Should().Be(incomingPresenceId);
+
+        // Secondary DB verification check asserting exact client-supplied ID and SubstitutionTime
+        using var checkConn = Fixture.ConnectionFactory.CreateConnection();
+        var matchPresences = (await checkConn.QueryAsync<PlayerPresence>(
+            "SELECT id, matchlineupid, periodnumber, timein, timeout FROM public.playerpresences WHERE matchlineupid IN (@id1, @id2)",
+            new { id1 = context.LineupId1, id2 = context.LineupId2 })).ToList();
+
+        var incomingPresence = matchPresences.FirstOrDefault(x => x.Id == incomingPresenceId);
+        incomingPresence.Should().NotBeNull();
+        incomingPresence!.MatchLineupId.Should().Be(context.LineupId2);
+        incomingPresence.TimeIn.Should().BeCloseTo(substitutionTime, TimeSpan.FromMilliseconds(500));
+
+        var outgoingPresence = matchPresences.FirstOrDefault(x => x.MatchLineupId == context.LineupId1);
+        outgoingPresence.Should().NotBeNull();
+        outgoingPresence!.TimeOut.Should().BeCloseTo(substitutionTime, TimeSpan.FromMilliseconds(500));
     }
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> returns HTTP 400 Bad Request 
-    /// when FluentValidation rules fail (e.g., trying to substitute a player with themselves).
+    /// when FluentValidation rules fail (e.g., trying to substitute a player with themselves or empty incoming presence ID).
     /// </summary>
     [Fact]
     public async Task SubstitutePlayer_ShouldReturnBadRequest_WhenValidationFails()
@@ -864,7 +879,9 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var invalidRequest = new SubstitutePlayerRequest(
             PeriodNumber: 1,
             PlayerOutLineupId: samePlayerLineupId,
-            PlayerInLineupId: samePlayerLineupId // Violation: input and output cannot be identical
+            PlayerInLineupId: samePlayerLineupId, // Violation: input and output cannot be identical
+            IncomingPresenceId: Guid.NewGuid(),
+            SubstitutionTime: DateTime.UtcNow
         );
 
         // Act
@@ -883,12 +900,14 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     {
         // Arrange
         const string unauthorizedUserId = "auth0|unauthorized-stranger";
-        var context = await SetupPresenceMatchContextAsync(unauthorizedUserId); // Owned by stranger
+        var context = await SetupPresenceMatchContextAsync(unauthorizedUserId);
 
         var request = new SubstitutePlayerRequest(
             PeriodNumber: 1,
             PlayerOutLineupId: context.LineupId1,
-            PlayerInLineupId: context.LineupId2
+            PlayerInLineupId: context.LineupId2,
+            IncomingPresenceId: Guid.NewGuid(),
+            SubstitutionTime: DateTime.UtcNow
         );
 
         // Act
@@ -896,6 +915,59 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> returns HTTP 201 Created and functions idempotently
+    /// when the identical substitution payload is submitted twice, creating only a single presence record in the database.
+    /// </summary>
+    [Fact]
+    public async Task SubstitutePlayer_ShouldBeIdempotent_WhenSamePayloadIsSubmittedTwice()
+    {
+        // Arrange
+        var context = await SetupPresenceMatchContextAsync(TestUserId);
+        var incomingPresenceId = Guid.NewGuid();
+        var substitutionTime = DateTime.UtcNow;
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein) VALUES (@id, @lineupId, 1, NOW() - INTERVAL '5 minutes')",
+                new { id = Guid.NewGuid(), lineupId = context.LineupId1 });
+        }
+
+        var request = new SubstitutePlayerRequest(
+            PeriodNumber: 1,
+            PlayerOutLineupId: context.LineupId1,
+            PlayerInLineupId: context.LineupId2,
+            IncomingPresenceId: incomingPresenceId,
+            SubstitutionTime: substitutionTime
+        );
+
+        // Act 1: Initial Substitution Request
+        var response1 = await Client.PostAsJsonAsync($"{BaseUrl}/{context.MatchId}/substitutions", request);
+
+        // Act 2: Replay Identical Request (e.g. Offline Sync Retry)
+        var response2 = await Client.PostAsJsonAsync($"{BaseUrl}/{context.MatchId}/substitutions", request);
+
+        // Assert HTTP Responses
+        response1.StatusCode.Should().Be(HttpStatusCode.Created);
+        response2.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var returnedId1 = await response1.Content.ReadFromJsonAsync<Guid>();
+        var returnedId2 = await response2.Content.ReadFromJsonAsync<Guid>();
+
+        returnedId1.Should().Be(incomingPresenceId);
+        returnedId2.Should().Be(incomingPresenceId);
+
+        // Secondary DB verification: Only ONE presence record with IncomingPresenceId must exist in the database
+        using var checkConn = Fixture.ConnectionFactory.CreateConnection();
+        var matchPresences = (await checkConn.QueryAsync<PlayerPresence>(
+            "SELECT id, matchlineupid, periodnumber, timein FROM public.playerpresences WHERE id = @presenceId",
+            new { presenceId = incomingPresenceId })).ToList();
+
+        matchPresences.Should().HaveCount(1, "because idempotent replay must not insert duplicate records.");
+        matchPresences.First().MatchLineupId.Should().Be(context.LineupId2);
     }
 
     /// <summary>

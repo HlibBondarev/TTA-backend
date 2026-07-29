@@ -30,7 +30,9 @@ public class SubstitutePlayerRequestValidatorTests
         var request = new SubstitutePlayerRequest(
             PeriodNumber: 1,
             PlayerOutLineupId: Guid.NewGuid(),
-            PlayerInLineupId: Guid.NewGuid()
+            PlayerInLineupId: Guid.NewGuid(),
+            IncomingPresenceId: Guid.NewGuid(),
+            SubstitutionTime: DateTime.UtcNow
         );
 
         // Act
@@ -53,7 +55,9 @@ public class SubstitutePlayerRequestValidatorTests
         var request = new SubstitutePlayerRequest(
             PeriodNumber: invalidPeriod,
             PlayerOutLineupId: Guid.NewGuid(),
-            PlayerInLineupId: Guid.NewGuid()
+            PlayerInLineupId: Guid.NewGuid(),
+            IncomingPresenceId: Guid.NewGuid(),
+            SubstitutionTime: DateTime.UtcNow
         );
 
         // Act
@@ -73,8 +77,10 @@ public class SubstitutePlayerRequestValidatorTests
         // Arrange
         var request = new SubstitutePlayerRequest(
             PeriodNumber: 1,
-            PlayerOutLineupId: Guid.Empty, // Invalid empty GUID
-            PlayerInLineupId: Guid.NewGuid()
+            PlayerOutLineupId: Guid.Empty,
+            PlayerInLineupId: Guid.NewGuid(),
+            IncomingPresenceId: Guid.NewGuid(),
+            SubstitutionTime: DateTime.UtcNow
         );
 
         // Act
@@ -95,7 +101,9 @@ public class SubstitutePlayerRequestValidatorTests
         var request = new SubstitutePlayerRequest(
             PeriodNumber: 1,
             PlayerOutLineupId: Guid.NewGuid(),
-            PlayerInLineupId: Guid.Empty // Invalid empty GUID
+            PlayerInLineupId: Guid.Empty,
+            IncomingPresenceId: Guid.NewGuid(),
+            SubstitutionTime: DateTime.UtcNow
         );
 
         // Act
@@ -118,7 +126,9 @@ public class SubstitutePlayerRequestValidatorTests
         var request = new SubstitutePlayerRequest(
             PeriodNumber: 1,
             PlayerOutLineupId: samePlayerId,
-            PlayerInLineupId: samePlayerId // Attempting to substitute a player with themselves
+            PlayerInLineupId: samePlayerId,
+            IncomingPresenceId: Guid.NewGuid(),
+            SubstitutionTime: DateTime.UtcNow
         );
 
         // Act
@@ -127,5 +137,51 @@ public class SubstitutePlayerRequestValidatorTests
         // Assert
         result.ShouldHaveValidationErrorFor(x => x.PlayerInLineupId)
             .WithErrorMessage("Incoming and outgoing players must be different.");
+    }
+
+    /// <summary>
+    /// Verifies that a validation error is generated when <see cref="SubstitutePlayerRequest.IncomingPresenceId"/> is an empty globally unique identifier.
+    /// </summary>
+    [Fact]
+    public void Validator_Should_HaveError_When_IncomingPresenceIdIsEmpty()
+    {
+        // Arrange
+        var request = new SubstitutePlayerRequest(
+            PeriodNumber: 1,
+            PlayerOutLineupId: Guid.NewGuid(),
+            PlayerInLineupId: Guid.NewGuid(),
+            IncomingPresenceId: Guid.Empty,
+            SubstitutionTime: DateTime.UtcNow
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldHaveValidationErrorFor(x => x.IncomingPresenceId)
+            .WithErrorMessage("Incoming player presence identifier is required.");
+    }
+
+    /// <summary>
+    /// Verifies that a validation error is generated when <see cref="SubstitutePlayerRequest.SubstitutionTime"/> is a default timestamp value.
+    /// </summary>
+    [Fact]
+    public void Validator_Should_HaveError_When_SubstitutionTimeIsDefault()
+    {
+        // Arrange
+        var request = new SubstitutePlayerRequest(
+            PeriodNumber: 1,
+            PlayerOutLineupId: Guid.NewGuid(),
+            PlayerInLineupId: Guid.NewGuid(),
+            IncomingPresenceId: Guid.NewGuid(),
+            SubstitutionTime: default
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldHaveValidationErrorFor(x => x.SubstitutionTime)
+            .WithErrorMessage("Substitution timestamp is required.");
     }
 }

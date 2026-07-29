@@ -9,7 +9,8 @@ namespace TTA.BusinessLogic.Features.PlayerPresences.Handlers;
 
 /// <summary>
 /// Handles the execution of a player substitution.
-/// Updates the outgoing player's TimeOut and creates a TimeIn record for the incoming player.
+/// Updates the outgoing player's TimeOut and creates a TimeIn record for the incoming player using client-provided timestamps and IDs.
+/// Supports idempotent retries for offline synchronization pipelines.
 /// </summary>
 /// <param name="playerPresenceRepository">The repository for player presence data operations.</param>
 /// <param name="matchRepository">The repository for validating match existence.</param>
@@ -25,12 +26,13 @@ public class SubstitutePlayerHandler(
 
     /// <summary>
     /// Validates the match and active player state, then processes the substitution.
+    /// Handles duplicate request replays idempotently when matching IncomingPresenceId is present.
     /// </summary>
     /// <param name="request">The command containing substitution details.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>The unique identifier of the incoming player's presence record.</returns>
     /// <exception cref="NotFoundException">Thrown when the match is not found.</exception>
-    /// <exception cref="ConflictException">Thrown when the outgoing player is not active or DB constraints fail.</exception>
+    /// <exception cref="ConflictException">Thrown when the outgoing player is not active, ID is reused with mismatched payload, or DB constraints fail.</exception>
     public async Task<Guid> Handle(SubstitutePlayerCommand request, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Processing substitution for Match {MatchId}, Period {Period}. Out: {OutId}, In: {InId}",
@@ -43,12 +45,28 @@ public class SubstitutePlayerHandler(
             throw new NotFoundException($"Match with ID {request.MatchId} was not found.");
         }
 
-        // Capture exact server time for synchronization across both records
-        var exactSubstitutionTime = DateTime.UtcNow;
-
-        // 2. Find the active presence record for the outgoing player
+        // 2. Retrieve all match presences to evaluate idempotency and active status
         var allPresences = await _playerPresenceRepository.GetMatchPresenceAsync(request.MatchId, cancellationToken);
 
+        // 3. Idempotency Check: Verify if an incoming presence with the same IncomingPresenceId already exists
+        var existingPresence = allPresences.FirstOrDefault(p => p.Id == request.IncomingPresenceId);
+        if (existingPresence != null)
+        {
+            var isIdenticalReplay = existingPresence.MatchLineupId == request.PlayerInLineupId &&
+                                    existingPresence.PeriodNumber == request.PeriodNumber &&
+                                    Math.Abs((existingPresence.TimeIn - request.SubstitutionTime).TotalMilliseconds) < 500;
+
+            if (isIdenticalReplay)
+            {
+                _logger.LogInformation("Idempotent replay detected for presence ID {IncomingPresenceId}. Returning existing presence ID.", request.IncomingPresenceId);
+                return existingPresence.Id;
+            }
+
+            _logger.LogWarning("Mismatched reuse of IncomingPresenceId {IncomingPresenceId} detected.", request.IncomingPresenceId);
+            throw new ConflictException($"IncomingPresenceId '{request.IncomingPresenceId}' has already been used with different substitution parameters.");
+        }
+
+        // 4. Find the active presence record for the outgoing player
         var activeOutgoingPresence = allPresences.FirstOrDefault(p =>
             p.MatchLineupId == request.PlayerOutLineupId &&
             p.PeriodNumber == request.PeriodNumber &&
@@ -62,9 +80,9 @@ public class SubstitutePlayerHandler(
 
         try
         {
-            // 3 & 4. Atomically update the outgoing player's record and insert the incoming player's record
-            activeOutgoingPresence.TimeOut = exactSubstitutionTime;
-            var incomingPresence = request.ToModel(exactSubstitutionTime);
+            // 5 & 6. Atomically update the outgoing player's record and insert the incoming player's record using client timestamp and ID
+            activeOutgoingPresence.TimeOut = request.SubstitutionTime;
+            var incomingPresence = request.ToModel();
 
             await _playerPresenceRepository.RecordSubstitutionAsync(activeOutgoingPresence, incomingPresence, cancellationToken);
 

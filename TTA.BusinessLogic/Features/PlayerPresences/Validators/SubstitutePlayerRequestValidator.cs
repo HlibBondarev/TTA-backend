@@ -10,7 +10,7 @@ public class SubstitutePlayerRequestValidator : AbstractValidator<SubstitutePlay
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="SubstitutePlayerRequestValidator"/> class.
-    /// Defines property-level validation rule sets.
+    /// Defines property-level validation rule sets for offline-first player substitution payloads.
     /// </summary>
     public SubstitutePlayerRequestValidator()
     {
@@ -23,5 +23,11 @@ public class SubstitutePlayerRequestValidator : AbstractValidator<SubstitutePlay
         RuleFor(x => x.PlayerInLineupId)
             .NotEmpty().WithMessage("Incoming player lineup identifier is required.")
             .NotEqual(x => x.PlayerOutLineupId).WithMessage("Incoming and outgoing players must be different.");
+
+        RuleFor(x => x.IncomingPresenceId)
+            .NotEmpty().WithMessage("Incoming player presence identifier is required.");
+
+        RuleFor(x => x.SubstitutionTime)
+            .NotEmpty().WithMessage("Substitution timestamp is required.");
     }
 }
