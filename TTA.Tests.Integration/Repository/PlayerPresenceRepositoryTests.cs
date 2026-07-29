@@ -95,7 +95,8 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="PlayerPresenceRepository.RecordSubstitutionAsync"/> atomically updates the outgoing player and inserts the incoming player.
+    /// Verifies that <see cref="PlayerPresenceRepository.RecordSubstitutionAsync"/> atomically updates the outgoing player and inserts the incoming player
+    /// using explicit client-provided primary keys and timestamps.
     /// </summary>
     [Fact]
     public async Task RecordSubstitutionAsync_ShouldUpdateOutgoingAndInsertIncoming_Atomically_WhenDataIsValid()
@@ -104,6 +105,7 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         var context = await SeedPresenceEnvironmentAsync();
         var baseTime = DateTime.UtcNow;
         var substitutionTime = baseTime.AddMinutes(15);
+        var explicitIncomingId = Guid.NewGuid();
 
         // Record initial active presence for the outgoing player
         var outgoingPresence = new PlayerPresence
@@ -121,7 +123,7 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
 
         var incomingPresence = new PlayerPresence
         {
-            Id = Guid.NewGuid(),
+            Id = explicitIncomingId,
             MatchLineupId = context.LineupId2,
             PeriodNumber = 1,
             TimeIn = substitutionTime,
@@ -132,7 +134,7 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         var resultId = await _repository.RecordSubstitutionAsync(outgoingPresence, incomingPresence);
 
         // Assert
-        resultId.Should().Be(incomingPresence.Id);
+        resultId.Should().Be(explicitIncomingId);
 
         var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
 
@@ -140,9 +142,10 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         persistedOutgoing.Should().NotBeNull();
         persistedOutgoing!.TimeOut.Should().BeCloseTo(substitutionTime, TimeSpan.FromMilliseconds(100));
 
-        var persistedIncoming = matchPresences.FirstOrDefault(p => p.Id == incomingPresence.Id);
+        var persistedIncoming = matchPresences.FirstOrDefault(p => p.Id == explicitIncomingId);
         persistedIncoming.Should().NotBeNull();
-        persistedIncoming!.TimeIn.Should().BeCloseTo(substitutionTime, TimeSpan.FromMilliseconds(100));
+        persistedIncoming!.MatchLineupId.Should().Be(context.LineupId2);
+        persistedIncoming.TimeIn.Should().BeCloseTo(substitutionTime, TimeSpan.FromMilliseconds(100));
         persistedIncoming.TimeOut.Should().BeNull();
     }
 

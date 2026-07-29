@@ -9,7 +9,7 @@ namespace TTA.BusinessLogic.Features.PlayerPresences.Handlers;
 
 /// <summary>
 /// Handles the execution of a player substitution.
-/// Updates the outgoing player's TimeOut and creates a TimeIn record for the incoming player.
+/// Updates the outgoing player's TimeOut and creates a TimeIn record for the incoming player using client-provided timestamps and IDs.
 /// </summary>
 /// <param name="playerPresenceRepository">The repository for player presence data operations.</param>
 /// <param name="matchRepository">The repository for validating match existence.</param>
@@ -43,9 +43,6 @@ public class SubstitutePlayerHandler(
             throw new NotFoundException($"Match with ID {request.MatchId} was not found.");
         }
 
-        // Capture exact server time for synchronization across both records
-        var exactSubstitutionTime = DateTime.UtcNow;
-
         // 2. Find the active presence record for the outgoing player
         var allPresences = await _playerPresenceRepository.GetMatchPresenceAsync(request.MatchId, cancellationToken);
 
@@ -62,9 +59,9 @@ public class SubstitutePlayerHandler(
 
         try
         {
-            // 3 & 4. Atomically update the outgoing player's record and insert the incoming player's record
-            activeOutgoingPresence.TimeOut = exactSubstitutionTime;
-            var incomingPresence = request.ToModel(exactSubstitutionTime);
+            // 3 & 4. Atomically update the outgoing player's record and insert the incoming player's record using client timestamp and ID
+            activeOutgoingPresence.TimeOut = request.SubstitutionTime;
+            var incomingPresence = request.ToModel();
 
             await _playerPresenceRepository.RecordSubstitutionAsync(activeOutgoingPresence, incomingPresence, cancellationToken);
 

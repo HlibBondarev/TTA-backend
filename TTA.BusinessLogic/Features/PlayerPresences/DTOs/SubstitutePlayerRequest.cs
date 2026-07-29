@@ -8,10 +8,14 @@ namespace TTA.BusinessLogic.Features.PlayerPresences.DTOs;
 /// <param name="PeriodNumber">The current active match period sequence number.</param>
 /// <param name="PlayerOutLineupId">The unique lineup protocol identifier of the player leaving the field.</param>
 /// <param name="PlayerInLineupId">The unique lineup protocol identifier of the player entering the field.</param>
+/// <param name="IncomingPresenceId">The client-generated unique identifier for the incoming player presence record.</param>
+/// <param name="SubstitutionTime">The client-generated UTC timestamp when the substitution took place.</param>
 public record SubstitutePlayerRequest(
     int PeriodNumber,
     Guid PlayerOutLineupId,
-    Guid PlayerInLineupId);
+    Guid PlayerInLineupId,
+    Guid IncomingPresenceId,
+    DateTime SubstitutionTime);
 
 /// <summary>
 /// Provides mapping extension methods for transforming substitution requests into domain commands.
@@ -30,7 +34,9 @@ public static class SubstitutePlayerRequestExtensions
             MatchId: matchId,
             PeriodNumber: request.PeriodNumber,
             PlayerOutLineupId: request.PlayerOutLineupId,
-            PlayerInLineupId: request.PlayerInLineupId
+            PlayerInLineupId: request.PlayerInLineupId,
+            IncomingPresenceId: request.IncomingPresenceId,
+            SubstitutionTime: request.SubstitutionTime
         );
     }
 }
