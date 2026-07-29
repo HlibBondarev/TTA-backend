@@ -918,6 +918,59 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
+    /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> returns HTTP 201 Created and functions idempotently
+    /// when the identical substitution payload is submitted twice, creating only a single presence record in the database.
+    /// </summary>
+    [Fact]
+    public async Task SubstitutePlayer_ShouldBeIdempotent_WhenSamePayloadIsSubmittedTwice()
+    {
+        // Arrange
+        var context = await SetupPresenceMatchContextAsync(TestUserId);
+        var incomingPresenceId = Guid.NewGuid();
+        var substitutionTime = DateTime.UtcNow;
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein) VALUES (@id, @lineupId, 1, NOW() - INTERVAL '5 minutes')",
+                new { id = Guid.NewGuid(), lineupId = context.LineupId1 });
+        }
+
+        var request = new SubstitutePlayerRequest(
+            PeriodNumber: 1,
+            PlayerOutLineupId: context.LineupId1,
+            PlayerInLineupId: context.LineupId2,
+            IncomingPresenceId: incomingPresenceId,
+            SubstitutionTime: substitutionTime
+        );
+
+        // Act 1: Initial Substitution Request
+        var response1 = await Client.PostAsJsonAsync($"{BaseUrl}/{context.MatchId}/substitutions", request);
+
+        // Act 2: Replay Identical Request (e.g. Offline Sync Retry)
+        var response2 = await Client.PostAsJsonAsync($"{BaseUrl}/{context.MatchId}/substitutions", request);
+
+        // Assert HTTP Responses
+        response1.StatusCode.Should().Be(HttpStatusCode.Created);
+        response2.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var returnedId1 = await response1.Content.ReadFromJsonAsync<Guid>();
+        var returnedId2 = await response2.Content.ReadFromJsonAsync<Guid>();
+
+        returnedId1.Should().Be(incomingPresenceId);
+        returnedId2.Should().Be(incomingPresenceId);
+
+        // Secondary DB verification: Only ONE presence record with IncomingPresenceId must exist in the database
+        using var checkConn = Fixture.ConnectionFactory.CreateConnection();
+        var matchPresences = (await checkConn.QueryAsync<PlayerPresence>(
+            "SELECT id, matchlineupid, periodnumber, timein FROM public.playerpresences WHERE id = @presenceId",
+            new { presenceId = incomingPresenceId })).ToList();
+
+        matchPresences.Should().HaveCount(1, "because idempotent replay must not insert duplicate records.");
+        matchPresences.First().MatchLineupId.Should().Be(context.LineupId2);
+    }
+
+    /// <summary>
     /// Verifies that <see cref="MatchesController.InitializePeriodPresence"/> returns HTTP 204 No Content 
     /// when an authorized user submits a valid bulk starting lineup initialization request, and persists exact client IDs and timestamps.
     /// </summary>
