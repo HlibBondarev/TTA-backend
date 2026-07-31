@@ -8,7 +8,6 @@ using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Auth;
 
 namespace TTA.BusinessLogic.Features.Matches.Handlers;
-
 /// <summary>
 /// Handles the execution of <see cref="CreateQuickMatchCommand"/> to provision JIT entities, assign access policies, 
 /// create the match, and initialize starting lineups.
@@ -39,6 +38,7 @@ public class CreateQuickMatchCommandHandler(
 
     /// <summary>
     /// Provisions quick match infrastructure, verifies or grants team editor access policies, and copies starter roster entries into the match lineup.
+    /// Performs compensating cleanup if post-creation provisioning fails.
     /// </summary>
     /// <param name="command">The command containing quick match setup parameters and authenticated user details.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
@@ -63,97 +63,107 @@ public class CreateQuickMatchCommandHandler(
             throw new KeyNotFoundException($"Failed to provision quick match infrastructure for SportId: {command.Request.SportId}");
         }
 
-        // Information Log 1: Key entity provisioning milestone
         _logger.LogInformation("Quick match {MatchId} created with HomeTeam {HomeTeamId} and GuestTeam {GuestTeamId}.",
             quickMatchProjection.Id, quickMatchProjection.HomeTeamId, quickMatchProjection.GuestTeamId);
 
-        // 2. Ensure TeamEditor access policy JIT for Home Squad
-        var activePolicy = await _accessRepository.GetActiveTeamPolicyAsync(
-            command.UserId,
-            quickMatchProjection.HomeTeamId,
-            cancellationToken);
-
-        if (activePolicy == null)
+        try
         {
-            _logger.LogDebug("Granting TeamEditor policy for User {UserId} on HomeTeam {HomeTeamId}.",
-                command.UserId, quickMatchProjection.HomeTeamId);
+            // 2. Ensure TeamEditor access policy JIT for Home Squad
+            var activePolicy = await _accessRepository.GetActiveTeamPolicyAsync(
+                command.UserId,
+                quickMatchProjection.HomeTeamId,
+                cancellationToken);
 
-            var newPolicy = new AccessPolicy
+            if (activePolicy == null)
             {
-                Id = Guid.NewGuid(),
-                UserId = command.UserId,
-                TargetType = TargetScope.Team,
-                TargetId = quickMatchProjection.HomeTeamId,
-                Role = AppRole.Editor,
-                CreatedAt = DateTime.UtcNow
-            };
+                _logger.LogDebug("Granting TeamEditor policy for User {UserId} on HomeTeam {HomeTeamId}.",
+                    command.UserId, quickMatchProjection.HomeTeamId);
 
-            await _accessRepository.AddAccessAsync(newPolicy, cancellationToken);
-        }
+                var newPolicy = new AccessPolicy
+                {
+                    Id = Guid.NewGuid(),
+                    UserId = command.UserId,
+                    TargetType = TargetScope.Team,
+                    TargetId = quickMatchProjection.HomeTeamId,
+                    Role = AppRole.Editor,
+                    CreatedAt = DateTime.UtcNow
+                };
 
-        // 3. Resolve target SportConfiguration ID
-        Guid targetConfigurationId;
-        if (command.Request.ConfigurationId.HasValue && command.Request.ConfigurationId.Value != Guid.Empty)
-        {
-            targetConfigurationId = command.Request.ConfigurationId.Value;
-        }
-        else
-        {
-            var sport = await _sportRepository.GetByIdAsync(command.Request.SportId, cancellationToken);
-            if (sport == null)
-            {
-                _logger.LogError("Sport with ID {SportId} was not found.", command.Request.SportId);
-                throw new KeyNotFoundException($"Sport with ID {command.Request.SportId} was not found.");
+                await _accessRepository.AddAccessAsync(newPolicy, cancellationToken);
             }
 
-            targetConfigurationId = sport.DefaultConfigId;
-        }
+            // 3. Resolve target SportConfiguration ID
+            Guid targetConfigurationId;
+            if (command.Request.ConfigurationId.HasValue && command.Request.ConfigurationId.Value != Guid.Empty)
+            {
+                targetConfigurationId = command.Request.ConfigurationId.Value;
+            }
+            else
+            {
+                var sport = await _sportRepository.GetByIdAsync(command.Request.SportId, cancellationToken);
+                if (sport == null)
+                {
+                    _logger.LogError("Sport with ID {SportId} was not found.", command.Request.SportId);
+                    throw new KeyNotFoundException($"Sport with ID {command.Request.SportId} was not found.");
+                }
 
-        // 4. Fetch Sport Configuration to obtain LineupLimit
-        var sportConfig = await _sportConfigurationRepository.GetByIdAsync(targetConfigurationId, cancellationToken);
-        if (sportConfig == null)
-        {
-            _logger.LogError("Sport configuration with ID {ConfigurationId} was not found.", targetConfigurationId);
-            throw new KeyNotFoundException($"Sport configuration with ID {targetConfigurationId} was not found.");
-        }
+                targetConfigurationId = sport.DefaultConfigId;
+            }
 
-        // 5. Retrieve Home Squad tournament roster
-        var homeRoster = await _rosterRepository.GetTeamRosterAsync(
-            quickMatchProjection.TournamentId,
-            quickMatchProjection.HomeTeamId,
-            cancellationToken);
+            // 4. Fetch Sport Configuration to obtain LineupLimit
+            var sportConfig = await _sportConfigurationRepository.GetByIdAsync(targetConfigurationId, cancellationToken);
+            if (sportConfig == null)
+            {
+                _logger.LogError("Sport configuration with ID {ConfigurationId} was not found.", targetConfigurationId);
+                throw new KeyNotFoundException($"Sport configuration with ID {targetConfigurationId} was not found.");
+            }
 
-        // 6. Slice top N starters based on LineupLimit with explicit cast to Guid
-        var starterRosterIds = homeRoster
-            .Take(sportConfig.LineupLimit)
-            .Select(r => (Guid)r.id)
-            .ToArray();
-
-        // 7. Populate starting lineup for Home Squad
-        if (starterRosterIds.Length > 0)
-        {
-            _logger.LogDebug("Populating starting lineup with {Count} players for Match {MatchId}.",
-                starterRosterIds.Length, quickMatchProjection.Id);
-
-            await _matchLineupRepository.CopyFromRosterAsync(
-                quickMatchProjection.Id,
+            // 5. Retrieve Home Squad tournament roster
+            var homeRoster = await _rosterRepository.GetTeamRosterAsync(
+                quickMatchProjection.TournamentId,
                 quickMatchProjection.HomeTeamId,
-                starterRosterIds,
                 cancellationToken);
+
+            // 6. Slice top N starters based on LineupLimit with explicit cast to Guid
+            var starterRosterIds = homeRoster
+                .Take(sportConfig.LineupLimit)
+                .Select(r => (Guid)r.id)
+                .ToArray();
+
+            // 7. Populate starting lineup for Home Squad
+            if (starterRosterIds.Length > 0)
+            {
+                _logger.LogDebug("Populating starting lineup with {Count} players for Match {MatchId}.",
+                    starterRosterIds.Length, quickMatchProjection.Id);
+
+                await _matchLineupRepository.CopyFromRosterAsync(
+                    quickMatchProjection.Id,
+                    quickMatchProjection.HomeTeamId,
+                    starterRosterIds,
+                    cancellationToken);
+            }
+
+            _logger.LogInformation("Successfully completed quick match creation for Match {MatchId}.", quickMatchProjection.Id);
+
+            // 8. Map and return QuickMatchResponse DTO
+            return new QuickMatchResponse
+            {
+                Id = quickMatchProjection.Id,
+                TournamentId = quickMatchProjection.TournamentId,
+                HomeTeamId = quickMatchProjection.HomeTeamId,
+                GuestTeamId = quickMatchProjection.GuestTeamId,
+                ScheduledAt = quickMatchProjection.ScheduledAt,
+                CreatedAt = quickMatchProjection.CreatedAt
+            };
         }
-
-        // Information Log 2: Successful completion milestone
-        _logger.LogInformation("Successfully completed quick match creation for Match {MatchId}.", quickMatchProjection.Id);
-
-        // 8. Map and return QuickMatchResponse DTO
-        return new QuickMatchResponse
+        catch (Exception ex)
         {
-            Id = quickMatchProjection.Id,
-            TournamentId = quickMatchProjection.TournamentId,
-            HomeTeamId = quickMatchProjection.HomeTeamId,
-            GuestTeamId = quickMatchProjection.GuestTeamId,
-            ScheduledAt = quickMatchProjection.ScheduledAt,
-            CreatedAt = quickMatchProjection.CreatedAt
-        };
+            _logger.LogError(ex, "Post-creation setup failed for Match {MatchId}. Performing compensating cleanup.", quickMatchProjection.Id);
+
+            // Roll back the newly created match entity to prevent leaving orphaned records
+            await _matchRepository.DeleteAsync(quickMatchProjection.Id, CancellationToken.None);
+
+            throw;
+        }
     }
 }

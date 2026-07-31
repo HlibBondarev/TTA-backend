@@ -72,4 +72,17 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
             parameters,
             cancellationToken: cancellationToken));
     }
+
+    /// <inheritdoc />
+    public async Task<bool> DeleteAsync(Guid matchId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_id", matchId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            SqlStatements.ForMatches.DeleteMatch,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
 }

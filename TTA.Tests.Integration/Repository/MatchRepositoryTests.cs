@@ -15,6 +15,10 @@ public class MatchRepositoryTests : BaseIntegrationTest
 {
     private readonly MatchRepository _repository;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="MatchRepositoryTests"/> class with the database fixture.
+    /// </summary>
+    /// <param name="fixture">The database test container fixture.</param>
     public MatchRepositoryTests(DatabaseFixture fixture) : base(fixture)
     {
         _repository = new MatchRepository(fixture.ConnectionFactory);
@@ -27,6 +31,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
     /// <summary>
     /// Verifies that a new match is correctly persisted when all foreign keys (Tournament, Teams) exist.
     /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
     public async Task UpsertMatchAsync_ShouldPersistNewMatch_WhenDataIsValid()
     {
@@ -46,6 +51,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
     /// <summary>
     /// Verifies that updating an existing match (e.g., recording a score) updates the database correctly.
     /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
     public async Task UpsertMatchAsync_ShouldUpdateScores_WhenMatchExists()
     {
@@ -75,6 +81,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
     /// <summary>
     /// Verifies that GetMatchByIdWithDetailsAsync returns dynamic object with joined team names.
     /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
     public async Task GetMatchByIdWithDetailsAsync_ShouldReturnJoinedData()
     {
@@ -98,6 +105,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
     /// Seeds matches in multiple tournaments to ensure isolation and uses unique user IDs 
     /// to avoid primary key constraint violations.
     /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
     public async Task GetByTournamentIdAsync_ShouldReturnOnlyMatchesInTargetTournament()
     {
@@ -127,7 +135,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         {
             var dict = (IDictionary<string, object>)item;
 
-            // Use TryGetValue to avoid double lookup (Sonar finding #1)
             if (!dict.TryGetValue("tournamentid", out var returnedIdObj) &&
                 !dict.TryGetValue("TournamentId", out returnedIdObj))
             {
@@ -141,7 +148,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         // Verify that the specific match numbers are present
         var matchNumbers = resultsList.Select(x => (string)((IDictionary<string, object>)x)["matchnumber"]).ToList();
 
-        // Fix: Use the static readonly field (Sonar finding #2)
         matchNumbers.Should().Contain(ExpectedMatchNumbers);
         matchNumbers.Should().NotContain("NOISE-01");
     }
@@ -154,6 +160,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
     /// Verifies that <see cref="MatchRepository.CreateQuickMatchAsync"/> provisions JIT teams, tournament container, 
     /// player rosters, and creates the match entity in a single atomic database operation.
     /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
     public async Task CreateQuickMatchAsync_ShouldProvisionInfrastructureAndReturnProjection()
     {
@@ -191,6 +198,50 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     #endregion
 
+    #region DeleteAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.DeleteAsync"/> deletes an existing match from the database and returns true.
+    /// Also confirms that subsequent retrieval returns null.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task DeleteAsync_ShouldDeleteMatch_WhenMatchExists()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        // Act
+        var isDeleted = await _repository.DeleteAsync(match.Id, CancellationToken.None);
+
+        // Assert
+        isDeleted.Should().BeTrue("deleting an existing match should return true");
+
+        var deletedMatch = await _repository.GetByIdAsync(match.Id, CancellationToken.None);
+        deletedMatch.Should().BeNull("the match record must no longer exist in the database");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.DeleteAsync"/> returns false when trying to delete a non-existent match.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task DeleteAsync_ShouldReturnFalse_WhenMatchDoesNotExist()
+    {
+        // Arrange
+        var nonExistentMatchId = Guid.NewGuid();
+
+        // Act
+        var isDeleted = await _repository.DeleteAsync(nonExistentMatchId, CancellationToken.None);
+
+        // Assert
+        isDeleted.Should().BeFalse("deleting a non-existent match should return false");
+    }
+
+    #endregion
+
     #region Helpers
 
     /// <summary>
@@ -198,6 +249,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
     /// Ensures country codes do not exceed the 3-character database limit (varchar(3)).
     /// Uses an explicit transaction to satisfy deferred foreign key constraints between sports and sportconfigurations.
     /// </summary>
+    /// <returns>A tuple containing the created Tournament ID, Home Team ID, and Guest Team ID.</returns>
     private async Task<(Guid TournamentId, Guid HomeTeamId, Guid GuestTeamId)> SeedMatchEnvironmentAsync()
     {
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -260,6 +312,16 @@ public class MatchRepositoryTests : BaseIntegrationTest
         return (tournamentId, homeTeamId, guestTeamId);
     }
 
+    /// <summary>
+    /// Helper method to seed a team, a player, and their tournament roster entry within an active transaction.
+    /// </summary>
+    /// <param name="conn">The active database connection.</param>
+    /// <param name="transaction">The active database transaction.</param>
+    /// <param name="clubId">The club identifier to associate with the team and player.</param>
+    /// <param name="sportId">The sport identifier associated with the team.</param>
+    /// <param name="tournamentId">The tournament identifier for roster registration.</param>
+    /// <param name="name">The name of the team to create.</param>
+    /// <returns>The unique identifier of the newly created team.</returns>
     private static async Task<Guid> SeedTeamAndRosterAsync(
         System.Data.IDbConnection conn,
         System.Data.IDbTransaction transaction,
@@ -287,6 +349,14 @@ public class MatchRepositoryTests : BaseIntegrationTest
         return teamId;
     }
 
+    /// <summary>
+    /// Helper method to construct a valid <see cref="Match"/> domain model for testing.
+    /// </summary>
+    /// <param name="tournamentId">The associated tournament identifier.</param>
+    /// <param name="homeId">The home team identifier.</param>
+    /// <param name="guestId">The guest team identifier.</param>
+    /// <param name="matchNumber">The match number or code (defaults to "M-TEST").</param>
+    /// <returns>A populated <see cref="Match"/> instance.</returns>
     private static Match CreateMatchModel(Guid tournamentId, Guid homeId, Guid guestId, string matchNumber = "M-TEST")
     {
         return new Match

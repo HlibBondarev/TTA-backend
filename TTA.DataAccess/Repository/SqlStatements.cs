@@ -263,6 +263,12 @@ public static class SqlStatements
         /// Executes the storage function to provision infrastructure and create a quick match.
         /// </summary>
         public const string CreateQuickMatch = @"SELECT * FROM public.create_quick_match(@SportId, @ConfigurationId)";
+
+        /// <summary>
+        /// Executes the storage function to delete a match by its unique identifier.
+        /// </summary>
+        public const string DeleteMatch =
+            "SELECT public.delete_match(@p_id);";
     }
 
     /// <summary>

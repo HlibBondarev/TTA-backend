@@ -981,6 +981,23 @@ BEGIN
 END;
 $$;
 
+/**********************************************************************************
+ * Removes a match record from the database by its unique identifier.
+ * Returns TRUE if the record was successfully deleted, FALSE otherwise.
+ * Dynamic CASCADE constraints will clean up related lineups/events automatically.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.delete_match(
+    p_id UUID
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+    DELETE FROM public.matches
+    WHERE id = p_id;
+
+    RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql;
+
 -- =============================================================
 -- MATCHLINEUP MANAGEMENT FUNCTIONS
 -- =============================================================

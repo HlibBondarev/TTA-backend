@@ -50,4 +50,12 @@ public interface IMatchRepository : IEntityRepositoryBase<Guid, Match>
         Guid sportId,
         Guid? configurationId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes a match record by its unique identifier.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match to delete.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task returning true if the record was successfully deleted; otherwise, false.</returns>
+    Task<bool> DeleteAsync(Guid matchId, CancellationToken cancellationToken = default);
 }
