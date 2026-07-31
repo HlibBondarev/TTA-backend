@@ -1414,7 +1414,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     {
         // Arrange
         var sportId = Guid.NewGuid();
-        await SeedSportDataAsync(sportId, "Quick Polo");
+        sportId = await SeedSportDataAsync(sportId, $"QuickPolo_{Guid.NewGuid():N}");
         await SeedUserAsync(TestUserId);
 
         var request = new
