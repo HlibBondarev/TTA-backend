@@ -160,7 +160,8 @@ public class RostersControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var clubId = Guid.NewGuid();
 
         await SeedRequiredLocationDataAsync(cityId);
-        await SeedSportDataAsync(sportId, "Football");
+        // FIX: Assign returned persisted sportId and use unique sport name to prevent ON CONFLICT collisions
+        sportId = await SeedSportDataAsync(sportId, $"Football_{Guid.NewGuid():N}");
         var configId = await SeedConfigurationAsync(sportId);
 
         await SeedClubAsync(clubId, cityId);
