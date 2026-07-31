@@ -149,10 +149,10 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
 
     /// <summary>
     /// Seeds all necessary database records required for a Team to exist.
+    /// Uses explicit transaction to satisfy deferred FK constraints and updated Sport table schema.
     /// </summary>
     private async Task SeedTeamDependenciesAsync(Guid clubId, Guid sportId)
     {
-        // UPDATED: Cast directly to NpgsqlConnection instead of using ConnectionString
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
@@ -161,6 +161,7 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         try
         {
             var cityId = Guid.NewGuid();
+            var configId = Guid.NewGuid();
 
             // 1. Seed Location & Club hierarchy
             await SeedCountryAsync(conn, transaction, 1, "Ukraine", "UKR");
@@ -168,8 +169,9 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
             await SeedCityAsync(conn, transaction, cityId, "Kyiv", 1);
             await SeedClubAsync(conn, transaction, clubId, "Test Athletic Club", cityId);
 
-            // 2. Seed Sport
-            await SeedSportAsync(conn, transaction, sportId, "Football");
+            // 2. Seed Sport & SportConfiguration (Updated for Issue #69 schema)
+            await SeedSportAsync(conn, transaction, sportId, "Football", "FB", configId);
+            await SeedSportConfigurationAsync(conn, transaction, configId, sportId);
 
             await transaction.CommitAsync();
         }
@@ -204,10 +206,18 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         await conn.ExecuteAsync(sql, new { id, name, cityId }, tx);
     }
 
-    private static async Task SeedSportAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid id, string name)
+    private static async Task SeedSportAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid id, string name, string shortName, Guid defaultConfigId)
     {
-        var sql = "INSERT INTO public.sports (id, name) VALUES (@id, @name) ON CONFLICT DO NOTHING";
-        await conn.ExecuteAsync(sql, new { id, name }, tx);
+        var sql = "INSERT INTO public.sports (id, name, shortname, defaultconfigid) VALUES (@id, @name, @shortName, @defaultConfigId) ON CONFLICT DO NOTHING";
+        await conn.ExecuteAsync(sql, new { id, name, shortName, defaultConfigId }, tx);
+    }
+
+    private static async Task SeedSportConfigurationAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid id, Guid sportId)
+    {
+        var sql = @"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+            VALUES (@id, @sportId, false, 2, 45, '105x68', 25, 11) ON CONFLICT DO NOTHING";
+        await conn.ExecuteAsync(sql, new { id, sportId }, tx);
     }
 
     private static Team CreateTeamModel(Guid clubId, Guid sportId, string name) => new()

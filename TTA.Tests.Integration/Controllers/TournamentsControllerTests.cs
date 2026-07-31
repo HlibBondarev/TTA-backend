@@ -324,6 +324,11 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
 
     #region Helpers
 
+    /// <summary>
+    /// Sets up a complete tournament context including user, location, sport, configuration, and tournament.
+    /// </summary>
+    /// <param name="ownerId">The owner user ID for the tournament.</param>
+    /// <returns>A tuple containing the created TournamentId, CityId, and SportId.</returns>
     private async Task<(Guid TournamentId, Guid CityId, Guid SportId)> SetupTournamentContextAsync(string ownerId)
     {
         await SeedUserAsync(ownerId);
@@ -337,6 +342,11 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         return (tournamentId, cityId, sportId);
     }
 
+    /// <summary>
+    /// Seeds a user record into the database.
+    /// </summary>
+    /// <param name="userId">The unique identifier of the user.</param>
+    /// <returns>The seeded user ID.</returns>
     private async Task<string> SeedUserAsync(string userId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -356,6 +366,15 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         return (string)(await cmd.ExecuteScalarAsync())!;
     }
 
+    /// <summary>
+    /// Seeds a tournament record into the database.
+    /// </summary>
+    /// <param name="id">The unique identifier of the tournament.</param>
+    /// <param name="sportId">The unique identifier of the sport.</param>
+    /// <param name="configId">The unique identifier of the sport configuration.</param>
+    /// <param name="cityId">The unique identifier of the city.</param>
+    /// <param name="ownerId">The user ID of the tournament owner.</param>
+    /// <param name="name">The name of the tournament.</param>
     private async Task SeedTournamentAsync(Guid id, Guid sportId, Guid configId, Guid cityId, string ownerId, string name)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -377,6 +396,13 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         await cmd.ExecuteNonQueryAsync();
     }
 
+    /// <summary>
+    /// Seeds a club and team record into the database.
+    /// </summary>
+    /// <param name="cityId">The unique identifier of the city.</param>
+    /// <param name="sportId">The unique identifier of the sport.</param>
+    /// <param name="name">The team name.</param>
+    /// <returns>The unique identifier of the seeded team.</returns>
     private async Task<Guid> SeedTeamAsync(Guid cityId, Guid sportId, string name)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -413,6 +439,8 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
     /// Seeds a player roster for a specific team in a tournament.
     /// Ensures player positions are reused if they already exist for the given sport.
     /// </summary>
+    /// <param name="tournamentId">The unique identifier of the tournament.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
     private async Task SeedRosterAsync(Guid tournamentId, Guid teamId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -436,7 +464,6 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         }
 
         // 2. Get or Create Player Position
-        // First, try to find an existing position for this sport
         const string findPosSql = @"
             SELECT id FROM public.playerpositiondefinitions 
             WHERE sportid = (SELECT sportid FROM public.teams WHERE id = @tId) 
@@ -450,7 +477,6 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
             posId = result != null ? (Guid)result : Guid.Empty;
         }
 
-        // If not found, insert a new one
         if (posId == Guid.Empty)
         {
             posId = Guid.NewGuid();
@@ -510,54 +536,167 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         cmd.Parameters.AddWithValue("tId", tournamentId);
         cmd.Parameters.AddWithValue("hId", homeId);
         cmd.Parameters.AddWithValue("gId", guestId);
-        // Use provided value or default to current UTC time
         cmd.Parameters.AddWithValue("date", scheduledAt ?? DateTime.UtcNow);
-        // Use provided match number or default to "M-TEST"
         cmd.Parameters.AddWithValue("num", matchNumber);
         cmd.Parameters.AddWithValue("created", DateTime.UtcNow);
 
         await cmd.ExecuteNonQueryAsync();
     }
 
+    /// <summary>
+    /// Seeds or retrieves a sport configuration record for the specified sport.
+    /// </summary>
+    /// <param name="sportId">The unique identifier of the associated sport.</param>
+    /// <returns>The unique identifier of the sport configuration.</returns>
     private async Task<Guid> SeedConfigurationAsync(Guid sportId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
+
+        using (var checkCmd = new NpgsqlCommand("SELECT defaultconfigid FROM public.sports WHERE id = @sid", conn))
+        {
+            checkCmd.Parameters.AddWithValue("sid", sportId);
+            var existingConfigId = await checkCmd.ExecuteScalarAsync();
+            if (existingConfigId != null && existingConfigId != DBNull.Value)
+            {
+                return (Guid)existingConfigId;
+            }
+        }
+
         var configId = Guid.NewGuid();
-        const string sql = "INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) VALUES (@id, @sid, false, 2, 45, 'Standard', 25, 11)";
+        const string sql = @"
+            INSERT INTO public.sportconfigurations (
+                id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit
+            ) VALUES (
+                @id, @sid, false, 2, 45, 'Standard', 25, 11, 7)
+            ON CONFLICT DO NOTHING";
+
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", configId);
         cmd.Parameters.AddWithValue("sid", sportId);
         await cmd.ExecuteNonQueryAsync();
+
         return configId;
     }
 
+    /// <summary>
+    /// Seeds location data (Country, Region, City) required for tournament context.
+    /// Uses name conflict resolution for countries and regions.
+    /// </summary>
+    /// <param name="cityId">The unique identifier of the city to seed.</param>
     private async Task SeedRequiredLocationDataAsync(Guid cityId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
-        await ExecuteSql(conn, "INSERT INTO public.countries (id, name, code) VALUES (1, 'Ukraine', 'UA') ON CONFLICT DO NOTHING");
-        await ExecuteSql(conn, "INSERT INTO public.regions (id, name, countryid) VALUES (1, 'Test Region', 1) ON CONFLICT DO NOTHING");
-        const string citySql = "INSERT INTO public.cities (id, name, regionid) VALUES (@id, 'Test City', 1) ON CONFLICT DO NOTHING";
-        using var cmd = new NpgsqlCommand(citySql, conn);
-        cmd.Parameters.AddWithValue("id", cityId);
-        await cmd.ExecuteNonQueryAsync();
+
+        await ExecuteSql(conn, @"
+            INSERT INTO public.countries (name, code) 
+            VALUES ('Ukraine', 'UA') 
+            ON CONFLICT (name) DO NOTHING");
+
+        int countryId;
+        using (var cmd = new NpgsqlCommand("SELECT id FROM public.countries WHERE name = 'Ukraine'", conn))
+        {
+            countryId = (int)(await cmd.ExecuteScalarAsync())!;
+        }
+
+        using (var cmd = new NpgsqlCommand(@"
+            INSERT INTO public.regions (countryid, name) 
+            VALUES (@countryId, 'Test Region') 
+            ON CONFLICT (countryid, name) DO NOTHING", conn))
+        {
+            cmd.Parameters.AddWithValue("countryId", countryId);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        int regionId;
+        using (var cmd = new NpgsqlCommand("SELECT id FROM public.regions WHERE name = 'Test Region' AND countryid = @countryId", conn))
+        {
+            cmd.Parameters.AddWithValue("countryId", countryId);
+            regionId = (int)(await cmd.ExecuteScalarAsync())!;
+        }
+
+        const string citySql = @"
+            INSERT INTO public.cities (id, name, regionid) 
+            VALUES (@id, 'Test City', @regionId) 
+            ON CONFLICT (regionid, name) DO NOTHING";
+        using (var cmd = new NpgsqlCommand(citySql, conn))
+        {
+            cmd.Parameters.AddWithValue("id", cityId);
+            cmd.Parameters.AddWithValue("regionId", regionId);
+            await cmd.ExecuteNonQueryAsync();
+        }
     }
 
+    /// <summary>
+    /// Seeds a sport record along with its default sport configuration into the database.
+    /// Uses a transaction to satisfy the deferred foreign key constraint between sports and sportconfigurations.
+    /// </summary>
+    /// <param name="sportId">The unique identifier of the sport to seed.</param>
+    /// <param name="name">The display name of the sport.</param>
+    /// <returns>The unique identifier of the created or updated sport.</returns>
     private async Task<Guid> SeedSportDataAsync(Guid sportId, string name)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
-        const string sql = "INSERT INTO public.sports (id, name) VALUES (@id, @name) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id";
-        using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("id", sportId);
-        cmd.Parameters.AddWithValue("name", name);
-        return (Guid)(await cmd.ExecuteScalarAsync())!;
+
+        using (var checkCmd = new NpgsqlCommand("SELECT id FROM public.sports WHERE name = @name", conn))
+        {
+            checkCmd.Parameters.AddWithValue("name", name);
+            var existing = await checkCmd.ExecuteScalarAsync();
+            if (existing != null && existing != DBNull.Value)
+            {
+                return (Guid)existing;
+            }
+        }
+
+        var configId = Guid.NewGuid();
+        var shortName = name.Length <= 3 ? name.ToUpper() : name[..3].ToUpper();
+
+        using var tx = await conn.BeginTransactionAsync();
+
+        const string sportSql = @"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@sportId, @name, @shortName, @configId)";
+
+        using (var cmd = new NpgsqlCommand(sportSql, conn, tx))
+        {
+            cmd.Parameters.AddWithValue("sportId", sportId);
+            cmd.Parameters.AddWithValue("name", name);
+            cmd.Parameters.AddWithValue("shortName", shortName);
+            cmd.Parameters.AddWithValue("configId", configId);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        const string configSql = @"
+            INSERT INTO public.sportconfigurations (
+                id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit
+            ) VALUES (
+                @configId, @sportId, false, 2, 45, 'Standard', 25, 11, 7)";
+
+        using (var cmd = new NpgsqlCommand(configSql, conn, tx))
+        {
+            cmd.Parameters.AddWithValue("configId", configId);
+            cmd.Parameters.AddWithValue("sportId", sportId);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        await tx.CommitAsync();
+
+        return sportId;
     }
 
     /// <summary>
     /// Seeds a tournament with specific start and end dates to test boundary conditions.
     /// </summary>
+    /// <param name="id">The unique identifier of the tournament.</param>
+    /// <param name="sportId">The unique identifier of the sport.</param>
+    /// <param name="configId">The unique identifier of the sport configuration.</param>
+    /// <param name="cityId">The unique identifier of the city.</param>
+    /// <param name="ownerId">The user ID of the tournament owner.</param>
+    /// <param name="name">The name of the tournament.</param>
+    /// <param name="start">The start date of the tournament.</param>
+    /// <param name="end">The end date of the tournament.</param>
     private async Task SeedTournamentWithDatesAsync(Guid id, Guid sportId, Guid configId, Guid cityId, string ownerId, string name, DateTime start, DateTime? end)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -579,6 +718,11 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         await cmd.ExecuteNonQueryAsync();
     }
 
+    /// <summary>
+    /// Executes a non-query SQL command against the active database connection.
+    /// </summary>
+    /// <param name="conn">The active database connection.</param>
+    /// <param name="sql">The SQL statement to execute.</param>
     private static async Task ExecuteSql(NpgsqlConnection conn, string sql)
     {
         using var cmd = new NpgsqlCommand(sql, conn);

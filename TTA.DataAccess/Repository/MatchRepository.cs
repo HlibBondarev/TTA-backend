@@ -2,6 +2,7 @@
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository;
 
@@ -43,10 +44,6 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
-    /// <summary>
-    /// Executes the 'GetMatchWithDetailsById' SQL statement to fetch a match with its associated metadata.
-    /// Uses Dapper's QueryFirstOrDefaultAsync with a dynamic return type.
-    /// </summary>
     public async Task<dynamic?> GetMatchByIdWithDetailsAsync(Guid matchId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
@@ -55,6 +52,23 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
         using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.QueryFirstOrDefaultAsync<dynamic>(new CommandDefinition(
             SqlStatements.ForMatches.GetMatchWithDetailsById,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async Task<QuickMatchProjection?> CreateQuickMatchAsync(
+        Guid sportId,
+        Guid? configurationId,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("SportId", sportId);
+        parameters.Add("ConfigurationId", configurationId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.QueryFirstOrDefaultAsync<QuickMatchProjection>(new CommandDefinition(
+            SqlStatements.ForMatches.CreateQuickMatch,
             parameters,
             cancellationToken: cancellationToken));
     }

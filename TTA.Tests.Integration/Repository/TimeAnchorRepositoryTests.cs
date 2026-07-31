@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using FluentAssertions;
+using System.Data.Common;
 using TTA.DataAccess.Enums;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
@@ -161,73 +162,79 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
     /// <summary>
     /// Seeds the environment for integration tests.
     /// Creates the minimum required hierarchy up to a valid Match record.
+    /// Uses explicit transaction to satisfy deferred FK constraints and updated Sport table schema.
     /// </summary>
     /// <returns>The unique identifier of the created match.</returns>
     private async Task<Guid> SeedTimeAnchorEnvironmentAsync()
     {
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
 
         // Geography
         await conn.ExecuteAsync(@"
             INSERT INTO public.countries (name, code) 
-            SELECT 'Ukraine', 'UA' WHERE NOT EXISTS (SELECT 1 FROM public.countries WHERE name = 'Ukraine')");
-        var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE name = 'Ukraine'");
+            SELECT 'Ukraine', 'UA' WHERE NOT EXISTS (SELECT 1 FROM public.countries WHERE name = 'Ukraine')",
+            transaction: transaction);
+        var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE name = 'Ukraine'", transaction: transaction);
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.regions (countryid, name) 
             SELECT @cid, 'Dnipro Region' WHERE NOT EXISTS (SELECT 1 FROM public.regions WHERE name = 'Dnipro Region' AND countryid = @cid)",
-            new { cid = countryId });
-        var regionId = await conn.QuerySingleAsync<int>("SELECT id FROM public.regions WHERE name = 'Dnipro Region'");
+            new { cid = countryId }, transaction: transaction);
+        var regionId = await conn.QuerySingleAsync<int>("SELECT id FROM public.regions WHERE name = 'Dnipro Region'", transaction: transaction);
 
         var cityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
         await conn.ExecuteAsync(@"
             INSERT INTO public.cities (id, regionid, name) 
             SELECT @id, @rid, 'Dnipro' WHERE NOT EXISTS (SELECT 1 FROM public.cities WHERE id = @id)",
-            new { id = cityId, rid = regionId });
+            new { id = cityId, rid = regionId }, transaction: transaction);
 
         // User
         var userId = "auth0|integration-tester";
         await conn.ExecuteAsync(@"
             INSERT INTO public.users (id, email, displayname, createdat) 
             SELECT @id, 'test@tta.com', 'Tester', NOW() WHERE NOT EXISTS (SELECT 1 FROM public.users WHERE id = @id)",
-            new { id = userId });
+            new { id = userId }, transaction: transaction);
 
-        // Sport & Config
+        // Sport & Config (Updated for Issue #69 schema)
         var sportId = Guid.Parse("22222222-2222-2222-2222-222222222222");
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.sports (id, name) 
-            SELECT @id, 'Football' WHERE NOT EXISTS (SELECT 1 FROM public.sports WHERE id = @id)",
-            new { id = sportId });
-
         var configId = Guid.NewGuid();
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            SELECT @id, 'Football', 'FB', @configId WHERE NOT EXISTS (SELECT 1 FROM public.sports WHERE id = @id)",
+            new { id = sportId, configId }, transaction: transaction);
+
         await conn.ExecuteAsync(@"
             INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
             SELECT @id, @sid, false, 2, 45, '105x68', 25, 11 WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
-            new { id = configId, sid = sportId });
+            new { id = configId, sid = sportId }, transaction: transaction);
 
         // Transactional Data
         var suffix = Guid.NewGuid().ToString("N").Substring(0, 6);
 
         var clubId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityid, @name, NOW())",
-            new { id = clubId, cityid = cityId, name = $"Club_{suffix}" });
+            new { id = clubId, cityid = cityId, name = $"Club_{suffix}" }, transaction: transaction);
 
         var tournamentId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
             INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
             VALUES (@id, @sid, (SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1), @cityid, @oid, @name, NOW(), NOW())",
-            new { id = tournamentId, sid = sportId, cityid = cityId, oid = userId, name = $"Tournament_{suffix}" });
+            new { id = tournamentId, sid = sportId, cityid = cityId, oid = userId, name = $"Tournament_{suffix}" }, transaction: transaction);
 
         var teamId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @cid, @sid, @name, 0, NOW())",
-            new { id = teamId, cid = clubId, sid = sportId, name = $"Team_{suffix}" });
+            new { id = teamId, cid = clubId, sid = sportId, name = $"Team_{suffix}" }, transaction: transaction);
 
         var matchId = Guid.NewGuid();
-        // Inserting directly bypasses full procedural validation ensuring isolation and speed for repository tests
         await conn.ExecuteAsync(@"
             INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, createdat) 
             VALUES (@id, @tid, @teamid, @teamid, NOW(), NOW())",
-            new { id = matchId, tid = tournamentId, teamid = teamId });
+            new { id = matchId, tid = tournamentId, teamid = teamId }, transaction: transaction);
+
+        await transaction.CommitAsync();
 
         return matchId;
     }

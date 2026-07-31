@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using FluentAssertions;
 using Npgsql;
+using System.Data.Common;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
@@ -476,102 +477,108 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
     /// Seeds the environment for player presence integration tests.
     /// Uses robust ON CONFLICT DO NOTHING checks to avoid unique constraint violations
     /// regardless of test execution order or leftover static data.
+    /// Uses explicit transaction to satisfy deferred FK constraints and updated Sport table schema.
     /// </summary>
     /// <returns>A tuple containing the generated MatchId and two unique MatchLineupIds.</returns>
     private async Task<(Guid MatchId, Guid LineupId1, Guid LineupId2)> SeedPresenceEnvironmentAsync()
     {
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
 
         // 1. Geography (Safe unique constraint handling)
         await conn.ExecuteAsync(@"
             INSERT INTO public.countries (name, code) 
             VALUES ('Ukraine', 'UA') 
-            ON CONFLICT (name) DO NOTHING");
-        var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE name = 'Ukraine'");
+            ON CONFLICT (name) DO NOTHING", transaction: transaction);
+        var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE name = 'Ukraine'", transaction: transaction);
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.regions (countryid, name) 
             VALUES (@cid, 'Dnipro Region') 
             ON CONFLICT (countryid, name) DO NOTHING",
-            new { cid = countryId });
-        var regionId = await conn.QuerySingleAsync<int>("SELECT id FROM public.regions WHERE name = 'Dnipro Region' AND countryid = @cid", new { cid = countryId });
+            new { cid = countryId }, transaction: transaction);
+        var regionId = await conn.QuerySingleAsync<int>("SELECT id FROM public.regions WHERE name = 'Dnipro Region' AND countryid = @cid", new { cid = countryId }, transaction: transaction);
 
         var cityId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
             INSERT INTO public.cities (id, regionid, name) 
             VALUES (@id, @rid, 'Dnipro') 
             ON CONFLICT (regionid, name) DO NOTHING",
-            new { id = cityId, rid = regionId });
-        cityId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.cities WHERE regionid = @rid AND name = 'Dnipro'", new { rid = regionId });
+            new { id = cityId, rid = regionId }, transaction: transaction);
+        cityId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.cities WHERE regionid = @rid AND name = 'Dnipro'", new { rid = regionId }, transaction: transaction);
 
-        // 2. User & Sport (Safe unique constraint handling)
+        // 2. User & Sport (Safe unique constraint handling, updated for Issue #69 schema)
         var userId = "auth0|presence-tester";
         await conn.ExecuteAsync(@"
             INSERT INTO public.users (id, email, displayname, createdat) 
             VALUES (@id, 'tester@tta.com', 'Tester', NOW()) 
             ON CONFLICT (id) DO NOTHING",
-            new { id = userId });
+            new { id = userId }, transaction: transaction);
 
         var sportId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.sports (id, name) 
-            VALUES (@id, 'Water Polo') 
-            ON CONFLICT (name) DO NOTHING",
-            new { id = sportId });
-        sportId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sports WHERE name = 'Water Polo'");
-
         var configId = Guid.NewGuid();
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            SELECT @id, 'Water Polo', 'WP', @configId 
+            WHERE NOT EXISTS (SELECT 1 FROM public.sports WHERE name = 'Water Polo')",
+            new { id = sportId, configId }, transaction: transaction);
+        sportId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sports WHERE name = 'Water Polo'", transaction: transaction);
+
         await conn.ExecuteAsync(@"
             INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
             SELECT @id, @sid, true, 4, 8, '30x20', 15, 7 
             WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
-            new { id = configId, sid = sportId });
-        configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId });
+            new { id = configId, sid = sportId }, transaction: transaction);
+        configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId }, transaction: transaction);
 
         var posId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
             INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
             SELECT @id, @sid, 'Center Forward', 'CF' 
             WHERE NOT EXISTS (SELECT 1 FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF')",
-            new { id = posId, sid = sportId });
-        posId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF' LIMIT 1", new { sid = sportId });
+            new { id = posId, sid = sportId }, transaction: transaction);
+        posId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF' LIMIT 1", new { sid = sportId }, transaction: transaction);
 
         // 3. Organization (Club, Tournament, Team)
         var clubId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityid, @name, NOW())",
-            new { id = clubId, cityid = cityId, name = $"WP_Club_{Guid.NewGuid():N}" });
+            new { id = clubId, cityid = cityId, name = $"WP_Club_{Guid.NewGuid():N}" }, transaction: transaction);
 
         var tournamentId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
             INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
             VALUES (@id, @sid, @cfgid, @cityid, @oid, @name, NOW(), NOW())",
-            new { id = tournamentId, sid = sportId, cfgid = configId, cityid = cityId, oid = userId, name = $"WP_Cup_{Guid.NewGuid():N}" });
+            new { id = tournamentId, sid = sportId, cfgid = configId, cityid = cityId, oid = userId, name = $"WP_Cup_{Guid.NewGuid():N}" }, transaction: transaction);
 
         var teamId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @cid, @sid, @name, 0, NOW())",
-            new { id = teamId, cid = clubId, sid = sportId, name = $"WP_Team_{Guid.NewGuid():N}" });
+            new { id = teamId, cid = clubId, sid = sportId, name = $"WP_Team_{Guid.NewGuid():N}" }, transaction: transaction);
 
         var matchId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
             INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, createdat) 
             VALUES (@id, @tid, @teamid, @teamid, NOW(), NOW())",
-            new { id = matchId, tid = tournamentId, teamid = teamId });
+            new { id = matchId, tid = tournamentId, teamid = teamId }, transaction: transaction);
 
         // 4. Players & Lineups
         var playerId1 = Guid.NewGuid();
         var playerId2 = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'P1', 'L1', '2000-01-01', 0, NOW())", new { id = playerId1, cid = clubId });
-        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'P2', 'L2', '2000-01-02', 0, NOW())", new { id = playerId2, cid = clubId });
+        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'P1', 'L1', '2000-01-01', 0, NOW())", new { id = playerId1, cid = clubId }, transaction: transaction);
+        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'P2', 'L2', '2000-01-02', 0, NOW())", new { id = playerId2, cid = clubId }, transaction: transaction);
 
         var rosterId1 = Guid.NewGuid();
         var rosterId2 = Guid.NewGuid();
-        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 1, @posid, NOW())", new { id = rosterId1, pid = playerId1, tid = tournamentId, teamid = teamId, posid = posId });
-        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 2, @posid, NOW())", new { id = rosterId2, pid = playerId2, tid = tournamentId, teamid = teamId, posid = posId });
+        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 1, @posid, NOW())", new { id = rosterId1, pid = playerId1, tid = tournamentId, teamid = teamId, posid = posId }, transaction: transaction);
+        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 2, @posid, NOW())", new { id = rosterId2, pid = playerId2, tid = tournamentId, teamid = teamId, posid = posId }, transaction: transaction);
 
         var lineupId1 = Guid.NewGuid();
         var lineupId2 = Guid.NewGuid();
-        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 1, @posid)", new { id = lineupId1, mid = matchId, rid = rosterId1, posid = posId });
-        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 2, @posid)", new { id = lineupId2, mid = matchId, rid = rosterId2, posid = posId });
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 1, @posid)", new { id = lineupId1, mid = matchId, rid = rosterId1, posid = posId }, transaction: transaction);
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 2, @posid)", new { id = lineupId2, mid = matchId, rid = rosterId2, posid = posId }, transaction: transaction);
+
+        await transaction.CommitAsync();
 
         return (matchId, lineupId1, lineupId2);
     }

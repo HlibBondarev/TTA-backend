@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using FluentAssertions;
+using System.Data.Common;
 using TTA.Common.Enums;
 using TTA.DataAccess.Enums;
 using TTA.DataAccess.Models;
@@ -214,49 +215,64 @@ public class TeamMembershipRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Seeds the team hierarchy according to the provided SQL Schema.
+    /// Helper method to seed base entities (Geography, User, Sport, Configuration, Club, Team) required for testing team memberships.
+    /// Uses explicit transaction to satisfy deferred FK constraints and updated Sport table schema.
     /// </summary>
+    /// <returns>The unique identifier of the seeded team entity.</returns>
     private async Task<Guid> SeedTeamAsync()
     {
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
-        var random = new Random();
-        var suffix = random.Next(100, 999);
-        var uniqueStr = Guid.NewGuid().ToString()[..8];
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
 
-        // 1. Countries: id SERIAL (int), code VARCHAR(3)
-        var countryId = await conn.QuerySingleAsync<int>(
-            "INSERT INTO public.countries (name, code) VALUES (@n, @c) RETURNING id",
-            new { n = $"Country_{uniqueStr}", c = uniqueStr[..3].ToUpper() });
+        var suffix = Guid.NewGuid().ToString("N")[..6];
 
-        // 2. Regions: id SERIAL (int), countryid INT
-        var regionId = await conn.QuerySingleAsync<int>(
-            "INSERT INTO public.regions (countryid, name) VALUES (@cid, @n) RETURNING id",
-            new { cid = countryId, n = $"Region_{uniqueStr}" });
+        // 1. Geography Setup
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.countries (name, code) 
+            SELECT 'Ukraine', 'UA' WHERE NOT EXISTS (SELECT 1 FROM public.countries WHERE name = 'Ukraine')",
+            transaction: transaction);
+        var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE name = 'Ukraine'", transaction: transaction);
 
-        // 3. Cities: id UUID, regionid INT
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.regions (countryid, name) 
+            SELECT @cid, 'Dnipro Region' WHERE NOT EXISTS (SELECT 1 FROM public.regions WHERE name = 'Dnipro Region' AND countryid = @cid)",
+            new { cid = countryId }, transaction: transaction);
+        var regionId = await conn.QuerySingleAsync<int>("SELECT id FROM public.regions WHERE name = 'Dnipro Region' AND countryid = @cid", new { cid = countryId }, transaction: transaction);
+
         var cityId = Guid.NewGuid();
-        await conn.ExecuteAsync(
-            "INSERT INTO public.cities (id, regionid, name) VALUES (@id, @rid, @n)",
-            new { id = cityId, rid = regionId, n = $"City_{uniqueStr}" });
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.cities (id, regionid, name) 
+            SELECT @id, @rid, 'Dnipro' WHERE NOT EXISTS (SELECT 1 FROM public.cities WHERE id = @id)",
+            new { id = cityId, rid = regionId }, transaction: transaction);
 
-        // 4. Clubs: id UUID, cityid UUID
-        var clubId = Guid.NewGuid();
-        await conn.ExecuteAsync(
-            "INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cid, @n, now())",
-            new { id = clubId, cid = cityId, n = $"Club_{uniqueStr}" });
-
-        // 5. Sports: id UUID
+        // 2. Sport & SportConfiguration (Updated for Issue #69 schema)
         var sportId = Guid.NewGuid();
-        await conn.ExecuteAsync(
-            "INSERT INTO public.sports (id, name) VALUES (@id, @n)",
-            new { id = sportId, n = $"Sport_{uniqueStr}" });
+        var configId = Guid.NewGuid();
+        var shortName = $"S_{sportId:N}"[..10];
 
-        // 6. Teams: id UUID, clubid UUID, sportid UUID
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@id, @n, @sn, @cfg)",
+            new { id = sportId, n = $"Sport_{suffix}", sn = shortName, cfg = configId }, transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
+            VALUES (@id, @s, false, 2, 45, '105x68', 25, 11)",
+            new { id = configId, s = sportId }, transaction: transaction);
+
+        // 3. Club & Team
+        var clubId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cid, @name, NOW())",
+            new { id = clubId, cid = cityId, name = $"Club_{suffix}" }, transaction: transaction);
+
         var teamId = Guid.NewGuid();
-        await conn.ExecuteAsync(
-            @"INSERT INTO public.teams (id, clubid, sportid, name, minbirthyear, gender, createdat) 
-              VALUES (@id, @clubId, @sportId, @n, 2010, 0, NOW())",
-            new { id = teamId, clubId, sportId, n = $"Team_{uniqueStr}" });
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) 
+            VALUES (@id, @cid, @sid, @name, 0, NOW())",
+            new { id = teamId, cid = clubId, sid = sportId, name = $"Team_{suffix}" }, transaction: transaction);
+
+        await transaction.CommitAsync();
 
         return teamId;
     }

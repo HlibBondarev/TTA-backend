@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using FluentAssertions;
+using System.Data.Common;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
@@ -147,15 +148,61 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     #endregion
 
+    #region CreateQuickMatchAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.CreateQuickMatchAsync"/> provisions JIT teams, tournament container, 
+    /// player rosters, and creates the match entity in a single atomic database operation.
+    /// </summary>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldProvisionInfrastructureAndReturnProjection()
+    {
+        // Arrange - seed base sport and configuration with deferred FK transaction
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@sportId, 'Water Polo Quick', 'WPQ', @configId)",
+            new { sportId, configId }, transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+            VALUES (@configId, @sportId, true, 4, 8, '30x20', 15, 13)",
+            new { configId, sportId }, transaction: transaction);
+
+        await transaction.CommitAsync();
+
+        // Act
+        var result = await _repository.CreateQuickMatchAsync(sportId, configId, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().NotBeEmpty();
+        result.TournamentId.Should().NotBeEmpty();
+        result.HomeTeamId.Should().NotBeEmpty();
+        result.GuestTeamId.Should().NotBeEmpty();
+        result.ScheduledAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
+    }
+
+    #endregion
+
     #region Helpers
 
     /// <summary>
-    /// Seeds all necessary entities with unique names and valid codes.
+    /// Seeds all necessary entities with unique names and valid codes strictly following 01-Tables.sql schema.
     /// Ensures country codes do not exceed the 3-character database limit (varchar(3)).
+    /// Uses an explicit transaction to satisfy deferred foreign key constraints between sports and sportconfigurations.
     /// </summary>
     private async Task<(Guid TournamentId, Guid HomeTeamId, Guid GuestTeamId)> SeedMatchEnvironmentAsync()
     {
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
 
         // Generate a unique 8-char suffix for names
         var suffix = Guid.NewGuid().ToString()[..8];
@@ -165,64 +212,77 @@ public class MatchRepositoryTests : BaseIntegrationTest
         // 1. Geography & Auth
         var userId = $"auth0|{Guid.NewGuid()}";
         await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
-            new { id = userId, e = $"owner_{suffix}@test.com", n = $"Owner {suffix}" });
+            new { id = userId, e = $"owner_{suffix}@test.com", n = $"Owner {suffix}" }, transaction: transaction);
 
         var countryId = await conn.ExecuteScalarAsync<int>(
             "INSERT INTO public.countries (name, code, createdat) VALUES (@n, @c, NOW()) RETURNING id",
-            new { n = $"Country_{suffix}", c = shortCode });
+            new { n = $"Country_{suffix}", c = shortCode }, transaction: transaction);
 
         var regionId = await conn.ExecuteScalarAsync<int>(
             "INSERT INTO public.regions (countryid, name) VALUES (@c, @n) RETURNING id",
-            new { c = countryId, n = $"Region_{suffix}" });
+            new { c = countryId, n = $"Region_{suffix}" }, transaction: transaction);
 
         var cityId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.cities (id, regionid, name) VALUES (@id, @r, @n)",
-            new { id = cityId, r = regionId, n = $"City_{suffix}" });
+            new { id = cityId, r = regionId, n = $"City_{suffix}" }, transaction: transaction);
 
-        // 2. Sport & Tournament
+        // 2. Sport & Tournament (Updated for Issue #69 schema)
         var sportId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.sports (id, name) VALUES (@id, @n)",
-            new { id = sportId, n = $"Sport_{suffix}" });
-
         var configId = Guid.NewGuid();
+        var shortName = $"S_{sportId:N}"[..10];
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@id, @n, @sn, @cfg)",
+            new { id = sportId, n = $"Sport_{suffix}", sn = shortName, cfg = configId }, transaction: transaction);
+
         await conn.ExecuteAsync(@"
             INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
             VALUES (@id, @s, false, 2, 45, 'Large', 20, 11)",
-            new { id = configId, s = sportId });
+            new { id = configId, s = sportId }, transaction: transaction);
 
         var tournamentId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
             INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
             VALUES (@id, @s, @cfg, @ct, @o, @n, NOW(), NOW())",
-            new { id = tournamentId, s = sportId, cfg = configId, ct = cityId, o = userId, n = $"Tourney_{suffix}" });
+            new { id = tournamentId, s = sportId, cfg = configId, ct = cityId, o = userId, n = $"Tourney_{suffix}" }, transaction: transaction);
 
         // 3. Teams & Rosters
         var clubId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @c, @n, NOW())",
-            new { id = clubId, c = cityId, n = $"Club_{suffix}" });
+            new { id = clubId, c = cityId, n = $"Club_{suffix}" }, transaction: transaction);
 
-        var homeTeamId = await SeedTeamAndRosterAsync(conn, clubId, sportId, tournamentId, $"Home_{suffix}");
-        var guestTeamId = await SeedTeamAndRosterAsync(conn, clubId, sportId, tournamentId, $"Guest_{suffix}");
+        var homeTeamId = await SeedTeamAndRosterAsync(conn, transaction, clubId, sportId, tournamentId, $"Home_{suffix}");
+        var guestTeamId = await SeedTeamAndRosterAsync(conn, transaction, clubId, sportId, tournamentId, $"Guest_{suffix}");
+
+        await transaction.CommitAsync();
 
         return (tournamentId, homeTeamId, guestTeamId);
     }
 
-    private static async Task<Guid> SeedTeamAndRosterAsync(System.Data.IDbConnection conn, Guid clubId, Guid sportId, Guid tournamentId, string name)
+    private static async Task<Guid> SeedTeamAndRosterAsync(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction transaction,
+        Guid clubId,
+        Guid sportId,
+        Guid tournamentId,
+        string name)
     {
         var teamId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @c, @s, @n, 0, NOW())",
-            new { id = teamId, c = clubId, s = sportId, n = name });
+            new { id = teamId, c = clubId, s = sportId, n = name }, transaction: transaction);
 
-        // The stored function upsert_match requires teams to be in playerrosters[cite: 27]
+        // The stored function upsert_match requires teams to be in playerrosters
         var playerId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @c, 'F', 'L', '2000-01-01', 0, NOW())",
-            new { id = playerId, c = clubId });
+            new { id = playerId, c = clubId }, transaction: transaction);
 
         var posId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) VALUES (@id, @s, 'Forward', 'FW')", new { id = posId, s = sportId });
+        await conn.ExecuteAsync("INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) VALUES (@id, @s, 'Forward', 'FW')",
+            new { id = posId, s = sportId }, transaction: transaction);
 
         await conn.ExecuteAsync("SELECT public.upsert_player_to_roster(@id, @tid, @teamid, @pid, @posid, 10, NOW())",
-            new { id = Guid.NewGuid(), tid = tournamentId, teamid = teamId, pid = playerId, posid = posId });
+            new { id = Guid.NewGuid(), tid = tournamentId, teamid = teamId, pid = playerId, posid = posId }, transaction: transaction);
 
         return teamId;
     }
@@ -235,7 +295,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
             TournamentId = tournamentId,
             HomeTeamId = homeId,
             GuestTeamId = guestId,
-            MatchNumber = matchNumber, // Added this field
+            MatchNumber = matchNumber,
             ScheduledAt = DateTime.UtcNow.AddHours(2),
             Venue = "Main Arena",
             CreatedAt = DateTime.UtcNow

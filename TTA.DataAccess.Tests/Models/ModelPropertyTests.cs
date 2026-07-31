@@ -737,10 +737,17 @@ public class SportTests
     }
 
     [Fact]
-    public void Sport_DefaultConfigId_IsNullable_AndDefaultsToNull()
+    public void Sport_ShortName_CanBeSetAndRetrieved()
+    {
+        var sport = new Sport { ShortName = "FB" };
+        Assert.Equal("FB", sport.ShortName);
+    }
+
+    [Fact]
+    public void Sport_DefaultConfigId_DefaultsToEmptyGuid()
     {
         var sport = new Sport();
-        Assert.Null(sport.DefaultConfigId);
+        Assert.Equal(Guid.Empty, sport.DefaultConfigId);
     }
 
     [Fact]
