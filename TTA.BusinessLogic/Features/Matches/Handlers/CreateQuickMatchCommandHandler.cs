@@ -48,7 +48,7 @@ public class CreateQuickMatchCommandHandler(
         CreateQuickMatchCommand command,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Initiating quick match creation for SportId {SportId} by User {UserId}.",
+        _logger.LogDebug("Initiating quick match creation for SportId {SportId} by User {UserId}.",
             command.Request.SportId, command.UserId);
 
         // 1. Atomic JIT provisioning and Match entity creation via PostgreSQL stored function
@@ -63,6 +63,7 @@ public class CreateQuickMatchCommandHandler(
             throw new InvalidOperationException($"Failed to provision quick match infrastructure for SportId: {command.Request.SportId}");
         }
 
+        // Information Log 1: Key entity provisioning milestone
         _logger.LogInformation("Quick match {MatchId} created with HomeTeam {HomeTeamId} and GuestTeam {GuestTeamId}.",
             quickMatchProjection.Id, quickMatchProjection.HomeTeamId, quickMatchProjection.GuestTeamId);
 
@@ -74,7 +75,7 @@ public class CreateQuickMatchCommandHandler(
 
         if (activePolicy == null)
         {
-            _logger.LogInformation("Granting TeamEditor policy for User {UserId} on HomeTeam {HomeTeamId}.",
+            _logger.LogDebug("Granting TeamEditor policy for User {UserId} on HomeTeam {HomeTeamId}.",
                 command.UserId, quickMatchProjection.HomeTeamId);
 
             var newPolicy = new AccessPolicy
@@ -131,7 +132,7 @@ public class CreateQuickMatchCommandHandler(
         // 7. Populate starting lineup for Home Squad
         if (starterRosterIds.Length > 0)
         {
-            _logger.LogInformation("Populating starting lineup with {Count} players for Match {MatchId}.",
+            _logger.LogDebug("Populating starting lineup with {Count} players for Match {MatchId}.",
                 starterRosterIds.Length, quickMatchProjection.Id);
 
             await _matchLineupRepository.CopyFromRosterAsync(
@@ -141,6 +142,7 @@ public class CreateQuickMatchCommandHandler(
                 cancellationToken);
         }
 
+        // Information Log 2: Successful completion milestone
         _logger.LogInformation("Successfully completed quick match creation for Match {MatchId}.", quickMatchProjection.Id);
 
         // 8. Map and return QuickMatchResponse DTO
