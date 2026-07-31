@@ -917,6 +917,9 @@ BEGIN
             USING ERRCODE = 'P0005';
     END IF;
 
+    -- Concurrency Protection: Acquire transactional advisory lock scoped to sport and configuration
+    PERFORM pg_advisory_xact_lock(hashtext(p_sport_id::text), hashtext(v_effective_config_id::text));
+
     -- 2. Ensure Home Squad team exists for the given sportId (with gender = 0)
     SELECT t.id INTO v_home_team_id
     FROM public.teams t
