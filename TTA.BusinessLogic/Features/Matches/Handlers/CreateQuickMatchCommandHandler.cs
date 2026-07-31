@@ -156,11 +156,8 @@ public class CreateQuickMatchCommandHandler(
                 CreatedAt = quickMatchProjection.CreatedAt
             };
         }
-        catch (Exception ex)
+        catch
         {
-            _logger.LogWarning("Post-creation setup failed for Match {MatchId} ({ErrorMessage}). Performing compensating cleanup.",
-                quickMatchProjection.Id, ex.Message);
-
             // Roll back the newly created match entity to prevent leaving orphaned records
             await _matchRepository.DeleteAsync(quickMatchProjection.Id, CancellationToken.None);
 
