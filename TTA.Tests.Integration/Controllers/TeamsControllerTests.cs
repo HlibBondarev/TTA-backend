@@ -317,48 +317,44 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
 
     /// <summary>
     /// Seeds a team along with its sport and sport configuration dependencies.
-    /// Uses a transaction to satisfy the deferred foreign key constraint between sports and sportconfigurations.
+    /// Uses a transaction and ON CONFLICT handling to safely resolve the 'Football' sport entity across parallel test runs.
     /// </summary>
     /// <param name="conn">The active database connection.</param>
     /// <param name="id">The unique identifier of the team.</param>
     /// <param name="clubId">The unique identifier of the owning club.</param>
     private static async Task SeedTeamInternalAsync(NpgsqlConnection conn, Guid id, Guid clubId)
     {
-        var existingSportId = await conn.QueryFirstOrDefaultAsync<Guid?>(
-            "SELECT id FROM public.sports WHERE name = 'Football'");
+        using var tx = await conn.BeginTransactionAsync();
 
-        Guid sportId;
+        var sportId = Guid.NewGuid();
+        var defaultConfigId = Guid.NewGuid();
 
-        if (existingSportId.HasValue)
+        // Atomically insert or fetch existing 'Football' sport entity
+        var resolvedSportId = await conn.ExecuteScalarAsync<Guid>(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@sportId, 'Football', 'FB', @defaultConfigId) 
+            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+            RETURNING id",
+            new { sportId, defaultConfigId }, tx);
+
+        // If a new sport row was created, seed its corresponding sport configuration
+        if (resolvedSportId == sportId)
         {
-            sportId = existingSportId.Value;
-        }
-        else
-        {
-            sportId = Guid.NewGuid();
-            var defaultConfigId = Guid.NewGuid();
-
-            using var tx = await conn.BeginTransactionAsync();
-
-            await conn.ExecuteAsync(@"
-                INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
-                VALUES (@sportId, 'Football', 'FB', @defaultConfigId)",
-                new { sportId, defaultConfigId }, tx);
-
             await conn.ExecuteAsync(@"
                 INSERT INTO public.sportconfigurations (
                     id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit
                 ) VALUES (
-                    @defaultConfigId, @sportId, false, 2, 45, 'Standard', 18, 11, 7)",
+                    @defaultConfigId, @sportId, false, 2, 45, 'Standard', 18, 11, 7)
+                ON CONFLICT DO NOTHING",
                 new { defaultConfigId, sportId }, tx);
-
-            await tx.CommitAsync();
         }
+
+        await tx.CommitAsync();
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) 
             VALUES (@id, @clubId, @sportId, 'First Team', 0, @now)",
-            new { id, clubId, sportId, now = DateTime.UtcNow });
+            new { id, clubId, sportId = resolvedSportId, now = DateTime.UtcNow });
     }
 
     /// <summary>
