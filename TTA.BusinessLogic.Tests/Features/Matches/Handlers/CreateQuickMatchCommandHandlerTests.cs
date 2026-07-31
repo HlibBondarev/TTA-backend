@@ -87,7 +87,6 @@ public class CreateQuickMatchCommandHandlerTests
         var rosterItem2Id = Guid.NewGuid();
         var rosterItem3Id = Guid.NewGuid();
 
-        // Using ExpandoObject instead of anonymous types for Dapper dynamic simulation
         var mockRoster = new List<dynamic>
         {
             CreateMockRosterItem(rosterItem1Id),
@@ -200,10 +199,10 @@ public class CreateQuickMatchCommandHandlerTests
     }
 
     /// <summary>
-    /// Verifies that an <see cref="InvalidOperationException"/> is thrown when infrastructure provisioning returns null.
+    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when infrastructure provisioning returns null.
     /// </summary>
     [Fact]
-    public async Task Handle_ShouldThrowInvalidOperationException_WhenProvisioningFails()
+    public async Task Handle_ShouldThrowKeyNotFoundException_WhenProvisioningFails()
     {
         // Arrange
         var sportId = Guid.NewGuid();
@@ -215,15 +214,15 @@ public class CreateQuickMatchCommandHandlerTests
             .ReturnsAsync((QuickMatchProjection?)null);
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _handler.Handle(command, CancellationToken.None));
+        var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
         Assert.Contains(sportId.ToString(), exception.Message);
     }
 
     /// <summary>
-    /// Verifies that an <see cref="InvalidOperationException"/> is thrown when default sport resolution fails.
+    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when default sport resolution fails.
     /// </summary>
     [Fact]
-    public async Task Handle_ShouldThrowInvalidOperationException_WhenSportNotFoundForDefaultConfig()
+    public async Task Handle_ShouldThrowKeyNotFoundException_WhenSportNotFoundForDefaultConfig()
     {
         // Arrange
         var sportId = Guid.NewGuid();
@@ -245,15 +244,15 @@ public class CreateQuickMatchCommandHandlerTests
             .ReturnsAsync((Sport?)null);
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _handler.Handle(command, CancellationToken.None));
+        var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
         Assert.Contains(sportId.ToString(), exception.Message);
     }
 
     /// <summary>
-    /// Verifies that an <see cref="InvalidOperationException"/> is thrown when sport configuration entity is not found.
+    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when sport configuration entity is not found.
     /// </summary>
     [Fact]
-    public async Task Handle_ShouldThrowInvalidOperationException_WhenSportConfigurationNotFound()
+    public async Task Handle_ShouldThrowKeyNotFoundException_WhenSportConfigurationNotFound()
     {
         // Arrange
         var sportId = Guid.NewGuid();
@@ -276,7 +275,7 @@ public class CreateQuickMatchCommandHandlerTests
             .ReturnsAsync((SportConfiguration?)null);
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => _handler.Handle(command, CancellationToken.None));
+        var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
         Assert.Contains(configId.ToString(), exception.Message);
     }
 }

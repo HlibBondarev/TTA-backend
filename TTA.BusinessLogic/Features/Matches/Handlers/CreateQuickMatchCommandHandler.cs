@@ -43,7 +43,7 @@ public class CreateQuickMatchCommandHandler(
     /// <param name="command">The command containing quick match setup parameters and authenticated user details.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A <see cref="QuickMatchResponse"/> containing the newly created match details.</returns>
-    /// <exception cref="InvalidOperationException">Thrown if quick match infrastructure creation fails, or if the specified sport/sport configuration is missing.</exception>
+    /// <exception cref="KeyNotFoundException">Thrown if quick match infrastructure creation fails, or if the specified sport/sport configuration is missing.</exception>
     public async Task<QuickMatchResponse> Handle(
         CreateQuickMatchCommand command,
         CancellationToken cancellationToken)
@@ -60,7 +60,7 @@ public class CreateQuickMatchCommandHandler(
         if (quickMatchProjection == null)
         {
             _logger.LogError("Failed to provision quick match infrastructure for SportId {SportId}.", command.Request.SportId);
-            throw new InvalidOperationException($"Failed to provision quick match infrastructure for SportId: {command.Request.SportId}");
+            throw new KeyNotFoundException($"Failed to provision quick match infrastructure for SportId: {command.Request.SportId}");
         }
 
         // Information Log 1: Key entity provisioning milestone
@@ -103,7 +103,7 @@ public class CreateQuickMatchCommandHandler(
             if (sport == null)
             {
                 _logger.LogError("Sport with ID {SportId} was not found.", command.Request.SportId);
-                throw new InvalidOperationException($"Sport with ID {command.Request.SportId} was not found.");
+                throw new KeyNotFoundException($"Sport with ID {command.Request.SportId} was not found.");
             }
 
             targetConfigurationId = sport.DefaultConfigId;
@@ -114,7 +114,7 @@ public class CreateQuickMatchCommandHandler(
         if (sportConfig == null)
         {
             _logger.LogError("Sport configuration with ID {ConfigurationId} was not found.", targetConfigurationId);
-            throw new InvalidOperationException($"Sport configuration with ID {targetConfigurationId} was not found.");
+            throw new KeyNotFoundException($"Sport configuration with ID {targetConfigurationId} was not found.");
         }
 
         // 5. Retrieve Home Squad tournament roster
