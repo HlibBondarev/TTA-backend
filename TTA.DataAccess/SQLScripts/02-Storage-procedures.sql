@@ -893,6 +893,11 @@ BEGIN
     ON CONFLICT DO NOTHING;
 
     -- 1. Determine effective configuration ID (Use provided or fallback to sports.defaultconfigid)
+    -- Treat empty GUID ('00000000-0000-0000-0000-000000000000') as NULL
+    IF p_configuration_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
+        p_configuration_id := NULL;
+    END IF;
+
     v_effective_config_id := COALESCE(
         p_configuration_id, 
         (SELECT s.defaultconfigid FROM public.sports s WHERE s.id = p_sport_id)
@@ -900,6 +905,15 @@ BEGIN
 
     IF v_effective_config_id IS NULL THEN
         RAISE EXCEPTION 'Configuration ID not provided and default configuration does not exist for sport %.', p_sport_id
+            USING ERRCODE = 'P0005';
+    END IF;
+
+    -- Validate that effective configuration exists AND belongs to the specified sport
+    IF NOT EXISTS (
+        SELECT 1 FROM public.sportconfigurations sc 
+        WHERE sc.id = v_effective_config_id AND sc.sportid = p_sport_id
+    ) THEN
+        RAISE EXCEPTION 'Configuration % was not found or does not belong to sport %.', v_effective_config_id, p_sport_id
             USING ERRCODE = 'P0005';
     END IF;
 
