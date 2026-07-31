@@ -141,7 +141,9 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
 
         // 1. Geography
         var countryId = await conn.ExecuteScalarAsync<int>(
-            "INSERT INTO public.countries (name, code, createdat) VALUES (@name, @code, NOW()) RETURNING id",
+            @"INSERT INTO public.countries (name, code, createdat) VALUES (@name, @code, NOW())
+              ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+              RETURNING id",
             new { name = $"Country_{suffix}", code = suffix[..3].ToUpper() }, transaction: transaction);
 
         var regionId = await conn.ExecuteScalarAsync<int>(
