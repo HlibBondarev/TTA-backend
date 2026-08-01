@@ -108,11 +108,12 @@ BEGIN
     VALUES (v_user_id_3, 'user2@example.com', 'Ivan Franko', NOW())
     ON CONFLICT (id) DO NOTHING;
 
+    -- Assign Global FullControl (Admin) policy to v_user_id (Hlib Bondarev)
     INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
-    SELECT '99999999-9999-9999-9999-999999999904', v_user_id_3, 0, 0, NULL, NOW()
+    SELECT '99999999-9999-9999-9999-999999999904', v_user_id, 0, 0, NULL, NOW()
     WHERE NOT EXISTS (
         SELECT 1 FROM auth.accesspolicies 
-        WHERE userid = v_user_id_3 AND targettype = 0
+        WHERE userid = v_user_id AND targettype = 0
     );
 
 END $$;
