@@ -647,7 +647,11 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         }
 
         var configId = Guid.NewGuid();
-        var shortName = name.Length <= 3 ? name.ToUpper() : name[..3].ToUpper();
+
+        // Extract unique portion if prefix 'Sport-' is used, remove delimiters, and enforce 3-char uppercase shortName
+        var uniqueName = name.StartsWith("Sport-", StringComparison.OrdinalIgnoreCase) ? name[6..] : name;
+        var cleanName = uniqueName.Replace("-", "").Replace("_", "");
+        var shortName = cleanName.Length <= 3 ? cleanName.ToUpper() : cleanName[..3].ToUpper();
 
         using var tx = await conn.BeginTransactionAsync();
 
