@@ -171,6 +171,8 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
 
+        var suffix = Guid.NewGuid().ToString("N")[..6];
+
         // Geography
         await conn.ExecuteAsync(@"
             INSERT INTO public.countries (name, code) 
@@ -197,23 +199,23 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
             SELECT @id, 'test@tta.com', 'Tester', NOW() WHERE NOT EXISTS (SELECT 1 FROM public.users WHERE id = @id)",
             new { id = userId }, transaction: transaction);
 
-        // Sport & Config (Updated for Issue #69 schema)
-        var sportId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        // Sport & Config (Generated unique per seed execution)
+        var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
+        var sportName = $"Sport_{suffix}";
+        var shortName = suffix[..3].ToUpper();
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
-            SELECT @id, 'Football', 'FB', @configId WHERE NOT EXISTS (SELECT 1 FROM public.sports WHERE id = @id)",
-            new { id = sportId, configId }, transaction: transaction);
+            VALUES (@id, @name, @shortName, @configId)",
+            new { id = sportId, name = sportName, shortName, configId }, transaction: transaction);
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            SELECT @id, @sid, false, 2, 45, '105x68', 25, 11 WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
+            VALUES (@id, @sid, false, 2, 45, '105x68', 25, 11)",
             new { id = configId, sid = sportId }, transaction: transaction);
 
         // Transactional Data
-        var suffix = Guid.NewGuid().ToString("N").Substring(0, 6);
-
         var clubId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityid, @name, NOW())",
             new { id = clubId, cityid = cityId, name = $"Club_{suffix}" }, transaction: transaction);
@@ -221,8 +223,8 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
         var tournamentId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
             INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
-            VALUES (@id, @sid, (SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1), @cityid, @oid, @name, NOW(), NOW())",
-            new { id = tournamentId, sid = sportId, cityid = cityId, oid = userId, name = $"Tournament_{suffix}" }, transaction: transaction);
+            VALUES (@id, @sid, @configId, @cityid, @oid, @name, NOW(), NOW())",
+            new { id = tournamentId, sid = sportId, configId, cityid = cityId, oid = userId, name = $"Tournament_{suffix}" }, transaction: transaction);
 
         var teamId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @cid, @sid, @name, 0, NOW())",
