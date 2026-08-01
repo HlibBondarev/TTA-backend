@@ -219,15 +219,17 @@ public class CreateQuickMatchCommandHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when default sport resolution fails.
+    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when default sport resolution fails,
+    /// and that compensating cleanup deletes the created quick match entity.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldThrowKeyNotFoundException_WhenSportNotFoundForDefaultConfig()
     {
         // Arrange
         var sportId = Guid.NewGuid();
+        var userId = "auth0|user123";
         var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = null };
-        var command = new CreateQuickMatchCommand(request, "auth0|user123");
+        var command = new CreateQuickMatchCommand(request, userId);
 
         var projection = new QuickMatchProjection { Id = Guid.NewGuid(), HomeTeamId = Guid.NewGuid() };
 
@@ -236,8 +238,8 @@ public class CreateQuickMatchCommandHandlerTests
             .ReturnsAsync(projection);
 
         _accessRepositoryMock
-            .Setup(a => a.GetActiveTeamPolicyAsync(It.IsAny<string>(), projection.HomeTeamId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AccessPolicy());
+            .Setup(a => a.GetActiveTeamPolicyAsync(userId, projection.HomeTeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AccessPolicy?)null);
 
         _sportRepositoryMock
             .Setup(s => s.GetByIdAsync(sportId, It.IsAny<CancellationToken>()))
@@ -246,10 +248,19 @@ public class CreateQuickMatchCommandHandlerTests
         // Act & Assert
         var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
         Assert.Contains(sportId.ToString(), exception.Message);
+
+        _accessRepositoryMock.Verify(
+            a => a.AddAccessAsync(It.Is<AccessPolicy>(p => p.UserId == userId && p.TargetId == projection.HomeTeamId), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _matchRepositoryMock.Verify(
+            m => m.DeleteAsync(projection.Id, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     /// <summary>
-    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when sport configuration entity is not found.
+    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when sport configuration entity is not found,
+    /// and that compensating cleanup deletes the created quick match entity.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldThrowKeyNotFoundException_WhenSportConfigurationNotFound()
@@ -257,8 +268,9 @@ public class CreateQuickMatchCommandHandlerTests
         // Arrange
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
+        var userId = "auth0|user123";
         var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
-        var command = new CreateQuickMatchCommand(request, "auth0|user123");
+        var command = new CreateQuickMatchCommand(request, userId);
 
         var projection = new QuickMatchProjection { Id = Guid.NewGuid(), HomeTeamId = Guid.NewGuid() };
 
@@ -267,8 +279,8 @@ public class CreateQuickMatchCommandHandlerTests
             .ReturnsAsync(projection);
 
         _accessRepositoryMock
-            .Setup(a => a.GetActiveTeamPolicyAsync(It.IsAny<string>(), projection.HomeTeamId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AccessPolicy());
+            .Setup(a => a.GetActiveTeamPolicyAsync(userId, projection.HomeTeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AccessPolicy?)null);
 
         _sportConfigurationRepositoryMock
             .Setup(c => c.GetByIdAsync(configId, It.IsAny<CancellationToken>()))
@@ -277,5 +289,13 @@ public class CreateQuickMatchCommandHandlerTests
         // Act & Assert
         var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
         Assert.Contains(configId.ToString(), exception.Message);
+
+        _accessRepositoryMock.Verify(
+            a => a.AddAccessAsync(It.Is<AccessPolicy>(p => p.UserId == userId && p.TargetId == projection.HomeTeamId), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _matchRepositoryMock.Verify(
+            m => m.DeleteAsync(projection.Id, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 }
