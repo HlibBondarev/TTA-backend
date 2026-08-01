@@ -29,8 +29,7 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
     {
         // Arrange
         var userId = await SeedUserAsync(TestUserId);
-        var cityId = Guid.NewGuid();
-        await SeedRequiredLocationDataAsync(cityId);
+        var cityId = await SeedRequiredLocationDataAsync(Guid.NewGuid());
         var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Football");
         var configId = await SeedConfigurationAsync(sportId);
 
@@ -68,8 +67,7 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
     {
         // Arrange
         await SeedUserAsync(TestUserId);
-        var cityId = Guid.NewGuid();
-        await SeedRequiredLocationDataAsync(cityId);
+        var cityId = await SeedRequiredLocationDataAsync(Guid.NewGuid());
         var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Basketball");
         var configId = await SeedConfigurationAsync(sportId);
 
@@ -100,8 +98,7 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
     {
         // Arrange
         await SeedUserAsync(TestUserId);
-        var cityId = Guid.NewGuid();
-        await SeedRequiredLocationDataAsync(cityId);
+        var cityId = await SeedRequiredLocationDataAsync(Guid.NewGuid());
         var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Tennis");
         var configId = await SeedConfigurationAsync(sportId);
 
@@ -137,8 +134,7 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         var otherOwnerId = "auth0|other-user";
         await SeedUserAsync(otherOwnerId);
 
-        var cityId = Guid.NewGuid();
-        await SeedRequiredLocationDataAsync(cityId);
+        var cityId = await SeedRequiredLocationDataAsync(Guid.NewGuid());
         var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Volleyball");
         var configId = await SeedConfigurationAsync(sportId);
 
@@ -284,8 +280,7 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         var ownerId = TestUserId;
         await SeedUserAsync(ownerId);
 
-        var cityId = Guid.NewGuid();
-        await SeedRequiredLocationDataAsync(cityId);
+        var cityId = await SeedRequiredLocationDataAsync(Guid.NewGuid());
 
         var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Sport-Range-Validation");
         var configId = await SeedConfigurationAsync(sportId);
@@ -332,8 +327,7 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
     private async Task<(Guid TournamentId, Guid CityId, Guid SportId)> SetupTournamentContextAsync(string ownerId)
     {
         await SeedUserAsync(ownerId);
-        var cityId = Guid.NewGuid();
-        await SeedRequiredLocationDataAsync(cityId);
+        var cityId = await SeedRequiredLocationDataAsync(Guid.NewGuid());
         var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Sport-" + Guid.NewGuid());
         var configId = await SeedConfigurationAsync(sportId);
         var tournamentId = Guid.NewGuid();
@@ -581,10 +575,11 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
 
     /// <summary>
     /// Seeds location data (Country, Region, City) required for tournament context.
-    /// Uses name conflict resolution for countries and regions.
+    /// Uses name conflict resolution for countries and regions, and returns the persisted city identifier.
     /// </summary>
     /// <param name="cityId">The unique identifier of the city to seed.</param>
-    private async Task SeedRequiredLocationDataAsync(Guid cityId)
+    /// <returns>The persisted unique identifier of the city.</returns>
+    private async Task<Guid> SeedRequiredLocationDataAsync(Guid cityId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
@@ -619,12 +614,13 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         const string citySql = @"
             INSERT INTO public.cities (id, name, regionid) 
             VALUES (@id, 'Test City', @regionId) 
-            ON CONFLICT (regionid, name) DO NOTHING";
+            ON CONFLICT (regionid, name) DO UPDATE SET name = EXCLUDED.name 
+            RETURNING id";
         using (var cmd = new NpgsqlCommand(citySql, conn))
         {
             cmd.Parameters.AddWithValue("id", cityId);
             cmd.Parameters.AddWithValue("regionId", regionId);
-            await cmd.ExecuteNonQueryAsync();
+            return (Guid)(await cmd.ExecuteScalarAsync())!;
         }
     }
 
