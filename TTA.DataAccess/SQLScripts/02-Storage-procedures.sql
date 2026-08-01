@@ -868,6 +868,8 @@ DECLARE
     v_tournament_id UUID;
     v_match_id UUID := gen_random_uuid();
     v_now TIMESTAMP WITH TIME ZONE := CURRENT_TIMESTAMP;
+    v_position_id UUID;
+    v_max_number INT;
 BEGIN
     -- 0. Ensure JIT base infrastructure (User, Geography, Base Club) exists if missing
     INSERT INTO public.users (id, email, displayname, createdat)
@@ -956,19 +958,37 @@ BEGIN
         VALUES (v_tournament_id, p_sport_id, v_effective_config_id, v_city_id, v_owner_id, 'Training & Friendly Matches', CURRENT_DATE, v_now);
     END IF;
 
-    -- 5. Bulk-register all 50 club players into playerrosters for Home Squad in this tournament
-    INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, createdat)
+    -- 5. Get or create a default position definition for this sport
+    SELECT ppd.id INTO v_position_id
+    FROM public.playerpositiondefinitions ppd
+    WHERE ppd.sportid = p_sport_id
+    LIMIT 1;
+
+    IF v_position_id IS NULL THEN
+        v_position_id := gen_random_uuid();
+        INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname)
+        VALUES (v_position_id, p_sport_id, 'Universal', 'UNI');
+    END IF;
+
+    SELECT COALESCE(MAX(pr.number), 0) INTO v_max_number
+    FROM public.playerrosters pr
+    WHERE pr.tournamentid = v_tournament_id AND pr.teamid = v_home_team_id;
+
+    -- 6. Bulk-register all club players into playerrosters for Home Squad with valid number and positionid
+    INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, number, positionid, createdat)
     SELECT 
         gen_random_uuid(),
         v_tournament_id,
         v_home_team_id,
         p.id,
+        v_max_number + ROW_NUMBER() OVER (ORDER BY p.createdat, p.id)::INT,
+        v_position_id,
         v_now
     FROM public.players p
     WHERE p.homeclubid = v_club_id
-    ON CONFLICT DO NOTHING;
+    ON CONFLICT (tournamentid, playerid) DO NOTHING;
 
-    -- 6. Insert Match entity directly
+    -- 7. Insert Match entity directly
     INSERT INTO public.matches (
         id,
         tournamentid,
@@ -986,7 +1006,7 @@ BEGIN
         v_now
     );
 
-    -- 7. Return created quick match projection
+    -- 8. Return created quick match projection
     RETURN QUERY
     SELECT 
         v_match_id,
