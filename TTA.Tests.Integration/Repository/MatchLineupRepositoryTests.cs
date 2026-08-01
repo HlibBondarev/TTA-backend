@@ -313,7 +313,7 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
 
     #region Seeding Helpers
 
-    /// <summary>
+    //// <summary>
     /// Seeds a match and all mandatory dependencies strictly following 01-Tables.sql schema.
     /// Ensures that parent records (User, Country, Region, City, Sport, Teams) exist before dependent ones.
     /// Uses an explicit transaction to satisfy deferred FK constraints and updated Sport table schema.
@@ -324,6 +324,7 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
 
+        var suffix = Guid.NewGuid().ToString("N")[..6];
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         var cityId = Guid.NewGuid();
@@ -333,6 +334,8 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
         var tournamentId = Guid.NewGuid();
         var matchId = Guid.NewGuid();
         var userId = "test-owner";
+        var sportName = $"Sport_{suffix}";
+        var shortName = suffix[..3].ToUpper();
 
         // 1. User (Tournament Owner)
         await conn.ExecuteAsync(@"
@@ -350,11 +353,11 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
         await conn.ExecuteAsync("INSERT INTO cities (id, regionid, name) VALUES (@cityId, @regionId, 'TestCity') ON CONFLICT (regionid, name) DO NOTHING", new { cityId, regionId }, transaction: transaction);
         var effectiveCityId = await conn.ExecuteScalarAsync<Guid>("SELECT id FROM cities WHERE regionid = @regionId AND name = 'TestCity'", new { regionId }, transaction: transaction);
 
-        // 3. Sport & Config (Updated for Issue #69 schema)
+        // 3. Sport & Config (Generated unique per seed execution)
         await conn.ExecuteAsync(@"
             INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
-            VALUES (@sportId, 'Football', 'FB', @configId)",
-            new { sportId, configId }, transaction: transaction);
+            VALUES (@sportId, @sportName, @shortName, @configId)",
+            new { sportId, sportName, shortName, configId }, transaction: transaction);
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
@@ -466,6 +469,7 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
         await using var transaction = await conn.BeginTransactionAsync();
 
         var sub = BaseApiTest.TestUserId;
+        var suffix = Guid.NewGuid().ToString("N")[..6];
 
         var countryId = await conn.ExecuteScalarAsync<int>(
             "INSERT INTO countries (name, code, createdat) VALUES (@n, @c, now()) ON CONFLICT (name) DO UPDATE SET code = EXCLUDED.code RETURNING id",
@@ -484,17 +488,17 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
 
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
+        var sportName = $"Sport_{suffix}";
+        var shortName = suffix[..3].ToUpper();
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
-            VALUES (@sportId, 'Soccer', 'SOC', @configId) 
-            ON CONFLICT DO NOTHING",
-            new { sportId, configId }, transaction: transaction);
+            VALUES (@sportId, @sportName, @shortName, @configId)",
+            new { sportId, sportName, shortName, configId }, transaction: transaction);
 
         await conn.ExecuteAsync(@"
             INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            VALUES (@id, @sportId, true, 2, 45, 'Standard', 25, 11) 
-            ON CONFLICT DO NOTHING",
+            VALUES (@id, @sportId, true, 2, 45, 'Standard', 25, 11)",
             new { id = configId, sportId }, transaction: transaction);
 
         var tournamentId = Guid.NewGuid();
