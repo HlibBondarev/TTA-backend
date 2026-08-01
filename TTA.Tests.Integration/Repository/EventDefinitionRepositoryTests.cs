@@ -88,7 +88,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
     private async Task<(Guid MatchId, Guid SportId, List<Guid> DefinitionIds)> SeedEventDefinitionEnvironmentAsync(bool createDefinitions)
     {
-        // Приводим IDbConnection до DbConnection для підтримки асинхронних транзакцій
+        // Cast IDbConnection to DbConnection to support asynchronous transactions
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();

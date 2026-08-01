@@ -187,7 +187,8 @@ public class RosterRepositoryTests : BaseIntegrationTest
 
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
-        var shortName = ("S_" + unique)[..10];
+        var fullShortName = "S_" + unique;
+        var shortName = fullShortName.Length <= 10 ? fullShortName : fullShortName[..10];
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
