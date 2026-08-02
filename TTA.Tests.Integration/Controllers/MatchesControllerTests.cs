@@ -1419,28 +1419,38 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Seed JIT Default Infrastructure and Players for Default Club (11111111-1111-1111-1111-000000000001)
         var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
-        var defaultCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
         using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.OpenAsync();
 
-            // 1. Ensure geography and default club exist
+            // 1. Ensure geography exists
             await conn.ExecuteAsync(@"
                 INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
                 INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
-                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;
-                INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) ON CONFLICT DO NOTHING;",
-                new { clubId = defaultClubId, cityId = defaultCityId });
+                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+                new { cityId = tempCityId });
 
-            // 2. Adjust rosterlimit and lineuplimit for test predictability (5 players per team roster, 3 in lineup)
+            // Resolve the actual persisted city ID (in case 'Dnipro' already existed with a different ID)
+            var actualCityId = await conn.QuerySingleAsync<Guid>(
+                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1");
+
+            // 2. Ensure default club exists using the resolved city ID
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.clubs (id, cityid, name, createdat) 
+                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+                ON CONFLICT DO NOTHING;",
+                new { clubId = defaultClubId, cityId = actualCityId });
+
+            // 3. Adjust rosterlimit and lineuplimit for test predictability (5 players per team roster, 3 in lineup)
             await conn.ExecuteAsync(@"
                 UPDATE public.sportconfigurations 
                 SET rosterlimit = 5, lineuplimit = 3 
                 WHERE sportid = @sportId;",
                 new { sportId });
 
-            // 3. Seed 10 players: 1..5 will be assigned to Home Squad, 6..10 to Guest Squad
+            // 4. Seed 10 players: 1..5 will be assigned to Home Squad, 6..10 to Guest Squad
             for (int i = 1; i <= 10; i++)
             {
                 await conn.ExecuteAsync(@"

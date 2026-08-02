@@ -172,17 +172,28 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
-        var defaultCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
-        // 1. Ensure JIT base geography and default club exist
+        // 1. Ensure JIT base geography exists
         await conn.ExecuteAsync(@"
             INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
             INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
-            INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;
-            INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) ON CONFLICT DO NOTHING;",
-            new { clubId = defaultClubId, cityId = defaultCityId }, transaction: transaction);
+            INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+            new { cityId = tempCityId }, transaction: transaction);
 
-        // 2. Seed players for the default club so that create_quick_match function can register them into rosters
+        // Resolve actual persisted city ID
+        var actualCityId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
+            transaction: transaction);
+
+        // 2. Ensure default club exists using actual city ID
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.clubs (id, cityid, name, createdat) 
+            VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+            ON CONFLICT DO NOTHING;",
+            new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
+
+        // 3. Seed players for the default club so that create_quick_match function can register them into rosters
         for (int i = 1; i <= 6; i++)
         {
             await conn.ExecuteAsync(@"
@@ -192,7 +203,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { id = Guid.NewGuid(), clubId = defaultClubId, fn = $"Player_{i}" }, transaction: transaction);
         }
 
-        // 3. Seed sport and sport configuration (setting rosterlimit = 3 for clear testing)
+        // 4. Seed sport and sport configuration (setting rosterlimit = 3 for clear testing)
         await conn.ExecuteAsync(@"
             INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
             VALUES (@sportId, 'Water Polo Quick', 'WPQ', @configId)",
