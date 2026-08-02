@@ -837,7 +837,8 @@ $$ LANGUAGE plpgsql;
 
 /************************************************************************************************
  * Function: public.create_quick_match
- * Description: Provisions JIT teams, tournament container, player rosters, AND creates the match entity.
+ * Description: Provisions JIT teams, tournament container, player rosters (capped by rosterlimit 
+ *              for both Home and Guest teams), AND creates the match entity.
  *              Ensures base user, geography, and default club exist JIT to guarantee idempotency.
  *              Falls back to sports.defaultconfigid if p_configuration_id is NULL.
  ************************************************************************************************/
@@ -869,7 +870,7 @@ DECLARE
     v_match_id UUID := gen_random_uuid();
     v_now TIMESTAMP WITH TIME ZONE := CURRENT_TIMESTAMP;
     v_position_id UUID;
-    v_max_number INT;
+    v_roster_limit INT;
 BEGIN
     -- 0. Ensure JIT base infrastructure (User, Geography, Base Club) exists if missing
     INSERT INTO public.users (id, email, displayname, createdat)
@@ -895,7 +896,6 @@ BEGIN
     ON CONFLICT DO NOTHING;
 
     -- 1. Determine effective configuration ID (Use provided or fallback to sports.defaultconfigid)
-    -- Treat empty GUID ('00000000-0000-0000-0000-000000000000') as NULL
     IF p_configuration_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
         p_configuration_id := NULL;
     END IF;
@@ -910,11 +910,12 @@ BEGIN
             USING ERRCODE = 'P0005';
     END IF;
 
-    -- Validate that effective configuration exists AND belongs to the specified sport
-    IF NOT EXISTS (
-        SELECT 1 FROM public.sportconfigurations sc 
-        WHERE sc.id = v_effective_config_id AND sc.sportid = p_sport_id
-    ) THEN
+    -- Validate that effective configuration exists AND belongs to the specified sport, retrieve rosterlimit
+    SELECT sc.rosterlimit INTO v_roster_limit
+    FROM public.sportconfigurations sc 
+    WHERE sc.id = v_effective_config_id AND sc.sportid = p_sport_id;
+
+    IF v_roster_limit IS NULL THEN
         RAISE EXCEPTION 'Configuration % was not found or does not belong to sport %.', v_effective_config_id, p_sport_id
             USING ERRCODE = 'P0005';
     END IF;
@@ -970,25 +971,49 @@ BEGIN
         VALUES (v_position_id, p_sport_id, 'Universal', 'UNI');
     END IF;
 
-    SELECT COALESCE(MAX(pr.number), 0) INTO v_max_number
-    FROM public.playerrosters pr
-    WHERE pr.tournamentid = v_tournament_id AND pr.teamid = v_home_team_id;
-
-    -- 6. Bulk-register all club players into playerrosters for Home Squad with valid number and positionid
+    -- 6. Bulk-register up to rosterlimit players for HOME SQUAD
+    WITH ranked_players AS (
+        SELECT 
+            p.id AS player_id,
+            ROW_NUMBER() OVER (ORDER BY p.createdat, p.id) AS rn
+        FROM public.players p
+        WHERE p.homeclubid = v_club_id
+    )
     INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, number, positionid, createdat)
     SELECT 
         gen_random_uuid(),
         v_tournament_id,
         v_home_team_id,
-        p.id,
-        v_max_number + ROW_NUMBER() OVER (ORDER BY p.createdat, p.id)::INT,
+        rp.player_id,
+        rp.rn::INT,
         v_position_id,
         v_now
-    FROM public.players p
-    WHERE p.homeclubid = v_club_id
+    FROM ranked_players rp
+    WHERE rp.rn <= v_roster_limit
     ON CONFLICT (tournamentid, playerid) DO NOTHING;
 
-    -- 7. Insert Match entity directly
+    -- 7. Bulk-register up to rosterlimit players for OPPONENT (GUEST) SQUAD
+    WITH ranked_players AS (
+        SELECT 
+            p.id AS player_id,
+            ROW_NUMBER() OVER (ORDER BY p.createdat, p.id) AS rn
+        FROM public.players p
+        WHERE p.homeclubid = v_club_id
+    )
+    INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, number, positionid, createdat)
+    SELECT 
+        gen_random_uuid(),
+        v_tournament_id,
+        v_guest_team_id,
+        rp.player_id,
+        (rp.rn - v_roster_limit)::INT,
+        v_position_id,
+        v_now
+    FROM ranked_players rp
+    WHERE rp.rn > v_roster_limit AND rp.rn <= (v_roster_limit * 2)
+    ON CONFLICT (tournamentid, playerid) DO NOTHING;
+
+    -- 8. Insert Match entity directly
     INSERT INTO public.matches (
         id,
         tournamentid,
@@ -1006,7 +1031,7 @@ BEGIN
         v_now
     );
 
-    -- 8. Return created quick match projection
+    -- 9. Return created quick match projection
     RETURN QUERY
     SELECT 
         v_match_id,

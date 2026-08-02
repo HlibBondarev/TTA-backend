@@ -14,26 +14,67 @@ using TTA.DataAccess.Repository.Projections;
 namespace TTA.BusinessLogic.Tests.Features.Matches.Handlers;
 
 /// <summary>
-/// Unit tests for <see cref="CreateQuickMatchCommandHandler"/>.
+/// Unit tests for <see cref="CreateQuickMatchHandler"/>.
 /// </summary>
-public class CreateQuickMatchCommandHandlerTests
+/// <remarks>
+/// Validates business rules and orchestration logic during quick match creation, including:
+/// <list type="bullet">
+///   <item><description>Atomic just-in-time infrastructure provisioning via database repositories.</description></item>
+///   <item><description>Automated granting of team editor permissions for home squad managers.</description></item>
+///   <item><description>Fallback resolution to default sport configurations when config IDs are omitted.</description></item>
+///   <item><description>Initial starting lineup population for both Home and Guest teams up to configured lineup limits.</description></item>
+///   <item><description>Compensating rollback cleanup when post-creation initialization steps fail.</description></item>
+/// </list>
+/// </remarks>
+public class CreateQuickMatchHandlerTests
 {
+    /// <summary>
+    /// Mock instance for managing match persistence and invoking underlying stored procedures.
+    /// </summary>
     private readonly Mock<IMatchRepository> _matchRepositoryMock = new();
-    private readonly Mock<IAccessRepository> _accessRepositoryMock = new();
-    private readonly Mock<ISportRepository> _sportRepositoryMock = new();
-    private readonly Mock<ISportConfigurationRepository> _sportConfigurationRepositoryMock = new();
-    private readonly Mock<IRosterRepository> _rosterRepositoryMock = new();
-    private readonly Mock<IMatchLineupRepository> _matchLineupRepositoryMock = new();
-    private readonly Mock<ILogger<CreateQuickMatchCommandHandler>> _loggerMock = new();
-
-    private readonly CreateQuickMatchCommandHandler _handler;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CreateQuickMatchCommandHandlerTests"/> class and sets up dependencies.
+    /// Mock instance for evaluating active team permissions and granting JIT access policies.
     /// </summary>
-    public CreateQuickMatchCommandHandlerTests()
+    private readonly Mock<IAccessRepository> _accessRepositoryMock = new();
+
+    /// <summary>
+    /// Mock instance for retrieving sport discipline metadata and default configuration identifiers.
+    /// </summary>
+    private readonly Mock<ISportRepository> _sportRepositoryMock = new();
+
+    /// <summary>
+    /// Mock instance for fetching sport configuration rules and lineup limits.
+    /// </summary>
+    private readonly Mock<ISportConfigurationRepository> _sportConfigurationRepositoryMock = new();
+
+    /// <summary>
+    /// Mock instance for fetching team tournament roster records.
+    /// </summary>
+    private readonly Mock<IRosterRepository> _rosterRepositoryMock = new();
+
+    /// <summary>
+    /// Mock instance for executing bulk copy operations into match starting lineups.
+    /// </summary>
+    private readonly Mock<IMatchLineupRepository> _matchLineupRepositoryMock = new();
+
+    /// <summary>
+    /// Mock logger instance for verifying diagnostic logging and error context output.
+    /// </summary>
+    private readonly Mock<ILogger<CreateQuickMatchHandler>> _loggerMock = new();
+
+    /// <summary>
+    /// The handler instance under test.
+    /// </summary>
+    private readonly CreateQuickMatchHandler _handler;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="CreateQuickMatchHandlerTests"/> class,
+    /// setting up mocked dependencies and instantiating the handler under test.
+    /// </summary>
+    public CreateQuickMatchHandlerTests()
     {
-        _handler = new CreateQuickMatchCommandHandler(
+        _handler = new CreateQuickMatchHandler(
             _matchRepositoryMock.Object,
             _accessRepositoryMock.Object,
             _sportRepositoryMock.Object,
@@ -44,8 +85,10 @@ public class CreateQuickMatchCommandHandlerTests
     }
 
     /// <summary>
-    /// Helper method to create dynamic roster items mimicking Dapper dynamic rows.
+    /// Helper factory method to construct dynamic roster item objects mimicking Dapper query projections.
     /// </summary>
+    /// <param name="id">The unique identifier of the target player roster entry.</param>
+    /// <returns>A dynamic <see cref="ExpandoObject"/> holding the roster identifier.</returns>
     private static dynamic CreateMockRosterItem(Guid id)
     {
         IDictionary<string, object?> expando = new ExpandoObject();
@@ -54,10 +97,21 @@ public class CreateQuickMatchCommandHandlerTests
     }
 
     /// <summary>
-    /// Verifies successful quick match creation when explicit ConfigurationId is provided and user does not have an active policy.
+    /// Verifies successful quick match creation and starting lineup population for both Home and Guest squads
+    /// when an explicit configuration ID is supplied and the requesting user holds no prior team policy.
     /// </summary>
+    /// <remarks>
+    /// Ensures that:
+    /// <list type="number">
+    ///   <item><description>Quick match infrastructure projection is fetched correctly.</description></item>
+    ///   <item><description>TeamEditor access policy is granted to the requesting user for the Home Team.</description></item>
+    ///   <item><description>Rosters for both Home and Guest squads are fetched and sliced according to <see cref="SportConfiguration.LineupLimit"/>.</description></item>
+    ///   <item><description>The command returns a populated <see cref="QuickMatchResponse"/> DTO.</description></item>
+    /// </list>
+    /// </remarks>
+    /// <returns>A <see cref="Task"/> representing the asynchronous unit test execution.</returns>
     [Fact]
-    public async Task Handle_ShouldCreateQuickMatch_WhenExplicitConfigurationIdProvided_AndUserHasNoPolicy()
+    public async Task Handle_ShouldCreateQuickMatchAndPopulateLineupsForBothTeams_WhenRequestIsValid()
     {
         // Arrange
         var sportId = Guid.NewGuid();
@@ -83,15 +137,24 @@ public class CreateQuickMatchCommandHandlerTests
             LineupLimit = 2
         };
 
-        var rosterItem1Id = Guid.NewGuid();
-        var rosterItem2Id = Guid.NewGuid();
-        var rosterItem3Id = Guid.NewGuid();
-
-        var mockRoster = new List<dynamic>
+        // Arrange Home Squad Roster (3 players available, limit is 2)
+        var homeRoster1Id = Guid.NewGuid();
+        var homeRoster2Id = Guid.NewGuid();
+        var homeRoster3Id = Guid.NewGuid();
+        var mockHomeRoster = new List<dynamic>
         {
-            CreateMockRosterItem(rosterItem1Id),
-            CreateMockRosterItem(rosterItem2Id),
-            CreateMockRosterItem(rosterItem3Id)
+            CreateMockRosterItem(homeRoster1Id),
+            CreateMockRosterItem(homeRoster2Id),
+            CreateMockRosterItem(homeRoster3Id)
+        };
+
+        // Arrange Guest Squad Roster (2 players available)
+        var guestRoster1Id = Guid.NewGuid();
+        var guestRoster2Id = Guid.NewGuid();
+        var mockGuestRoster = new List<dynamic>
+        {
+            CreateMockRosterItem(guestRoster1Id),
+            CreateMockRosterItem(guestRoster2Id)
         };
 
         _matchRepositoryMock
@@ -108,10 +171,14 @@ public class CreateQuickMatchCommandHandlerTests
 
         _rosterRepositoryMock
             .Setup(r => r.GetTeamRosterAsync(projection.TournamentId, projection.HomeTeamId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(mockRoster);
+            .ReturnsAsync(mockHomeRoster);
+
+        _rosterRepositoryMock
+            .Setup(r => r.GetTeamRosterAsync(projection.TournamentId, projection.GuestTeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mockGuestRoster);
 
         _matchLineupRepositoryMock
-            .Setup(l => l.CopyFromRosterAsync(projection.Id, projection.HomeTeamId, It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .Setup(l => l.CopyFromRosterAsync(projection.Id, It.IsAny<Guid>(), It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(2);
 
         // Act
@@ -124,17 +191,28 @@ public class CreateQuickMatchCommandHandlerTests
         Assert.Equal(projection.HomeTeamId, result.HomeTeamId);
         Assert.Equal(projection.GuestTeamId, result.GuestTeamId);
 
+        // Verify TeamEditor access policy grant for Home Team
         _accessRepositoryMock.Verify(
             a => a.AddAccessAsync(
                 It.Is<AccessPolicy>(p => p.UserId == userId && p.TargetId == projection.HomeTeamId && p.TargetType == TargetScope.Team && p.Role == AppRole.Editor),
                 It.IsAny<CancellationToken>()),
             Times.Once);
 
+        // Verify CopyFromRosterAsync for Home Team (sliced to LineupLimit = 2)
         _matchLineupRepositoryMock.Verify(
             l => l.CopyFromRosterAsync(
                 projection.Id,
                 projection.HomeTeamId,
-                It.Is<IEnumerable<Guid>>(ids => ids.Count() == 2 && ids.Contains(rosterItem1Id) && ids.Contains(rosterItem2Id)),
+                It.Is<IEnumerable<Guid>>(ids => ids.Count() == 2 && ids.Contains(homeRoster1Id) && ids.Contains(homeRoster2Id)),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Verify CopyFromRosterAsync for Guest Team (sliced to LineupLimit = 2)
+        _matchLineupRepositoryMock.Verify(
+            l => l.CopyFromRosterAsync(
+                projection.Id,
+                projection.GuestTeamId,
+                It.Is<IEnumerable<Guid>>(ids => ids.Count() == 2 && ids.Contains(guestRoster1Id) && ids.Contains(guestRoster2Id)),
                 It.IsAny<CancellationToken>()),
             Times.Once);
 
@@ -142,8 +220,10 @@ public class CreateQuickMatchCommandHandlerTests
     }
 
     /// <summary>
-    /// Verifies that DefaultConfigId from Sport is resolved when ConfigurationId is omitted in the request.
+    /// Verifies that the default sport configuration identifier is resolved from the target sport entity
+    /// when <see cref="CreateQuickMatchRequest.ConfigurationId"/> is omitted or null in the incoming payload.
     /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous unit test execution.</returns>
     [Fact]
     public async Task Handle_ShouldResolveDefaultConfig_WhenConfigurationIdIsNull()
     {
@@ -184,7 +264,7 @@ public class CreateQuickMatchCommandHandlerTests
             .ReturnsAsync(sportConfig);
 
         _rosterRepositoryMock
-            .Setup(r => r.GetTeamRosterAsync(projection.TournamentId, projection.HomeTeamId, It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetTeamRosterAsync(projection.TournamentId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<dynamic>());
 
         // Act
@@ -199,8 +279,10 @@ public class CreateQuickMatchCommandHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when infrastructure provisioning returns null.
+    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when database-level quick match provisioning returns null,
+    /// indicating an infrastructure or stored procedure execution failure.
     /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous unit test execution.</returns>
     [Fact]
     public async Task Handle_ShouldThrowKeyNotFoundException_WhenProvisioningFails()
     {
@@ -219,9 +301,10 @@ public class CreateQuickMatchCommandHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when default sport resolution fails,
-    /// and that compensating cleanup deletes the created quick match entity.
+    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when fallback sport resolution fails,
+    /// and that a compensating rollback deletion is dispatched to purge the provisioned match entity.
     /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous unit test execution.</returns>
     [Fact]
     public async Task Handle_ShouldThrowKeyNotFoundException_WhenSportNotFoundForDefaultConfig()
     {
@@ -259,9 +342,10 @@ public class CreateQuickMatchCommandHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when sport configuration entity is not found,
-    /// and that compensating cleanup deletes the created quick match entity.
+    /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when the target sport configuration entity is missing,
+    /// and that compensating rollback triggers deletion of the created match entity.
     /// </summary>
+    /// <returns>A <see cref="Task"/> representing the asynchronous unit test execution.</returns>
     [Fact]
     public async Task Handle_ShouldThrowKeyNotFoundException_WhenSportConfigurationNotFound()
     {
