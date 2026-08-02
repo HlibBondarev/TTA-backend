@@ -120,15 +120,13 @@ public class CreateQuickMatchHandlerTests
         var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
         var command = new CreateQuickMatchCommand(request, userId);
 
-        var projection = new QuickMatchProjection
-        {
-            Id = Guid.NewGuid(),
-            TournamentId = Guid.NewGuid(),
-            HomeTeamId = Guid.NewGuid(),
-            GuestTeamId = Guid.NewGuid(),
-            ScheduledAt = DateTime.UtcNow,
-            CreatedAt = DateTime.UtcNow
-        };
+        var projection = new QuickMatchProjection(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            DateTime.UtcNow,
+            DateTime.UtcNow);
 
         var sportConfig = new SportConfiguration
         {
@@ -234,15 +232,13 @@ public class CreateQuickMatchHandlerTests
         var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = null };
         var command = new CreateQuickMatchCommand(request, userId);
 
-        var projection = new QuickMatchProjection
-        {
-            Id = Guid.NewGuid(),
-            TournamentId = Guid.NewGuid(),
-            HomeTeamId = Guid.NewGuid(),
-            GuestTeamId = Guid.NewGuid(),
-            ScheduledAt = DateTime.UtcNow,
-            CreatedAt = DateTime.UtcNow
-        };
+        var projection = new QuickMatchProjection(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            DateTime.UtcNow,
+            DateTime.UtcNow);
 
         var sport = new Sport { Id = sportId, Name = "Water Polo", ShortName = "WP", DefaultConfigId = defaultConfigId };
         var sportConfig = new SportConfiguration { Id = defaultConfigId, SportId = sportId, LineupLimit = 13 };
@@ -314,7 +310,13 @@ public class CreateQuickMatchHandlerTests
         var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = null };
         var command = new CreateQuickMatchCommand(request, userId);
 
-        var projection = new QuickMatchProjection { Id = Guid.NewGuid(), HomeTeamId = Guid.NewGuid() };
+        var projection = new QuickMatchProjection(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            DateTime.UtcNow,
+            DateTime.UtcNow);
 
         _matchRepositoryMock
             .Setup(r => r.CreateQuickMatchAsync(sportId, null, It.IsAny<CancellationToken>()))
@@ -356,7 +358,13 @@ public class CreateQuickMatchHandlerTests
         var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
         var command = new CreateQuickMatchCommand(request, userId);
 
-        var projection = new QuickMatchProjection { Id = Guid.NewGuid(), HomeTeamId = Guid.NewGuid() };
+        var projection = new QuickMatchProjection(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            DateTime.UtcNow,
+            DateTime.UtcNow);
 
         _matchRepositoryMock
             .Setup(r => r.CreateQuickMatchAsync(sportId, configId, It.IsAny<CancellationToken>()))

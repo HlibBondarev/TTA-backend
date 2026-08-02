@@ -2,6 +2,7 @@
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository;
 
@@ -22,14 +23,18 @@ public class MatchLineupRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
-    public async Task<IEnumerable<dynamic>> GetByMatchIdAsync(Guid matchId, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<MatchLineupProjection>> GetTeamMatchLineupAsync(
+        Guid matchId,
+        Guid teamId,
+        CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_id", matchId);
+        parameters.Add("p_match_id", matchId);
+        parameters.Add("p_team_id", teamId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
-        return await connection.QueryAsync<dynamic>(new CommandDefinition(
-            SqlStatements.ForMatchLineups.GetMatchLineup,
+        return await connection.QueryAsync<MatchLineupProjection>(new CommandDefinition(
+            SqlStatements.ForMatchLineups.GetTeamMatchLineup,
             parameters,
             cancellationToken: cancellationToken));
     }

@@ -87,31 +87,75 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
 
     #region Retrieval Tests
 
+
     /// <summary>
-    /// Verifies retrieval of all lineup items associated with a specific match.
+    /// Verifies that <see cref="MatchLineupRepository.GetTeamMatchLineupAsync"/> retrieves lineup projections
+    /// belonging exclusively to the requested team, properly filtering out lineup entries of other teams in the match.
     /// </summary>
     [Fact]
-    public async Task GetByMatchIdAsync_ShouldReturnLineup_WhenEntriesExist()
+    public async Task GetTeamMatchLineupAsync_ShouldReturnOnlyTargetTeamLineups_WhenEntriesExistForMultipleTeams()
     {
         // Arrange
         var (matchId, playerRosterId, positionId) = await SeedMatchLineupRequirementsAsync();
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var (tournamentId, homeTeamId) = await conn.QuerySingleAsync<(Guid TournamentId, Guid TeamId)>(
+            "SELECT tournamentid, teamid FROM public.playerrosters WHERE id = @id",
+            new { id = playerRosterId });
+
+        var clubId = await conn.ExecuteScalarAsync<Guid>("SELECT clubid FROM public.teams WHERE id = @id", new { id = homeTeamId });
+        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.teams WHERE id = @id", new { id = homeTeamId });
+
+        // Seed Guest Team and update Match with valid guest team ID
+        var guestTeamId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @clubId, @sportId, 'Guest Team', 0, now())",
+            new { id = guestTeamId, clubId, sportId });
+
+        await conn.ExecuteAsync("UPDATE public.matches SET guestteamid = @guestTeamId WHERE id = @matchId",
+            new { guestTeamId, matchId });
+
+        // Seed player and roster for Guest Team
+        var guestPlayerId = Guid.NewGuid();
+        var guestRosterId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @clubId, 'Guest', 'Player', '2000-01-01', 0, now())",
+            new { id = guestPlayerId, clubId });
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat)
+            VALUES (@id, @guestPlayerId, @tournamentId, @guestTeamId, 99, @positionId, now())",
+            new { id = guestRosterId, guestPlayerId, tournamentId, guestTeamId, positionId });
+
+        // Seed lineup entries for both Home and Guest teams in the same match
         await _repository.UpsertLineupItemAsync(new MatchLineup
         {
             Id = Guid.NewGuid(),
             MatchId = matchId,
-            PlayerRosterId = playerRosterId,
+            PlayerRosterId = playerRosterId, // Home Team
             Number = 7,
             PositionId = positionId
         });
 
+        await _repository.UpsertLineupItemAsync(new MatchLineup
+        {
+            Id = Guid.NewGuid(),
+            MatchId = matchId,
+            PlayerRosterId = guestRosterId, // Guest Team
+            Number = 9,
+            PositionId = positionId
+        });
+
         // Act
-        var result = await _repository.GetByMatchIdAsync(matchId, CancellationToken.None);
+        var homeResult = (await _repository.GetTeamMatchLineupAsync(matchId, homeTeamId, CancellationToken.None)).ToList();
+        var guestResult = (await _repository.GetTeamMatchLineupAsync(matchId, guestTeamId, CancellationToken.None)).ToList();
 
         // Assert
-        result.Should().NotBeEmpty();
-        var first = result.First() as IDictionary<string, object>;
-        var numberKey = first!.Keys.FirstOrDefault(k => k.Equals("number", StringComparison.OrdinalIgnoreCase));
-        Convert.ToInt32(first[numberKey!]).Should().Be(7);
+        homeResult.Should().HaveCount(1);
+        homeResult.Should().OnlyContain(x => x.TeamId == homeTeamId && x.Number == 7);
+
+        guestResult.Should().HaveCount(1);
+        guestResult.Should().OnlyContain(x => x.TeamId == guestTeamId && x.Number == 9);
     }
 
     /// <summary>
