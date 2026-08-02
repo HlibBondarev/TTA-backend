@@ -1479,9 +1479,12 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Verify that starting lineups were generated for both Home and Guest teams
         var lineupsResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/lineups");
         lineupsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-        var lineups = await lineupsResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>();
+
+        var lineups = (await lineupsResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
         lineups.Should().NotBeNull();
-        lineups!.Select(l => l.TeamId).Distinct().Should().HaveCount(2, "starting lineups should be populated for both home and guest teams");
+        lineups!.Should().HaveCount(6, "starting lineups should contain 3 players for home team and 3 players for guest team based on lineuplimit=3");
+        lineups.Count(l => l.TeamId == result.HomeTeamId).Should().Be(3);
+        lineups.Count(l => l.TeamId == result.GuestTeamId).Should().Be(3);
     }
 
     /// <summary>
