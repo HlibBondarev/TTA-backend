@@ -1505,6 +1505,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var homeLineup = (await homeLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
         homeLineup.Should().NotBeNull();
         homeLineup!.Should().HaveCount(3, "home team lineup should contain 3 players based on lineuplimit=3");
+        homeLineup.Should().OnlyContain(l => l.TeamId == result.HomeTeamId, "all home lineup items must belong to HomeTeamId");
 
         var guestLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.GuestTeamId}/lineup");
         guestLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -1512,6 +1513,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var guestLineup = (await guestLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
         guestLineup.Should().NotBeNull();
         guestLineup!.Should().HaveCount(3, "guest team lineup should contain 3 players based on lineuplimit=3");
+        guestLineup.Should().OnlyContain(l => l.TeamId == result.GuestTeamId, "all guest lineup items must belong to GuestTeamId");
     }
 
     /// <summary>
