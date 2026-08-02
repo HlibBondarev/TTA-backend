@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using FluentAssertions;
 using Npgsql;
+using System.Data.Common;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
@@ -32,8 +33,7 @@ public class TournamentRepositoryTests : BaseIntegrationTest
         // Arrange
         var userId = await SeedUserAsync();
         var cityId = await SeedCityAsync();
-        var sportId = await SeedSportAsync();
-        var configId = await SeedConfigurationAsync(sportId);
+        var (sportId, configId) = await SeedSportAndConfigurationAsync();
 
         var tournament = CreateModel(cityId, sportId, configId, userId, "Autumn Cup 2024");
 
@@ -55,8 +55,7 @@ public class TournamentRepositoryTests : BaseIntegrationTest
         // Arrange
         var userId = await SeedUserAsync();
         var cityId = await SeedCityAsync();
-        var sportId = await SeedSportAsync();
-        var configId = await SeedConfigurationAsync(sportId);
+        var (sportId, configId) = await SeedSportAndConfigurationAsync();
 
         var tournament = CreateModel(cityId, sportId, configId, userId, "Original Name");
         await _repository.CreateOrUpdate(tournament, CancellationToken.None);
@@ -82,8 +81,7 @@ public class TournamentRepositoryTests : BaseIntegrationTest
         var attackerId = await SeedUserAsync("attacker@test.com", "auth0|attacker");
 
         var cityId = await SeedCityAsync();
-        var sportId = await SeedSportAsync();
-        var configId = await SeedConfigurationAsync(sportId);
+        var (sportId, configId) = await SeedSportAndConfigurationAsync();
 
         var tournament = CreateModel(cityId, sportId, configId, ownerId, "Secure Tournament");
         await _repository.CreateOrUpdate(tournament, CancellationToken.None);
@@ -96,7 +94,7 @@ public class TournamentRepositoryTests : BaseIntegrationTest
         // Assert
         var act = async () => await _repository.CreateOrUpdate(tournament, CancellationToken.None);
 
-        // The exception should be thrown by the SQL function we updated above
+        // The exception should be thrown by the SQL function
         await act.Should().ThrowAsync<PostgresException>()
             .Where(e => e.MessageText.Contains("Access denied"));
     }
@@ -114,8 +112,7 @@ public class TournamentRepositoryTests : BaseIntegrationTest
         // Arrange
         var userId = await SeedUserAsync();
         var cityId = await SeedCityAsync();
-        var sportId = await SeedSportAsync();
-        var configId = await SeedConfigurationAsync(sportId);
+        var (sportId, configId) = await SeedSportAndConfigurationAsync();
 
         var tournament = CreateModel(cityId, sportId, configId, userId, "Lookup Tournament");
         await _repository.CreateOrUpdate(tournament, CancellationToken.None);
@@ -153,7 +150,7 @@ public class TournamentRepositoryTests : BaseIntegrationTest
     {
         using var conn = Fixture.ConnectionFactory.CreateConnection();
         await conn.ExecuteAsync(
-            "INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @email, @name, @created)",
+            "INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @email, @name, @created) ON CONFLICT (id) DO NOTHING",
             new { id = sub, email, name = "Test User", created = DateTime.UtcNow });
         return sub;
     }
@@ -180,42 +177,33 @@ public class TournamentRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Seeds a sport record.
+    /// Seeds sport and configuration records atomically within an explicit transaction
+    /// to satisfy deferred FK constraints and shortname / defaultconfigid NOT NULL constraints.
     /// </summary>
-    private async Task<Guid> SeedSportAsync()
+    private async Task<(Guid SportId, Guid ConfigId)> SeedSportAndConfigurationAsync()
     {
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
-        var id = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.sports (id, name) VALUES (@id, @name)",
-            new { id, name = $"Sport_{Guid.NewGuid()}" });
-        return id;
-    }
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
 
-    /// <summary>
-    /// Seeds a sport configuration record.
-    /// </summary>
-    private async Task<Guid> SeedConfigurationAsync(Guid sportId)
-    {
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
+        var shortName = $"S_{sportId:N}"[..10];
 
-        await conn.ExecuteAsync(
-            @"INSERT INTO public.sportconfigurations 
-              (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-              VALUES (@id, @sid, @clean, @count, @duration, @field, @roster, @lineup)",
-            new
-            {
-                id = configId,
-                sid = sportId,
-                clean = false,
-                count = 2,
-                duration = 45,
-                field = "Standard",
-                roster = 25,
-                lineup = 11
-            });
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@id, @name, @shortName, @configId)",
+            new { id = sportId, name = $"Sport_{sportId:N}", shortName, configId }, tx);
 
-        return configId;
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations 
+            (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
+            VALUES (@id, @sid, false, 2, 45, 'Standard', 25, 11)",
+            new { id = configId, sid = sportId }, tx);
+
+        await tx.CommitAsync();
+
+        return (sportId, configId);
     }
 
     /// <summary>

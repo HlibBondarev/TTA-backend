@@ -132,8 +132,7 @@ public class MatchLineupsControllerTests(DatabaseFixture fixture, ITestOutputHel
         var cityId = Guid.NewGuid();
         await SeedRequiredLocationDataAsync(cityId);
 
-        var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Sport-" + Guid.NewGuid());
-        var configId = await SeedConfigurationAsync(sportId);
+        var (sportId, configId) = await SeedSportDataAsync(Guid.NewGuid(), "Sport-" + Guid.NewGuid());
 
         var tournamentId = Guid.NewGuid();
         await SeedTournamentAsync(tournamentId, sportId, configId, cityId, ownerId, "Tournament-" + Guid.NewGuid());
@@ -196,14 +195,64 @@ public class MatchLineupsControllerTests(DatabaseFixture fixture, ITestOutputHel
         }
     }
 
-    private async Task<Guid> SeedSportDataAsync(Guid sportId, string name)
+    /// <summary>
+    /// Seeds a sport entity along with its associated default sport configuration atomically within an explicit transaction.
+    /// Satisfies mandatory <c>shortname</c> and <c>defaultconfigid</c> column requirements.
+    /// </summary>
+    /// <param name="sportId">The unique identifier to assign to the new or existing sport record.</param>
+    /// <param name="name">The display name of the sport.</param>
+    /// <returns>
+    /// A task returning a tuple containing the persisted <see cref="Guid"/> identifier of the sport and its default configuration.
+    /// </returns>
+    private async Task<(Guid SportId, Guid ConfigId)> SeedSportDataAsync(Guid sportId, string name)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
-        using var cmd = new NpgsqlCommand("INSERT INTO public.sports (id, name) VALUES (@id, @name) RETURNING id", conn);
-        cmd.Parameters.AddWithValue("id", sportId);
-        cmd.Parameters.AddWithValue("name", name);
-        return (Guid)(await cmd.ExecuteScalarAsync())!;
+        await using var tx = await conn.BeginTransactionAsync();
+
+        var configId = Guid.NewGuid();
+        var uniqueName = name.StartsWith("Sport-", StringComparison.OrdinalIgnoreCase) ? name[6..] : name;
+        var cleanName = uniqueName.Replace("-", "").Replace("_", "");
+        var shortName = cleanName.Length <= 3 ? cleanName.ToUpper() : cleanName[..3].ToUpper();
+
+        // 1. Insert Sport (Updated with shortname & defaultconfigid)
+        var sportSql = @"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@id, @name, @shortName, @configId) 
+            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name 
+            RETURNING id, defaultconfigid;";
+
+        using (var cmd = new NpgsqlCommand(sportSql, conn, tx))
+        {
+            cmd.Parameters.AddWithValue("id", sportId);
+            cmd.Parameters.AddWithValue("name", name);
+            cmd.Parameters.AddWithValue("shortName", shortName);
+            cmd.Parameters.AddWithValue("configId", configId);
+
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                sportId = reader.GetGuid(0);
+                configId = reader.GetGuid(1);
+            }
+        }
+
+        // 2. Insert SportConfiguration
+        var configSql = @"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+            VALUES (@configId, @sportId, false, 2, 45, '105x68', 25, 11)
+            ON CONFLICT DO NOTHING;";
+
+        using (var cmd = new NpgsqlCommand(configSql, conn, tx))
+        {
+            cmd.Parameters.AddWithValue("configId", configId);
+            cmd.Parameters.AddWithValue("sportId", sportId);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        await tx.CommitAsync();
+
+        return (sportId, configId);
     }
 
     private async Task<Guid> SeedConfigurationAsync(Guid sportId)

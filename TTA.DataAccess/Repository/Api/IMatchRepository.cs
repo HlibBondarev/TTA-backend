@@ -1,5 +1,6 @@
 ﻿using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Base;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository.Api;
 
@@ -37,4 +38,24 @@ public interface IMatchRepository : IEntityRepositoryBase<Guid, Match>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A dynamic object containing all match details if found; otherwise, null.</returns>
     Task<dynamic?> GetMatchByIdWithDetailsAsync(Guid matchId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Provisions JIT quick match infrastructure (teams, tournament, rosters) and creates a match record.
+    /// </summary>
+    /// <param name="sportId">The unique identifier of the sport.</param>
+    /// <param name="configurationId">The optional unique identifier of the sport configuration.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A <see cref="QuickMatchProjection"/> containing the created match and provisioned entity identifiers.</returns>
+    Task<QuickMatchProjection?> CreateQuickMatchAsync(
+        Guid sportId,
+        Guid? configurationId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes a match record by its unique identifier.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match to delete.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task returning true if the record was successfully deleted; otherwise, false.</returns>
+    Task<bool> DeleteAsync(Guid matchId, CancellationToken cancellationToken = default);
 }

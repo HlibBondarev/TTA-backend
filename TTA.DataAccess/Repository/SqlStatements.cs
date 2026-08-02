@@ -49,6 +49,30 @@ public static class SqlStatements
     }
 
     /// <summary>
+    /// SQL constants for Sport-related database operations.
+    /// </summary>
+    public static class ForSports
+    {
+        /// <summary>
+        /// SQL to retrieve a single sport by ID.
+        /// </summary>
+        public const string GetSportById =
+            "SELECT * FROM public.get_sport_by_id(@p_id)";
+    }
+
+    /// <summary>
+    /// SQL constants for SportConfiguration-related database operations.
+    /// </summary>
+    public static class ForSportConfigurations
+    {
+        /// <summary>
+        /// SQL to retrieve a single sport configuration by ID.
+        /// </summary>
+        public const string GetSportConfigurationById =
+            "SELECT * FROM public.get_sport_configuration_by_id(@p_id)";
+    }
+
+    /// <summary>
     /// SQL constants for Club-related database operations.
     /// </summary>
     public static class ForClubs
@@ -234,6 +258,17 @@ public static class SqlStatements
         /// </summary>
         public const string GetMatchWithDetailsById =
             "SELECT * FROM public.get_match_with_details_by_id(@p_id)";
+
+        /// <summary>
+        /// Executes the storage function to provision infrastructure and create a quick match.
+        /// </summary>
+        public const string CreateQuickMatch = @"SELECT * FROM public.create_quick_match(@SportId, @ConfigurationId)";
+
+        /// <summary>
+        /// Executes the storage function to delete a match by its unique identifier.
+        /// </summary>
+        public const string DeleteMatch =
+            "SELECT public.delete_match(@p_id);";
     }
 
     /// <summary>

@@ -8,10 +8,20 @@ using Xunit.Abstractions;
 
 namespace TTA.Tests.Integration.Controllers;
 
+/// <summary>
+/// Integration tests for <c>ClubsController</c> verifying API endpoints for club creation,
+/// player registration, team creation, authorization policies, and payload validation rules.
+/// </summary>
+/// <param name="fixture">The shared database fixture providing containerized PostgreSQL access.</param>
+/// <param name="output">The test output helper for writing diagnostic logs during execution.</param>
 public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper output)
     : BaseApiTest(fixture, output)
 {
     #region Create
+
+    /// <summary>
+    /// Verifies that creating a club returns <see cref="HttpStatusCode.Created"/> (201) and a valid GUID identifier when the request payload is valid.
+    /// </summary>
     [Fact]
     public async Task Create_ShouldReturnCreated_WhenRequestIsValid()
     {
@@ -36,6 +46,9 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         resultId.Should().NotBeEmpty();
     }
 
+    /// <summary>
+    /// Verifies that creating a club with an empty name fails with <see cref="HttpStatusCode.BadRequest"/> (400).
+    /// </summary>
     [Fact]
     public async Task Create_ShouldReturnBadRequest_WhenNameIsEmpty()
     {
@@ -49,6 +62,9 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    /// <summary>
+    /// Verifies that calling the club creation endpoint without authorization returns <see cref="HttpStatusCode.Unauthorized"/> (401).
+    /// </summary>
     [Fact]
     public async Task Create_ShouldReturnUnauthorized_WhenAuthenticationIsDisabled()
     {
@@ -70,9 +86,14 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
             TestAuthHandler.IsEnabled = true;
         }
     }
+
     #endregion
 
     #region CreatePlayer
+
+    /// <summary>
+    /// Verifies that an authorized club administrator can successfully register a new player under the target club.
+    /// </summary>
     [Fact]
     public async Task CreatePlayer_ShouldReturnCreated_WhenUserIsClubAdmin()
     {
@@ -101,6 +122,9 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         resultId.Should().NotBeEmpty();
     }
 
+    /// <summary>
+    /// Verifies that player creation returns <see cref="HttpStatusCode.Forbidden"/> (403) when the user lacks an administrative access policy for the target club.
+    /// </summary>
     [Fact]
     public async Task CreatePlayer_ShouldReturnForbidden_WhenUserHasNoAccess()
     {
@@ -118,6 +142,9 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
+    /// <summary>
+    /// Verifies that player creation returns <see cref="HttpStatusCode.BadRequest"/> (400) when required payload fields fail model validation.
+    /// </summary>
     [Fact]
     public async Task CreatePlayer_ShouldReturnBadRequest_WhenValidationFails()
     {
@@ -141,9 +168,14 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
+
     #endregion
 
     #region CreateTeam
+
+    /// <summary>
+    /// Verifies that an authorized club administrator can successfully create a new team under the specified club.
+    /// </summary>
     [Fact]
     public async Task CreateTeam_ShouldReturnCreated_WhenUserIsClubAdmin()
     {
@@ -172,6 +204,9 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
+    /// <summary>
+    /// Verifies that team creation returns <see cref="HttpStatusCode.Forbidden"/> (403) when the user lacks permissions to manage the target club.
+    /// </summary>
     [Fact]
     public async Task CreateTeam_ShouldReturnForbidden_WhenUserHasNoAccess()
     {
@@ -197,9 +232,15 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
+
     #endregion
 
     #region Helpers for Seeding
+
+    /// <summary>
+    /// Seeds mandatory parent entities (Country, Region, City, Club) required for club-dependent controller endpoints.
+    /// </summary>
+    /// <param name="clubId">The unique identifier of the club to create.</param>
     private async Task SeedRequiredClubDataAsync(Guid clubId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -226,7 +267,11 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         }
     }
 
-    // FIXED: Now using integer casts for Enum values
+    /// <summary>
+    /// Seeds an access policy granting full control (<see cref="AppRole.FullControl"/>) over a club (<see cref="TargetScope.Club"/>) to a user.
+    /// </summary>
+    /// <param name="userId">The unique identifier of the user receiving administrative access.</param>
+    /// <param name="clubId">The target club identifier for the access policy scope.</param>
     private async Task SeedClubAdminPolicyAsync(string userId, Guid clubId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -249,6 +294,10 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         await cmd.ExecuteNonQueryAsync();
     }
 
+    /// <summary>
+    /// Seeds a user entity into the public schema database tables.
+    /// </summary>
+    /// <param name="userId">The unique identifier of the user to seed.</param>
     private async Task SeedUserAsync(string userId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -262,6 +311,10 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         await cmd.ExecuteNonQueryAsync();
     }
 
+    /// <summary>
+    /// Seeds minimal location hierarchy (Country, Region, City) required for club creation tests.
+    /// </summary>
+    /// <param name="cityId">The unique identifier of the city to seed.</param>
     private async Task SeedRequiredLocationDataAsync(Guid cityId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -276,29 +329,68 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         await cmd.ExecuteNonQueryAsync();
     }
 
+    /// <summary>
+    /// Seeds a sport and its associated default configuration within an explicit transaction
+    /// to satisfy foreign key constraints and mandatory <c>shortname</c> and <c>defaultconfigid</c> columns.
+    /// </summary>
+    /// <param name="sportId">The target sport identifier.</param>
+    /// <param name="name">The display name of the sport.</param>
+    /// <returns>A task representing the asynchronous operation, returning the generated or existing sport ID.</returns>
     private async Task<Guid> SeedSportDataAsync(Guid sportId, string name)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
+        await using var tx = await conn.BeginTransactionAsync();
 
-        var sql = @"
-        INSERT INTO public.sports (id, name, defaultconfigid) 
-        VALUES (@id, @name, NULL) 
-        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name 
-        RETURNING id;";
+        var configId = Guid.NewGuid();
+        var shortName = name.Length > 10 ? name[..10] : name;
 
-        using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("id", sportId);
-        cmd.Parameters.AddWithValue("name", name);
+        // 1. Insert Sport (Updated with shortname & defaultconfigid)
+        var sportSql = @"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@id, @name, @shortName, @configId) 
+            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name 
+            RETURNING id;";
 
-        var result = await cmd.ExecuteScalarAsync();
-        return (Guid)result!;
+        using (var cmd = new NpgsqlCommand(sportSql, conn, tx))
+        {
+            cmd.Parameters.AddWithValue("id", sportId);
+            cmd.Parameters.AddWithValue("name", name);
+            cmd.Parameters.AddWithValue("shortName", shortName);
+            cmd.Parameters.AddWithValue("configId", configId);
+
+            var result = await cmd.ExecuteScalarAsync();
+            sportId = (Guid)result!;
+        }
+
+        // 2. Insert SportConfiguration
+        var configSql = @"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+            VALUES (@configId, @sportId, false, 2, 45, '105x68', 25, 11)
+            ON CONFLICT DO NOTHING;";
+
+        using (var cmd = new NpgsqlCommand(configSql, conn, tx))
+        {
+            cmd.Parameters.AddWithValue("configId", configId);
+            cmd.Parameters.AddWithValue("sportId", sportId);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        await tx.CommitAsync();
+
+        return sportId;
     }
 
+    /// <summary>
+    /// Executes a non-query SQL command against an open Npgsql connection.
+    /// </summary>
+    /// <param name="conn">The active PostgreSQL connection.</param>
+    /// <param name="sql">The raw SQL command text to execute.</param>
     private static async Task ExecuteSql(NpgsqlConnection conn, string sql)
     {
         using var cmd = new NpgsqlCommand(sql, conn);
         await cmd.ExecuteNonQueryAsync();
     }
+
     #endregion
 }

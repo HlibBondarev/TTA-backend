@@ -123,6 +123,30 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- =============================================================
+-- SPORT & SPORT CONFIGURATION STORED FUNCTIONS
+-- =============================================================
+
+/*********************************
+ * Retrieve a single sport by ID
+ *********************************/
+CREATE OR REPLACE FUNCTION public.get_sport_by_id(p_id UUID)
+RETURNS SETOF public.sports AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM public.sports WHERE id = p_id;
+END;$$ LANGUAGE plpgsql;
+
+/************************************************
+ * Retrieve a single sport configuration by ID
+ ************************************************/
+CREATE OR REPLACE FUNCTION public.get_sport_configuration_by_id(p_id UUID)
+RETURNS SETOF public.sportconfigurations AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM public.sportconfigurations WHERE id = p_id;
+END;$$ LANGUAGE plpgsql;
+
 -- ====================================================
 -- ORGANIZATIONS (CLUBS) STORED FUNCTIONS & PROCEDURES
 -- ====================================================
@@ -808,6 +832,206 @@ BEGIN
     INNER JOIN public.teams ht ON m.hometeamid = ht.id
     INNER JOIN public.teams gt ON m.guestteamid = gt.id
     WHERE m.id = p_id;
+END;
+$$ LANGUAGE plpgsql;
+
+/************************************************************************************************
+ * Function: public.create_quick_match
+ * Description: Provisions JIT teams, tournament container, player rosters, AND creates the match entity.
+ *              Ensures base user, geography, and default club exist JIT to guarantee idempotency.
+ *              Falls back to sports.defaultconfigid if p_configuration_id is NULL.
+ ************************************************************************************************/
+CREATE OR REPLACE FUNCTION public.create_quick_match(
+    p_sport_id UUID,
+    p_configuration_id UUID DEFAULT NULL
+)
+RETURNS TABLE (
+    id UUID,
+    tournamentid UUID,
+    hometeamid UUID,
+    guestteamid UUID,
+    scheduledat TIMESTAMP WITH TIME ZONE,
+    createdat TIMESTAMP WITH TIME ZONE
+)
+LANGUAGE plpgsql
+AS $$
+#variable_conflict use_column
+DECLARE
+    v_club_id UUID := '11111111-1111-1111-1111-000000000001';
+    v_city_id UUID := '11111111-1111-1111-1111-111111111111';
+    v_owner_id VARCHAR(64) := 'auth0|system-seed';
+    v_country_id INT;
+    v_region_id INT;
+    v_effective_config_id UUID;
+    v_home_team_id UUID;
+    v_guest_team_id UUID;
+    v_tournament_id UUID;
+    v_match_id UUID := gen_random_uuid();
+    v_now TIMESTAMP WITH TIME ZONE := CURRENT_TIMESTAMP;
+    v_position_id UUID;
+    v_max_number INT;
+BEGIN
+    -- 0. Ensure JIT base infrastructure (User, Geography, Base Club) exists if missing
+    INSERT INTO public.users (id, email, displayname, createdat)
+    VALUES (v_owner_id, 'system-seed@tta.com', 'System Seed User', v_now)
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO public.countries (name, code)
+    SELECT 'Ukraine', 'UA' WHERE NOT EXISTS (SELECT 1 FROM public.countries c WHERE c.name = 'Ukraine');
+    
+    SELECT c.id INTO v_country_id FROM public.countries c WHERE c.name = 'Ukraine' LIMIT 1;
+
+    INSERT INTO public.regions (countryid, name)
+    SELECT v_country_id, 'Dnipro Region' WHERE NOT EXISTS (SELECT 1 FROM public.regions r WHERE r.name = 'Dnipro Region' AND r.countryid = v_country_id);
+    
+    SELECT r.id INTO v_region_id FROM public.regions r WHERE r.name = 'Dnipro Region' AND r.countryid = v_country_id LIMIT 1;
+
+    INSERT INTO public.cities (id, regionid, name)
+    VALUES (v_city_id, v_region_id, 'Dnipro')
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO public.clubs (id, cityid, name, createdat)
+    VALUES (v_club_id, v_city_id, 'TTA Training Club', v_now)
+    ON CONFLICT DO NOTHING;
+
+    -- 1. Determine effective configuration ID (Use provided or fallback to sports.defaultconfigid)
+    -- Treat empty GUID ('00000000-0000-0000-0000-000000000000') as NULL
+    IF p_configuration_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
+        p_configuration_id := NULL;
+    END IF;
+
+    v_effective_config_id := COALESCE(
+        p_configuration_id, 
+        (SELECT s.defaultconfigid FROM public.sports s WHERE s.id = p_sport_id)
+    );
+
+    IF v_effective_config_id IS NULL THEN
+        RAISE EXCEPTION 'Configuration ID not provided and default configuration does not exist for sport %.', p_sport_id
+            USING ERRCODE = 'P0005';
+    END IF;
+
+    -- Validate that effective configuration exists AND belongs to the specified sport
+    IF NOT EXISTS (
+        SELECT 1 FROM public.sportconfigurations sc 
+        WHERE sc.id = v_effective_config_id AND sc.sportid = p_sport_id
+    ) THEN
+        RAISE EXCEPTION 'Configuration % was not found or does not belong to sport %.', v_effective_config_id, p_sport_id
+            USING ERRCODE = 'P0005';
+    END IF;
+
+    -- Concurrency Protection: Acquire transactional advisory lock scoped to sport and configuration
+    PERFORM pg_advisory_xact_lock(hashtext(p_sport_id::text), hashtext(v_effective_config_id::text));
+
+    -- 2. Ensure Home Squad team exists for the given sportId (with gender = 0)
+    SELECT t.id INTO v_home_team_id
+    FROM public.teams t
+    WHERE t.clubid = v_club_id AND t.sportid = p_sport_id AND t.name = 'Home Squad'
+    LIMIT 1;
+
+    IF v_home_team_id IS NULL THEN
+        v_home_team_id := gen_random_uuid();
+        INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat)
+        VALUES (v_home_team_id, v_club_id, p_sport_id, 'Home Squad', 0, v_now);
+    END IF;
+
+    -- 3. Ensure Opponent Squad team exists for the given sportId (with gender = 0)
+    SELECT t.id INTO v_guest_team_id
+    FROM public.teams t
+    WHERE t.clubid = v_club_id AND t.sportid = p_sport_id AND t.name = 'Opponent Squad'
+    LIMIT 1;
+
+    IF v_guest_team_id IS NULL THEN
+        v_guest_team_id := gen_random_uuid();
+        INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat)
+        VALUES (v_guest_team_id, v_club_id, p_sport_id, 'Opponent Squad', 0, v_now);
+    END IF;
+
+    -- 4. Ensure Training Tournament exists for the effective configurationId
+    SELECT t.id INTO v_tournament_id
+    FROM public.tournaments t
+    WHERE t.configurationid = v_effective_config_id AND t.name = 'Training & Friendly Matches'
+    LIMIT 1;
+
+    IF v_tournament_id IS NULL THEN
+        v_tournament_id := gen_random_uuid();
+        INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat)
+        VALUES (v_tournament_id, p_sport_id, v_effective_config_id, v_city_id, v_owner_id, 'Training & Friendly Matches', CURRENT_DATE, v_now);
+    END IF;
+
+    -- 5. Get or create a default position definition for this sport
+    SELECT ppd.id INTO v_position_id
+    FROM public.playerpositiondefinitions ppd
+    WHERE ppd.sportid = p_sport_id
+    LIMIT 1;
+
+    IF v_position_id IS NULL THEN
+        v_position_id := gen_random_uuid();
+        INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname)
+        VALUES (v_position_id, p_sport_id, 'Universal', 'UNI');
+    END IF;
+
+    SELECT COALESCE(MAX(pr.number), 0) INTO v_max_number
+    FROM public.playerrosters pr
+    WHERE pr.tournamentid = v_tournament_id AND pr.teamid = v_home_team_id;
+
+    -- 6. Bulk-register all club players into playerrosters for Home Squad with valid number and positionid
+    INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, number, positionid, createdat)
+    SELECT 
+        gen_random_uuid(),
+        v_tournament_id,
+        v_home_team_id,
+        p.id,
+        v_max_number + ROW_NUMBER() OVER (ORDER BY p.createdat, p.id)::INT,
+        v_position_id,
+        v_now
+    FROM public.players p
+    WHERE p.homeclubid = v_club_id
+    ON CONFLICT (tournamentid, playerid) DO NOTHING;
+
+    -- 7. Insert Match entity directly
+    INSERT INTO public.matches (
+        id,
+        tournamentid,
+        hometeamid,
+        guestteamid,
+        scheduledat,
+        createdat
+    )
+    VALUES (
+        v_match_id,
+        v_tournament_id,
+        v_home_team_id,
+        v_guest_team_id,
+        v_now,
+        v_now
+    );
+
+    -- 8. Return created quick match projection
+    RETURN QUERY
+    SELECT 
+        v_match_id,
+        v_tournament_id,
+        v_home_team_id,
+        v_guest_team_id,
+        v_now,
+        v_now;
+END;
+$$;
+
+/**********************************************************************************
+ * Removes a match record from the database by its unique identifier.
+ * Returns TRUE if the record was successfully deleted, FALSE otherwise.
+ * Dynamic CASCADE constraints will clean up related lineups/events automatically.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.delete_match(
+    p_id UUID
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+    DELETE FROM public.matches
+    WHERE id = p_id;
+
+    RETURN FOUND;
 END;
 $$ LANGUAGE plpgsql;
 

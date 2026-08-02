@@ -241,6 +241,11 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
 
     #region Seeding Helpers
 
+    /// <summary>
+    /// Seeds a full testing context including location, club, team, user, and access policy records.
+    /// </summary>
+    /// <param name="teamId">The unique identifier for the team to seed.</param>
+    /// <param name="clubId">The unique identifier for the club to seed.</param>
     private async Task SeedFullContextAsync(Guid teamId, Guid clubId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -254,6 +259,10 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         await SeedAccessPolicyInternalAsync(conn, TestUserId, (int)TargetScope.Club, clubId, (int)AppRole.FullControl);
     }
 
+    /// <summary>
+    /// Seeds initial location hierarchy (Country, Region, City) if it does not already exist.
+    /// </summary>
+    /// <param name="conn">The active database connection.</param>
     private static async Task SeedRequiredLocationDataInternalAsync(NpgsqlConnection conn)
     {
         // 1. Seed Country - Handle both unique name and code
@@ -277,7 +286,6 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
             new { countryId });
 
         // 3. Seed City - UNIQUE(regionid, name)
-        // We use a fixed Name to ensure ON CONFLICT works, but a random ID for the first insert
         await conn.ExecuteAsync(@"
         INSERT INTO public.cities (id, name, regionid) 
         VALUES (@id, 'Test City', @regionId) 
@@ -285,9 +293,20 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
             new { id = Guid.NewGuid(), regionId });
     }
 
+    /// <summary>
+    /// Gets the identifier of the first available city in the database.
+    /// </summary>
+    /// <param name="conn">The active database connection.</param>
+    /// <returns>The unique identifier of the city.</returns>
     private static async Task<Guid> GetFirstCityIdAsync(NpgsqlConnection conn)
         => await conn.QueryFirstAsync<Guid>("SELECT id FROM public.cities LIMIT 1");
 
+    /// <summary>
+    /// Seeds a club record into the database.
+    /// </summary>
+    /// <param name="conn">The active database connection.</param>
+    /// <param name="clubId">The unique identifier of the club.</param>
+    /// <param name="cityId">The unique identifier of the associated city.</param>
     private static async Task SeedClubInternalAsync(NpgsqlConnection conn, Guid clubId, Guid cityId)
     {
         await conn.ExecuteAsync(@"
@@ -296,19 +315,55 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
             new { clubId, cityId, now = DateTime.UtcNow });
     }
 
+    /// <summary>
+    /// Seeds a team along with its sport and sport configuration dependencies.
+    /// Uses a transaction and ON CONFLICT handling to safely resolve the 'Football' sport entity across parallel test runs.
+    /// </summary>
+    /// <param name="conn">The active database connection.</param>
+    /// <param name="id">The unique identifier of the team.</param>
+    /// <param name="clubId">The unique identifier of the owning club.</param>
     private static async Task SeedTeamInternalAsync(NpgsqlConnection conn, Guid id, Guid clubId)
     {
+        using var tx = await conn.BeginTransactionAsync();
+
         var sportId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.sports (id, name) VALUES (@sportId, 'Football') 
-            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name", new { sportId });
+        var defaultConfigId = Guid.NewGuid();
+
+        // Atomically insert or fetch existing 'Football' sport entity
+        var resolvedSportId = await conn.ExecuteScalarAsync<Guid>(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@sportId, 'Football', 'FB', @defaultConfigId) 
+            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+            RETURNING id",
+            new { sportId, defaultConfigId }, tx);
+
+        // If a new sport row was created, seed its corresponding sport configuration
+        if (resolvedSportId == sportId)
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sportconfigurations (
+                    id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit
+                ) VALUES (
+                    @defaultConfigId, @sportId, false, 2, 45, 'Standard', 18, 11, 7)
+                ON CONFLICT DO NOTHING",
+                new { defaultConfigId, sportId }, tx);
+        }
+
+        await tx.CommitAsync();
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) 
             VALUES (@id, @clubId, @sportId, 'First Team', 0, @now)",
-            new { id, clubId, sportId, now = DateTime.UtcNow });
+            new { id, clubId, sportId = resolvedSportId, now = DateTime.UtcNow });
     }
 
+    /// <summary>
+    /// Seeds a user record into the database.
+    /// </summary>
+    /// <param name="conn">The active database connection.</param>
+    /// <param name="userId">The unique identifier of the user.</param>
+    /// <param name="name">The display name of the user.</param>
+    /// <param name="email">The email address of the user.</param>
     private static async Task SeedUserInternalAsync(NpgsqlConnection conn, string userId, string name, string email)
     {
         await conn.ExecuteAsync(@"
@@ -317,6 +372,14 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
             new { userId, name, email, now = DateTime.UtcNow });
     }
 
+    /// <summary>
+    /// Seeds an access policy record for authorization checks.
+    /// </summary>
+    /// <param name="conn">The active database connection.</param>
+    /// <param name="userId">The target user ID.</param>
+    /// <param name="scope">The scope level (e.g., Club, Team).</param>
+    /// <param name="targetId">The resource ID for the scope.</param>
+    /// <param name="role">The granted application role.</param>
     private static async Task SeedAccessPolicyInternalAsync(NpgsqlConnection conn, string userId, int scope, Guid targetId, int role)
     {
         await conn.ExecuteAsync(@"
@@ -325,18 +388,38 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
             new { id = Guid.NewGuid(), userId, role, scope, targetId, now = DateTime.UtcNow });
     }
 
+    /// <summary>
+    /// Helper wrapper to seed a user record using a new connection.
+    /// </summary>
+    /// <param name="userId">The unique identifier of the user.</param>
+    /// <param name="name">The display name of the user.</param>
+    /// <param name="email">The email address of the user.</param>
     private async Task SeedUserAsync(string userId, string name, string email)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await SeedUserInternalAsync(conn, userId, name, email);
     }
 
+    /// <summary>
+    /// Helper wrapper to seed an access policy using a new connection.
+    /// </summary>
+    /// <param name="userId">The target user ID.</param>
+    /// <param name="scope">The scope level.</param>
+    /// <param name="targetId">The resource ID for the scope.</param>
+    /// <param name="role">The granted application role.</param>
     private async Task SeedAccessPolicyAsync(string userId, int scope, Guid targetId, int role)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await SeedAccessPolicyInternalAsync(conn, userId, scope, targetId, role);
     }
 
+    /// <summary>
+    /// Seeds a team membership record into the database.
+    /// </summary>
+    /// <param name="id">The unique identifier of the membership.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="userId">The unique identifier of the user.</param>
+    /// <param name="role">The role of the user within the team.</param>
     private async Task SeedMembershipAsync(Guid id, Guid teamId, string userId, int role)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();

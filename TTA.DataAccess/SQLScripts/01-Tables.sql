@@ -41,7 +41,8 @@ CREATE TABLE users (
 CREATE TABLE sports (
     id UUID PRIMARY KEY,
     name VARCHAR(50) NOT NULL UNIQUE,
-    defaultconfigid UUID NULL 
+    shortname VARCHAR(10) NOT NULL,
+    defaultconfigid UUID NOT NULL
 );
 
 CREATE TABLE playerpositiondefinitions (
@@ -64,10 +65,12 @@ CREATE TABLE sportconfigurations (
     UNIQUE (sportid, id)
 );
 
+-- Deferred Foreign Key allows circular seeding within a single transaction/block
 ALTER TABLE sports 
 ADD CONSTRAINT fk_sports_default_config 
 FOREIGN KEY (id, defaultconfigid) 
-REFERENCES sportconfigurations (sportid, id);
+REFERENCES sportconfigurations (sportid, id)
+DEFERRABLE INITIALLY DEFERRED;
 
 -- ==========================================
 -- 3. ORGANIZATIONS (CLUBS) & TEAMS
