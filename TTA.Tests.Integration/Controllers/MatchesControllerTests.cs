@@ -1407,7 +1407,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> returns <see cref="HttpStatusCode.Created"/> (201)
-    /// and a populated <see cref="QuickMatchResponse"/> when provided with a valid sport identifier.
+    /// and a populated <see cref="QuickMatchResponse"/>, and verifies that starting lineups are initialized for both teams.
     /// </summary>
     [Fact]
     public async Task CreateQuickMatch_ShouldReturnCreated_WhenRequestIsValid()
@@ -1416,6 +1416,40 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"QuickPolo_{Guid.NewGuid():N}");
         await SeedUserAsync(TestUserId);
+
+        // Seed JIT Default Infrastructure and Players for Default Club (11111111-1111-1111-1111-000000000001)
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var defaultCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+
+            // 1. Ensure geography and default club exist
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;
+                INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) ON CONFLICT DO NOTHING;",
+                new { clubId = defaultClubId, cityId = defaultCityId });
+
+            // 2. Adjust rosterlimit and lineuplimit for test predictability (5 players per team roster, 3 in lineup)
+            await conn.ExecuteAsync(@"
+                UPDATE public.sportconfigurations 
+                SET rosterlimit = 5, lineuplimit = 3 
+                WHERE sportid = @sportId;",
+                new { sportId });
+
+            // 3. Seed 10 players: 1..5 will be assigned to Home Squad, 6..10 to Guest Squad
+            for (int i = 1; i <= 10; i++)
+            {
+                await conn.ExecuteAsync(@"
+                    INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+                    VALUES (@id, @clubId, @fn, 'QuickPlayer', '2000-01-01', 0, NOW())
+                    ON CONFLICT DO NOTHING;",
+                    new { id = Guid.NewGuid(), clubId = defaultClubId, fn = $"QuickPlayer_{i}" });
+            }
+        }
 
         var request = new
         {
@@ -1431,6 +1465,13 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
         result.Should().NotBeNull();
         result!.Id.Should().NotBeEmpty();
+
+        // Verify that starting lineups were generated for both Home and Guest teams
+        var lineupsResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/lineups");
+        lineupsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var lineups = await lineupsResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>();
+        lineups.Should().NotBeNull();
+        lineups!.Select(l => l.TeamId).Distinct().Should().HaveCount(2, "starting lineups should be populated for both home and guest teams");
     }
 
     /// <summary>

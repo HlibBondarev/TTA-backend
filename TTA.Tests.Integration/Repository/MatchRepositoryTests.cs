@@ -158,20 +158,41 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that <see cref="MatchRepository.CreateQuickMatchAsync"/> provisions JIT teams, tournament container, 
-    /// player rosters, and creates the match entity in a single atomic database operation.
+    /// player rosters for both Home and Guest teams, and creates the match entity in a single atomic database operation.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
     public async Task CreateQuickMatchAsync_ShouldProvisionInfrastructureAndReturnProjection()
     {
-        // Arrange - seed base sport and configuration with deferred FK transaction
+        // Arrange - seed base sport, configuration, JIT default club, and players
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
 
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var defaultCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
+        // 1. Ensure JIT base geography and default club exist
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+            INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+            INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;
+            INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) ON CONFLICT DO NOTHING;",
+            new { clubId = defaultClubId, cityId = defaultCityId }, transaction: transaction);
+
+        // 2. Seed players for the default club so that create_quick_match function can register them into rosters
+        for (int i = 1; i <= 6; i++)
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+                VALUES (@id, @clubId, @fn, 'Test', '2000-01-01', 0, NOW())
+                ON CONFLICT DO NOTHING;",
+                new { id = Guid.NewGuid(), clubId = defaultClubId, fn = $"Player_{i}" }, transaction: transaction);
+        }
+
+        // 3. Seed sport and sport configuration (setting rosterlimit = 3 for clear testing)
         await conn.ExecuteAsync(@"
             INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
             VALUES (@sportId, 'Water Polo Quick', 'WPQ', @configId)",
@@ -179,7 +200,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-            VALUES (@configId, @sportId, true, 4, 8, '30x20', 15, 13)",
+            VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
             new { configId, sportId }, transaction: transaction);
 
         await transaction.CommitAsync();
@@ -194,6 +215,18 @@ public class MatchRepositoryTests : BaseIntegrationTest
         result.HomeTeamId.Should().NotBeEmpty();
         result.GuestTeamId.Should().NotBeEmpty();
         result.ScheduledAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
+
+        // Assert DB state: verify player rosters exist for BOTH Home and Guest teams up to rosterlimit (3 each)
+        var homeRosterCount = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @homeId",
+            new { tId = result.TournamentId, homeId = result.HomeTeamId });
+
+        var guestRosterCount = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @guestId",
+            new { tId = result.TournamentId, guestId = result.GuestTeamId });
+
+        homeRosterCount.Should().Be(3, "home team roster should be filled up to rosterlimit (3)");
+        guestRosterCount.Should().Be(3, "guest team roster should be filled up to rosterlimit (3)");
     }
 
     #endregion

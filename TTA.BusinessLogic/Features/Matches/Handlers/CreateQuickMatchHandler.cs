@@ -8,9 +8,10 @@ using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Auth;
 
 namespace TTA.BusinessLogic.Features.Matches.Handlers;
+
 /// <summary>
 /// Handles the execution of <see cref="CreateQuickMatchCommand"/> to provision JIT entities, assign access policies, 
-/// create the match, and initialize starting lineups.
+/// create the match, and initialize starting lineups for both competing teams.
 /// </summary>
 /// <param name="matchRepository">The match repository for database operations and JIT provisioning.</param>
 /// <param name="accessRepository">The access repository for checking and granting team access policies.</param>
@@ -19,14 +20,14 @@ namespace TTA.BusinessLogic.Features.Matches.Handlers;
 /// <param name="rosterRepository">The roster repository for fetching tournament rosters.</param>
 /// <param name="matchLineupRepository">The match lineup repository for copying players into match lineups.</param>
 /// <param name="logger">The logger instance for diagnostic messages.</param>
-public class CreateQuickMatchCommandHandler(
+public class CreateQuickMatchHandler(
     IMatchRepository matchRepository,
     IAccessRepository accessRepository,
     ISportRepository sportRepository,
     ISportConfigurationRepository sportConfigurationRepository,
     IRosterRepository rosterRepository,
     IMatchLineupRepository matchLineupRepository,
-    ILogger<CreateQuickMatchCommandHandler> logger) : IRequestHandler<CreateQuickMatchCommand, QuickMatchResponse>
+    ILogger<CreateQuickMatchHandler> logger) : IRequestHandler<CreateQuickMatchCommand, QuickMatchResponse>
 {
     private readonly IMatchRepository _matchRepository = matchRepository;
     private readonly IAccessRepository _accessRepository = accessRepository;
@@ -34,10 +35,11 @@ public class CreateQuickMatchCommandHandler(
     private readonly ISportConfigurationRepository _sportConfigurationRepository = sportConfigurationRepository;
     private readonly IRosterRepository _rosterRepository = rosterRepository;
     private readonly IMatchLineupRepository _matchLineupRepository = matchLineupRepository;
-    private readonly ILogger<CreateQuickMatchCommandHandler> _logger = logger;
+    private readonly ILogger<CreateQuickMatchHandler> _logger = logger;
 
     /// <summary>
-    /// Provisions quick match infrastructure, verifies or grants team editor access policies, and copies starter roster entries into the match lineup.
+    /// Provisions quick match infrastructure, verifies or grants team editor access policies, 
+    /// and copies starter roster entries into the match lineup for both Home and Guest teams.
     /// Performs compensating cleanup if post-creation provisioning fails.
     /// </summary>
     /// <param name="command">The command containing quick match setup parameters and authenticated user details.</param>
@@ -118,34 +120,52 @@ public class CreateQuickMatchCommandHandler(
                 throw new KeyNotFoundException($"Sport configuration with ID {targetConfigurationId} was not found.");
             }
 
-            // 5. Retrieve Home Squad tournament roster
+            // 5. Populate starting lineup for BOTH Home Squad and Guest Squad
+            _logger.LogDebug("Populating starting lineups for Match {MatchId}.", quickMatchProjection.Id);
+
+            // Populate Home Squad
             var homeRoster = await _rosterRepository.GetTeamRosterAsync(
                 quickMatchProjection.TournamentId,
                 quickMatchProjection.HomeTeamId,
                 cancellationToken);
 
-            // 6. Slice top N starters based on LineupLimit with explicit cast to Guid
-            var starterRosterIds = homeRoster
+            var homeStarters = homeRoster
                 .Take(sportConfig.LineupLimit)
                 .Select(r => (Guid)r.id)
                 .ToArray();
 
-            // 7. Populate starting lineup for Home Squad
-            if (starterRosterIds.Length > 0)
+            if (homeStarters.Length > 0)
             {
-                _logger.LogDebug("Populating starting lineup with {Count} players for Match {MatchId}.",
-                    starterRosterIds.Length, quickMatchProjection.Id);
-
                 await _matchLineupRepository.CopyFromRosterAsync(
                     quickMatchProjection.Id,
                     quickMatchProjection.HomeTeamId,
-                    starterRosterIds,
+                    homeStarters,
+                    cancellationToken);
+            }
+
+            // Populate Guest Squad
+            var guestRoster = await _rosterRepository.GetTeamRosterAsync(
+                quickMatchProjection.TournamentId,
+                quickMatchProjection.GuestTeamId,
+                cancellationToken);
+
+            var guestStarters = guestRoster
+                .Take(sportConfig.LineupLimit)
+                .Select(r => (Guid)r.id)
+                .ToArray();
+
+            if (guestStarters.Length > 0)
+            {
+                await _matchLineupRepository.CopyFromRosterAsync(
+                    quickMatchProjection.Id,
+                    quickMatchProjection.GuestTeamId,
+                    guestStarters,
                     cancellationToken);
             }
 
             _logger.LogInformation("Successfully completed quick match creation for Match {MatchId}.", quickMatchProjection.Id);
 
-            // 8. Map and return QuickMatchResponse DTO
+            // 6. Map and return QuickMatchResponse DTO
             return new QuickMatchResponse
             {
                 Id = quickMatchProjection.Id,
