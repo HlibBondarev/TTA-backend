@@ -1,5 +1,6 @@
 ﻿using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Base;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository.Api;
 
@@ -17,13 +18,17 @@ public interface IMatchLineupRepository : IEntityRepositoryBase<Guid, MatchLineu
     Task<MatchLineup> UpsertLineupItemAsync(MatchLineup lineup, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Retrieves the full lineup protocol for a specific match.
-    /// Returns dynamic objects to include joined metadata like player names.
+    /// Retrieves the lineup protocol for a specific team in a match.
+    /// Returns strongly typed projections with joined metadata.
     /// </summary>
     /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A collection of dynamic objects representing the match protocol.</returns>
-    Task<IEnumerable<dynamic>> GetByMatchIdAsync(Guid matchId, CancellationToken cancellationToken = default);
+    /// <returns>A collection of lineup projections for the specified team.</returns>
+    Task<IEnumerable<MatchLineupProjection>> GetTeamMatchLineupAsync(
+        Guid matchId,
+        Guid teamId,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Removes a specific player from the match protocol by ID.

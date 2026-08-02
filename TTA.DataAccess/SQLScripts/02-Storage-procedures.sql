@@ -1172,9 +1172,12 @@ BEGIN
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
- * Retrieves the full match lineup with player and position details.
+ * Retrieves the match lineup for a specific team with player and position details.
  **********************************************************************************/
-CREATE OR REPLACE FUNCTION public.get_match_lineup(p_matchid UUID)
+CREATE OR REPLACE FUNCTION public.get_team_match_lineup(
+    p_match_id UUID,
+    p_team_id UUID
+)
 RETURNS TABLE (
     id UUID,
     matchid UUID,
@@ -1196,8 +1199,8 @@ BEGIN
     JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
     JOIN public.players p ON pr.playerid = p.id
     JOIN public.playerpositiondefinitions ppd ON ml.positionid = ppd.id
-    WHERE ml.matchid = p_matchid
-    ORDER BY pr.teamid, ml.number;
+    WHERE ml.matchid = p_match_id AND pr.teamid = p_team_id
+    ORDER BY ml.number;
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************

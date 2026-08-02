@@ -56,25 +56,47 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that match lineups can be retrieved by any user.
+    /// Verifies that team match lineup can be retrieved by any user via team-filtered route.
     /// </summary>
     [Fact]
-    public async Task GetMatchLineup_ShouldReturnOk_WhenMatchExists()
+    public async Task GetTeamMatchLineup_ShouldReturnOk_WhenMatchAndTeamExist()
     {
         // Arrange
         var context = await SetupTournamentContextAsync(TestUserId);
-        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home");
-        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest");
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
         var matchId = Guid.NewGuid();
         await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-LINEUP-1");
 
         // Act
-        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/lineups");
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/teams/{homeId}/lineup");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var result = await response.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>();
         result.Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetTeamMatchLineup"/> returns HTTP 404 Not Found
+    /// when the specified team is not a participant in the match.
+    /// </summary>
+    [Fact]
+    public async Task GetTeamMatchLineup_ShouldReturnNotFound_WhenTeamIsNotParticipant()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+        var externalTeamId = await SeedTeamAsync(context.CityId, context.SportId, "External FC");
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-LINEUP-2");
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/teams/{externalTeamId}/lineup");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     #endregion
@@ -1476,15 +1498,20 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         result.Should().NotBeNull();
         result!.Id.Should().NotBeEmpty();
 
-        // Verify that starting lineups were generated for both Home and Guest teams
-        var lineupsResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/lineups");
-        lineupsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        // Verify that starting lineups were generated for both Home and Guest teams via team-filtered endpoints
+        var homeLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.HomeTeamId}/lineup");
+        homeLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var lineups = (await lineupsResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
-        lineups.Should().NotBeNull();
-        lineups!.Should().HaveCount(6, "starting lineups should contain 3 players for home team and 3 players for guest team based on lineuplimit=3");
-        lineups.Count(l => l.TeamId == result.HomeTeamId).Should().Be(3);
-        lineups.Count(l => l.TeamId == result.GuestTeamId).Should().Be(3);
+        var homeLineup = (await homeLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
+        homeLineup.Should().NotBeNull();
+        homeLineup!.Should().HaveCount(3, "home team lineup should contain 3 players based on lineuplimit=3");
+
+        var guestLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.GuestTeamId}/lineup");
+        guestLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var guestLineup = (await guestLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
+        guestLineup.Should().NotBeNull();
+        guestLineup!.Should().HaveCount(3, "guest team lineup should contain 3 players based on lineuplimit=3");
     }
 
     /// <summary>

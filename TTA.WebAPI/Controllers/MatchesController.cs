@@ -76,20 +76,21 @@ public class MatchesController(
     }
 
     /// <summary>
-    /// Retrieves the full lineup (protocol) for a specific match.
+    /// Retrieves the lineup protocol for a specific team participating in a match.
     /// </summary>
     /// <param name="matchId">The unique identifier of the match.</param>
-    /// <returns>The full lineup for the specified match.</returns>
-    /// <response code="200">Returns the lineup for the match.</response>
-    /// <response code="404">If the match was not found.</response> 
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <returns>The lineup protocol for the specified team in the match.</returns>
+    /// <response code="200">Returns the team lineup for the match.</response>
+    /// <response code="404">If the match or team was not found or team is not a participant.</response> 
     [AllowAnonymous]
-    [HttpGet("{matchId:guid}/lineups")]
+    [HttpGet("{matchId:guid}/teams/{teamId:guid}/lineup")]
     [ProducesResponseType(typeof(IEnumerable<MatchLineupResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetMatchLineup([FromRoute] Guid matchId)
+    public async Task<IActionResult> GetTeamMatchLineup([FromRoute] Guid matchId, [FromRoute] Guid teamId)
     {
-        _logger.LogInformation("Retrieving lineup for match {MatchId}.", matchId);
-        var query = new GetMatchLineupQuery(matchId);
+        _logger.LogInformation("Retrieving lineup for team {TeamId} in match {MatchId}.", teamId, matchId);
+        var query = new GetTeamMatchLineupQuery(matchId, teamId);
         var result = await _mediator.Send(query);
 
         return Ok(result);

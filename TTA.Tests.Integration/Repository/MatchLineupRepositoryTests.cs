@@ -88,13 +88,20 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
     #region Retrieval Tests
 
     /// <summary>
-    /// Verifies retrieval of all lineup items associated with a specific match.
+    /// Verifies that <see cref="MatchLineupRepository.GetTeamMatchLineupAsync"/> retrieves strongly-typed lineup projections
+    /// for a specific team in a match.
     /// </summary>
     [Fact]
-    public async Task GetByMatchIdAsync_ShouldReturnLineup_WhenEntriesExist()
+    public async Task GetTeamMatchLineupAsync_ShouldReturnLineup_WhenEntriesExist()
     {
         // Arrange
         var (matchId, playerRosterId, positionId) = await SeedMatchLineupRequirementsAsync();
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var teamId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT teamid FROM public.playerrosters WHERE id = @id",
+            new { id = playerRosterId });
+
         await _repository.UpsertLineupItemAsync(new MatchLineup
         {
             Id = Guid.NewGuid(),
@@ -105,13 +112,13 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
         });
 
         // Act
-        var result = await _repository.GetByMatchIdAsync(matchId, CancellationToken.None);
+        var result = (await _repository.GetTeamMatchLineupAsync(matchId, teamId, CancellationToken.None)).ToList();
 
         // Assert
         result.Should().NotBeEmpty();
-        var first = result.First() as IDictionary<string, object>;
-        var numberKey = first!.Keys.FirstOrDefault(k => k.Equals("number", StringComparison.OrdinalIgnoreCase));
-        Convert.ToInt32(first[numberKey!]).Should().Be(7);
+        result[0].Number.Should().Be(7);
+        result[0].TeamId.Should().Be(teamId);
+        result[0].MatchId.Should().Be(matchId);
     }
 
     /// <summary>

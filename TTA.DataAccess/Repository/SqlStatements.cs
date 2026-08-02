@@ -286,10 +286,10 @@ public static class SqlStatements
             );";
 
         /// <summary>
-        /// Retrieves the full protocol (lineup) for a specific match.
+        /// Retrieves the protocol (lineup) for a specific team in a match.
         /// </summary>
-        public const string GetMatchLineup =
-            "SELECT * FROM public.get_match_lineup(@p_id);";
+        public const string GetTeamMatchLineup =
+            "SELECT * FROM public.get_team_match_lineup(@p_match_id, @p_team_id);";
 
         /// <summary>
         /// Removes a specific player from the match protocol using a storage function.
