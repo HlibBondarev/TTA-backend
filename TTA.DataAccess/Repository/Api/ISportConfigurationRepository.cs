@@ -16,4 +16,12 @@ public interface ISportConfigurationRepository : IEntityRepositoryBase<Guid, Spo
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The <see cref="SportConfiguration"/> entity if found; otherwise, null.</returns>
     Task<SportConfiguration?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves all configurations associated with a specific sport identifier.
+    /// </summary>
+    /// <param name="sportId">The unique identifier of the target sport.</param>
+    /// <param name="cancellationToken">The token to monitor for cancellation requests.</param>
+    /// <returns>A collection of <see cref="SportConfiguration"/> entities.</returns>
+    Task<IEnumerable<SportConfiguration>> GetBySportIdAsync(Guid sportId, CancellationToken cancellationToken = default);
 }

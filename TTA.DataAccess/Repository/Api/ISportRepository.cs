@@ -16,4 +16,11 @@ public interface ISportRepository : IEntityRepositoryBase<Guid, Sport>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The <see cref="Sport"/> entity if found; otherwise, null.</returns>
     Task<Sport?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves all available sports from the database.
+    /// </summary>
+    /// <param name="cancellationToken">The token to monitor for cancellation requests.</param>
+    /// <returns>A collection of <see cref="Sport"/> entities.</returns>
+    Task<IEnumerable<Sport>> GetAllSportsAsync(CancellationToken cancellationToken = default);
 }

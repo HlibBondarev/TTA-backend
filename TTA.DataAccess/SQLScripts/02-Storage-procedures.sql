@@ -126,7 +126,6 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 -- SPORT & SPORT CONFIGURATION STORED FUNCTIONS
 -- =============================================================
-
 /*********************************
  * Retrieve a single sport by ID
  *********************************/
@@ -145,6 +144,30 @@ RETURNS SETOF public.sportconfigurations AS $$
 BEGIN
     RETURN QUERY
     SELECT * FROM public.sportconfigurations WHERE id = p_id;
+END;$$ LANGUAGE plpgsql;
+
+/*************************************************
+ * Retrieves all available sports from the system.
+ *************************************************/
+CREATE OR REPLACE FUNCTION public.get_all_sports()
+RETURNS SETOF public.sports AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM public.sports
+    ORDER BY name ASC;
+END;$$ LANGUAGE plpgsql;
+
+/******************************************************************
+ * Retrieves all configurations associated with a specific sport.
+ ******************************************************************/
+CREATE OR REPLACE FUNCTION public.get_sport_configurations_by_sport_id(
+    p_sport_id UUID
+)
+RETURNS SETOF public.sportconfigurations AS $$
+BEGIN
+    RETURN QUERY
+    SELECT * FROM public.sportconfigurations
+    WHERE sportid = p_sport_id;
 END;$$ LANGUAGE plpgsql;
 
 -- ====================================================
