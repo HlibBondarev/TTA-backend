@@ -35,8 +35,8 @@ public class GetSportConfigurationsBySportIdHandler(
 
         if (!configs.Any())
         {
-            _logger.LogWarning("Configurations retrieval failed: Sport {SportId} not found.", request.SportId);
-            throw new NotFoundException($"Sport with ID '{request.SportId}' was not found.");
+            _logger.LogWarning("Configurations retrieval failed: No configurations found for sport {SportId}.", request.SportId);
+            throw new NotFoundException($"No configurations found for sport with ID '{request.SportId}'.");
         }
 
         return configs.Select(c => new SportConfigurationResponse(
