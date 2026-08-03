@@ -1,13 +1,10 @@
 # 📝 TTA_Notes.txt (Final Architectural Blueprint)
-
 **Project:** TTA-Board (Technical and Tactical Actions)  
 **Language:** English (Entities, DB, Code, Data)  
 **Core Stack:** .NET 9, Dapper, PostgreSQL (Docker), Auth0  
 **UI:** React (Vite) + PWA support  
 **Guiding Principle:** Multi-sport flexibility with professional water polo depth
-
 ---
-
 ### 1. Core Identity & Geography
 *   **User:** `Id` (Auth0 string), `Email`, `DisplayName`, `CreatedAt`.
 *   **Country:** `Id` (SERIAL), `Name` (Unique), `Code` (e.g., UKR, Unique).
@@ -70,3 +67,11 @@ The system calculates "Clean Time" by processing segments between TimeAnchors:
 *   **Coefficient Per Period:** $SportConfiguration.PeriodDurationMinutes / TotalEffectiveRealDuration$.
 *   **Normalized Time Formula:** $NormalizedTime = AccumulatedCleanTimeFromPriorSegments + (CurrentEventTimestamp - CurrentSegmentStart) * PeriodCoefficient$.
 *   **Player Presence:** Playing time is scaled using the same coefficient, automatically excluding "Dead Time" (Stoppages).
+
+### 9. User Initial Application Workflow (TTA-Board)
+*   **Step-1: Sport Discipline Selection:** Select a sport discipline from the full list of available sports in the `sports` table (`GET /api/sports`).
+*   **Step-2: Sport Configuration Selection:** Optionally select a specific configuration profile associated with the selected `SportId` from the `sportconfigurations` table (`GET /api/sports/{sportId}/configurations`).
+*   **Step-3: Entry Mode Selection (Quick Start vs. Choose Tournament):**
+    *   **Quick Start (Active Scope):** Immediately starts a session by executing `POST /api/Matches/quick` with the selected `SportId` and optional `ConfigurationId`. The server provisions Just-In-Time (JIT) match infrastructure (teams, rosters, and lineups) and returns a `QuickMatchResponse` DTO with the match details.
+    *   **Choose Tournament (Future Scope):** Allows selecting a pre-existing tournament, match, and team filtered by `SportId` and `ConfigurationId`. *(To be implemented in later phases)*.
+*   **Step-4: Team Selection & Action Entry Initialization:** Select which of the two participating teams to track during the match. Calls `GET /api/Matches/{matchId}/teams/{teamId}/lineup` using the selected `matchId` and `teamId`. Successful execution unlocks the TTA input interface for logging player actions.
