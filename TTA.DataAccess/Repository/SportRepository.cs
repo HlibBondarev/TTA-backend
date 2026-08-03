@@ -17,4 +17,10 @@ public class SportRepository(IDbConnectionFactory connectionFactory)
     {
         return await GetById(id, SqlStatements.ForSports.GetSportById, cancellationToken);
     }
+
+    /// <inheritdoc />
+    public async Task<IEnumerable<Sport>> GetAllSportsAsync(CancellationToken cancellationToken = default)
+    {
+        return await GetAll(SqlStatements.ForSports.GetAllSports, cancellationToken);
+    }
 }

@@ -58,6 +58,12 @@ public static class SqlStatements
         /// </summary>
         public const string GetSportById =
             "SELECT * FROM public.get_sport_by_id(@p_id)";
+
+        /// <summary>
+        /// SQL to retrieve all available sports.
+        /// </summary>
+        public const string GetAllSports =
+            "SELECT * FROM public.get_all_sports()";
     }
 
     /// <summary>
@@ -70,6 +76,12 @@ public static class SqlStatements
         /// </summary>
         public const string GetSportConfigurationById =
             "SELECT * FROM public.get_sport_configuration_by_id(@p_id)";
+
+        /// <summary>
+        /// SQL to retrieve all configurations for a specific sport by sport ID.
+        /// </summary>
+        public const string GetSportConfigurationsBySportId =
+            "SELECT * FROM public.get_sport_configurations_by_sport_id(@p_sport_id)";
     }
 
     /// <summary>

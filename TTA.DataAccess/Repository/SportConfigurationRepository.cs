@@ -1,4 +1,5 @@
-﻿using TTA.DataAccess.Models;
+﻿using Dapper;
+using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
 
@@ -16,5 +17,17 @@ public class SportConfigurationRepository(IDbConnectionFactory connectionFactory
     public async Task<SportConfiguration?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         return await GetById(id, SqlStatements.ForSportConfigurations.GetSportConfigurationById, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<IEnumerable<SportConfiguration>> GetBySportIdAsync(Guid sportId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_sport_id", sportId);
+
+        return await GetByPropValues(
+            SqlStatements.ForSportConfigurations.GetSportConfigurationsBySportId,
+            parameters,
+            cancellationToken);
     }
 }
