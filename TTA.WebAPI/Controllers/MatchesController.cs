@@ -285,48 +285,46 @@ public class MatchesController(
     }
 
     /// <summary>
-    /// Provisions required sport infrastructure JIT and creates a quick match for training or scrimmage sessions.
+    /// Creates a quick match and provisions required infrastructure JIT.
     /// </summary>
-    /// <param name="request">The payload containing the target sport identifier and optional sport configuration override.</param>
-    /// <param name="validator">The validator for the quick match request injected from DI.</param>
+    /// <param name="request">The quick match request parameters.</param>
+    /// <param name="validator">The fluent validator instance for quick match request.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>The created quick match metadata with provisioned team and tournament references.</returns>
-    /// <response code="201">Quick match successfully created and starting lineup initialized.</response>
-    /// <response code="400">If request validation fails (e.g., empty SportId).</response>
-    /// <response code="401">If the requesting user is unauthenticated.</response>
-    /// <response code="500">If infrastructure provisioning fails or required sport configuration is missing.</response>
+    /// <returns>The created quick match response DTO.</returns>
     [HttpPost("quick")]
     [ProducesResponseType(typeof(QuickMatchResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-    public async Task<IActionResult> CreateQuickMatch(
+    public async Task<ActionResult<QuickMatchResponse>> CreateQuickMatch(
         [FromBody] CreateQuickMatchRequest request,
         [FromServices] IValidator<CreateQuickMatchRequest> validator,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Executing CreateQuickMatch action for SportId {SportId}.", request.SportId);
-
-        // 1. Validate the request DTO
         var validationResult = await validator.ValidateAsync(request, cancellationToken);
         if (!validationResult.IsValid)
         {
-            _logger.LogWarning("Validation failed for CreateQuickMatchRequest: {Errors}.", validationResult.Errors);
             return BadRequest(validationResult.Errors);
         }
 
-        // 2. Extract authenticated user identifier using Auth0 extension
-        var userId = this.GetUserId(_auth0Settings);
+        var (userId, userEmail, userName) = this.GetUserClaims(_auth0Settings);
 
-        // 3. Map request to command and execute via MediatR
-        var command = new CreateQuickMatchCommand(request, userId);
-        var response = await _mediator.Send(command, cancellationToken);
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(userEmail))
+        {
+            return Unauthorized("Valid user identification claims are required.");
+        }
 
-        // 4. Return HTTP 201 Created referencing the existing GetById action
+        var command = new CreateQuickMatchCommand(
+            request,
+            userId,
+            userEmail,
+            string.IsNullOrWhiteSpace(userName) ? userEmail : userName);
+
+        var result = await _mediator.Send(command, cancellationToken);
+
         return CreatedAtAction(
             nameof(GetById),
-            new { id = response.Id },
-            response);
+            new { id = result.Id },
+            result);
     }
 
     #endregion

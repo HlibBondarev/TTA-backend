@@ -162,9 +162,9 @@ public class MatchRepositoryTests : BaseIntegrationTest
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
-    public async Task CreateQuickMatchAsync_ShouldProvisionInfrastructureAndReturnProjection()
+    public async Task CreateQuickMatchAsync_ShouldProvisionInfrastructureAndReturnMatchEntity()
     {
-        // Arrange - seed base sport, configuration, JIT default club, and players
+        // Arrange - seed base sport, configuration, JIT default club, users and players
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
@@ -173,6 +173,11 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var configId = Guid.NewGuid();
         var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
         var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var userId = $"auth0|quickmatch-{Guid.NewGuid()}";
+
+        // 0. Ensure User exists for ownership assigning
+        await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
+            new { id = userId, e = $"quickmatch@test.com", n = $"QuickMatch Owner" }, transaction: transaction);
 
         // 1. Ensure JIT base geography exists
         await conn.ExecuteAsync(@"
@@ -217,7 +222,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await transaction.CommitAsync();
 
         // Act
-        var result = await _repository.CreateQuickMatchAsync(sportId, configId, CancellationToken.None);
+        var result = await _repository.CreateQuickMatchAsync(sportId, userId, configId, CancellationToken.None);
 
         // Assert
         result.Should().NotBeNull();

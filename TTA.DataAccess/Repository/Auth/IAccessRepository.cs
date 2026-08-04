@@ -63,4 +63,12 @@ public interface IAccessRepository : IEntityRepositoryBase<Guid, AccessPolicy>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The active <see cref="AccessPolicy"/> if found; otherwise, <c>null</c>.</returns>
     Task<AccessPolicy?> GetActiveTeamPolicyAsync(string userId, Guid teamId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Permanently deletes an access policy record by its unique identifier.
+    /// </summary>
+    /// <param name="id">The unique identifier of the access policy to delete.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task returning true if the record was successfully deleted; otherwise, false.</returns>
+    Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
 }

@@ -32,7 +32,6 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
             CreatedAt = DateTime.UtcNow
         };
 
-        // Seed the user manually into the database since repository doesn't have Create yet
         await SeedUserAsync(expectedUser);
 
         // Act
@@ -62,6 +61,232 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         result.Should().BeNull();
     }
 
+    /// <summary>
+    /// Verifies that <see cref="UserRepository.GetByEmailAsync"/> returns matching users 
+    /// when records with the target email exist in the database.
+    /// </summary>
+    [Fact]
+    public async Task GetByEmailAsync_WhenUsersExistWithEmail_ShouldReturnMatchingUsers()
+    {
+        // Arrange
+        var email = $"user_{Guid.NewGuid()}@example.com";
+        var user = new User
+        {
+            Id = "auth0|test-email-" + Guid.NewGuid(),
+            DisplayName = "Pylyp Orlyk",
+            Email = email,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await SeedUserAsync(user);
+
+        // Act
+        var result = await _repository.GetByEmailAsync(email, CancellationToken.None);
+
+        // Assert
+        result.Should().ContainSingle();
+        var foundUser = result.First();
+        foundUser.Id.Should().Be(user.Id);
+        foundUser.Email.Should().Be(email);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="UserRepository.GetByEmailAsync"/> returns an empty collection 
+    /// when no user matches the requested email address.
+    /// </summary>
+    [Fact]
+    public async Task GetByEmailAsync_WhenNoUserWithEmail_ShouldReturnEmptyCollection()
+    {
+        // Arrange
+        var nonExistentEmail = $"nonexistent_{Guid.NewGuid()}@example.com";
+
+        // Act
+        var result = await _repository.GetByEmailAsync(nonExistentEmail, CancellationToken.None);
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="UserRepository.UpsertAsync"/> creates a new user record, 
+    /// returns the correctly mapped user, and sets IsInserted to true when the user ID does not exist.
+    /// </summary>
+    [Fact]
+    public async Task UpsertAsync_WhenUserIsNew_ShouldInsertUserAndReturnTrue()
+    {
+        // Arrange
+        var user = new User
+        {
+            Id = "auth0|new-user-" + Guid.NewGuid(),
+            DisplayName = "Bohdan Khmelnytsky",
+            Email = $"bohdan_{Guid.NewGuid()}@example.com",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var (upsertedUser, isInserted) = await _repository.UpsertAsync(user, CancellationToken.None);
+
+        // Assert
+        isInserted.Should().BeTrue("because the user record was newly inserted");
+
+        upsertedUser.Should().NotBeNull();
+        upsertedUser.Id.Should().Be(user.Id);
+        upsertedUser.DisplayName.Should().Be(user.DisplayName);
+        upsertedUser.Email.Should().Be(user.Email);
+
+        var dbUser = await _repository.GetByIdAsync(user.Id, CancellationToken.None);
+        dbUser.Should().NotBeNull();
+        dbUser!.DisplayName.Should().Be(user.DisplayName);
+        dbUser.Email.Should().Be(user.Email);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="UserRepository.UpsertAsync"/> updates existing user details, 
+    /// returns the updated mapped user entity, and sets IsInserted to false when a record already exists.
+    /// </summary>
+    [Fact]
+    public async Task UpsertAsync_WhenUserExists_ShouldUpdateUserAndReturnFalse()
+    {
+        // Arrange
+        var userId = "auth0|existing-user-" + Guid.NewGuid();
+        var initialCreatedAt = DateTime.UtcNow.AddDays(-10);
+        var initialUser = new User
+        {
+            Id = userId,
+            DisplayName = "Old Name",
+            Email = $"initial_{Guid.NewGuid()}@example.com",
+            CreatedAt = initialCreatedAt
+        };
+
+        await SeedUserAsync(initialUser);
+
+        var updatedUser = new User
+        {
+            Id = userId,
+            DisplayName = "New Name",
+            Email = $"updated_{Guid.NewGuid()}@example.com",
+            CreatedAt = initialUser.CreatedAt.AddDays(1)
+        };
+
+        // Act
+        var (upsertedUser, isInserted) = await _repository.UpsertAsync(updatedUser, CancellationToken.None);
+
+        // Assert
+        isInserted.Should().BeFalse("because an existing user record was updated");
+
+        upsertedUser.Should().NotBeNull();
+        upsertedUser.Id.Should().Be(userId);
+        upsertedUser.DisplayName.Should().Be("New Name");
+        upsertedUser.Email.Should().Be(updatedUser.Email);
+        upsertedUser.CreatedAt.Should().BeCloseTo(initialUser.CreatedAt, TimeSpan.FromSeconds(1));
+
+        var dbUser = await _repository.GetByIdAsync(userId, CancellationToken.None);
+        dbUser.Should().NotBeNull();
+        dbUser!.DisplayName.Should().Be("New Name");
+        dbUser.Email.Should().Be(updatedUser.Email);
+        dbUser.CreatedAt.Should().BeCloseTo(initialUser.CreatedAt, TimeSpan.FromSeconds(1),
+            "the original registration timestamp must survive an upsert");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="UserRepository.UpsertAsync"/> executes transaction rollback 
+    /// and rethrows an exception when the operation is cancelled while in-flight.
+    /// </summary>
+    [Fact]
+    public async Task UpsertAsync_WhenCancelled_ShouldRollbackTransactionAndThrowException()
+    {
+        // Arrange
+        var userId = "auth0|cancelled-user-" + Guid.NewGuid();
+        var initialUser = new User
+        {
+            Id = userId,
+            DisplayName = "Initial Name",
+            Email = $"initial_{Guid.NewGuid()}@example.com",
+            CreatedAt = DateTime.UtcNow
+        };
+        await SeedUserAsync(initialUser);
+
+        var updatedUser = new User
+        {
+            Id = userId,
+            DisplayName = "Updated Name Should Rollback",
+            Email = $"updated_{Guid.NewGuid()}@example.com",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Hold an exclusive row lock on a separate connection to block UpsertAsync during SQL execution
+        using var lockConn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await lockConn.OpenAsync();
+        await using var lockTx = await lockConn.BeginTransactionAsync();
+        await lockConn.ExecuteAsync("SELECT id FROM public.users WHERE id = @id FOR UPDATE", new { id = userId }, transaction: lockTx);
+
+        using var cts = new CancellationTokenSource();
+
+        // Act - Start UpsertAsync (will block inside PostgreSQL waiting for the row lock)
+        var upsertTask = _repository.UpsertAsync(updatedUser, cts.Token);
+
+        // Allow task to reach the blocked query in DB, then trigger cancellation
+        await Task.Delay(50);
+        await cts.CancelAsync();
+
+        // Assert
+        var act = () => upsertTask;
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        await lockTx.RollbackAsync();
+
+        // Verify that user was NOT updated due to transaction rollback
+        var dbUser = await _repository.GetByIdAsync(userId, CancellationToken.None);
+        dbUser.Should().NotBeNull();
+        dbUser!.DisplayName.Should().Be("Initial Name", "transaction should have been rolled back without persisting changes");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="UserRepository.DeleteAsync"/> deletes an existing user record 
+    /// and returns true.
+    /// </summary>
+    [Fact]
+    public async Task DeleteAsync_WhenUserExists_ShouldDeleteUserAndReturnTrue()
+    {
+        // Arrange
+        var userId = "auth0|to-delete-" + Guid.NewGuid();
+        var user = new User
+        {
+            Id = userId,
+            DisplayName = "User To Delete",
+            Email = $"delete_{Guid.NewGuid()}@example.com",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await SeedUserAsync(user);
+
+        // Act
+        var result = await _repository.DeleteAsync(userId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeTrue();
+
+        var dbUser = await _repository.GetByIdAsync(userId, CancellationToken.None);
+        dbUser.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="UserRepository.DeleteAsync"/> returns false 
+    /// when attempting to delete a user record that does not exist in the database.
+    /// </summary>
+    [Fact]
+    public async Task DeleteAsync_WhenUserDoesNotExist_ShouldReturnFalse()
+    {
+        // Arrange
+        var nonExistentId = "auth0|non-existent-" + Guid.NewGuid();
+
+        // Act
+        var result = await _repository.DeleteAsync(nonExistentId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
     #region Helpers for Seeding
 
     /// <summary>
@@ -72,7 +297,6 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        // SQL structure matches the standard User model and EntityRepositoryBase expectations
         const string sql = @"
             INSERT INTO public.users (id, displayname, email, createdat) 
             VALUES (@Id, @DisplayName, @Email, @CreatedAt) 

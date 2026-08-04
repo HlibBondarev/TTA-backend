@@ -20,7 +20,7 @@ namespace TTA.Tests.Integration.Controllers;
 
 /// <summary>
 /// Integration tests for the <see cref="TTA.WebAPI.Controllers.MatchesController"/>.
-/// Validates match retrieval, lineup management, and result recording.
+/// Validates match retrieval, lineup management, result recording, and quick match provisioning.
 /// </summary>
 public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper output)
     : BaseApiTest(fixture, output)
@@ -78,7 +78,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that <see cref="MatchesController.GetTeamMatchLineup"/> returns HTTP 404 Not Found
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetTeamMatchLineup"/> returns HTTP 404 Not Found
     /// when the specified team is not a participant in the match.
     /// </summary>
     [Fact]
@@ -138,7 +138,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that the tournament owner can successfully copy selected players from the tournament roster to the match lineup.
-    /// This test ensures all database constraints including gender, homeclubid, and positionid are satisfied.
     /// </summary>
     [Fact]
     public async Task CopyFromRoster_ShouldReturnOk_WhenUserIsOwner()
@@ -149,13 +148,11 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        // 1. Seed a club to satisfy the player's homeclubid constraint
         var clubId = Guid.NewGuid();
         await conn.ExecuteAsync(
             "INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityId, 'Test Club', now())",
             new { id = clubId, cityId = context.CityId });
 
-        // 2. Seed a position definition to satisfy the playerrosters' positionid constraint
         var positionId = Guid.NewGuid();
         await conn.ExecuteAsync(
             "INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) VALUES (@id, @sId, 'Forward', 'FW')",
@@ -167,7 +164,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var matchId = Guid.NewGuid();
         await SeedMatchAsync(matchId, context.TournamentId, teamId, guestId, "M-301");
 
-        // 3. Seed players and roster entries with all required fields
         var playerRosterIds = new List<Guid>();
         for (int i = 0; i < 3; i++)
         {
@@ -187,7 +183,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         }
 
         var request = new CopyTeamRosterToMatchLineupRequest(playerRosterIds);
-        // Corrected URL: added the missing slash before 'copy'
         var url = $"{BaseUrl}/{matchId}/teams/{teamId}/lineup/copy";
 
         // Act
@@ -201,12 +196,11 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that a user who is not the tournament owner receives a 403 Forbidden response.
-    /// Seeds necessary match and team data to ensure the validation logic reaches the ownership check.
     /// </summary>
     [Fact]
     public async Task CopyFromRoster_ShouldReturnForbidden_WhenUserIsNotOwner()
     {
-        // Arrange: Tournament owned by a different user
+        // Arrange
         var context = await SetupTournamentContextAsync("not-the-owner-id");
         var teamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
         var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
@@ -215,7 +209,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         await SeedMatchAsync(matchId, context.TournamentId, teamId, guestId, "M-302");
 
         var request = new CopyTeamRosterToMatchLineupRequest(new List<Guid> { Guid.NewGuid() });
-        // Corrected URL: added the missing slash before 'copy'
         var url = $"{BaseUrl}/{matchId}/teams/{teamId}/lineup/copy";
 
         // Act
@@ -227,7 +220,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that a user with the TeamEditor role can successfully copy selected players to the match lineup.
-    /// Ensures that all database constraints (gender, homeclubid, positionid) and access policies are satisfied.
     /// </summary>
     [Fact]
     public async Task CopyFromRosterByTeam_ShouldReturnOk_WhenUserIsTeamEditor()
@@ -241,20 +233,17 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var teamId = await SeedTeamAsync(context.CityId, context.SportId, "Editor Team");
         var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Other Team");
 
-        // Grant TeamEditor role (role=1) for the specific team (targettype=2) in the auth schema
         await conn.ExecuteAsync(@"
             INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat) 
             VALUES (@id, @uId, 1, 2, @tId, now())",
             new { id = Guid.NewGuid(), uId = TestUserId, tId = teamId });
 
-        // Seed a position definition first to prevent NullReferenceException in GetFirstPositionIdAsync
         var positionId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
             INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
             VALUES (@id, @sId, 'Universal Player', 'UP')",
             new { id = positionId, sId = context.SportId });
 
-        // Seed club for player constraints
         var clubId = Guid.NewGuid();
         await conn.ExecuteAsync(
             "INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityId, 'Editor Club', now())",
@@ -263,7 +252,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var matchId = Guid.NewGuid();
         await SeedMatchAsync(matchId, context.TournamentId, teamId, guestId, "M-601");
 
-        // Seed a player and their roster entry linked to the created position
         var playerId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
             INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) 
@@ -303,7 +291,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        // Grant permissions for the non-participant team to pass the 403 Authorization check
         await conn.ExecuteAsync(@"
             INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat) 
             VALUES (@id, @uId, 1, 2, @tId, now())",
@@ -377,7 +364,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that the system returns Bad Request when the match result data is invalid.
-    /// This tests the validation logic before it reaches the mediator handler.
     /// </summary>
     [Fact]
     public async Task RecordResult_ShouldReturnBadRequest_WhenDataIsInvalid()
@@ -390,7 +376,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var matchId = Guid.NewGuid();
         await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-VAL-FAIL");
 
-        // Invalid request: negative score
         var request = new RecordMatchResultRequest(-1, 0, 10.0);
 
         // Act
@@ -525,7 +510,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
         var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
 
-        // Ensure a position definition exists for this specific sport to satisfy FK
         var positionId = Guid.NewGuid();
         using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
         {
@@ -537,19 +521,13 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         }
 
         var matchId = Guid.NewGuid();
-        // Signature: (id, tournamentId, homeId, guestId, matchNumber)
         await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-SORT-01");
 
-        var coachId = Guid.NewGuid();
-        // Calling your helper with the EXACT order required by your stack trace:
-        // (matchId, teamId, cityId, tournamentId, sportId)
         await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
 
-        // Retrieve the generated LineupId to link game events
         var lineupId = await GetLineupIdAsync(matchId, homeTeamId);
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", true);
 
-        // Seed events with specific match times to verify sorting
         await SeedGameEventAsync(lineupId, eventDefId, DateTime.UtcNow.AddMinutes(-5), TimeSpan.FromMinutes(40));
         await SeedGameEventAsync(lineupId, eventDefId, DateTime.UtcNow.AddMinutes(-15), TimeSpan.FromMinutes(10));
 
@@ -563,7 +541,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         events.Should().NotBeNull();
         events.Should().HaveCount(2);
 
-        // Assert chronological order (10 min first, 40 min second)
         events![0].NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(10));
         events[1].NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(40));
     }
@@ -596,7 +573,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies recording an event specifically for a team side within a match.
-    /// Seeds an access policy to avoid 403 Forbidden.
     /// </summary>
     [Fact]
     public async Task RecordMatchEventByTeam_ShouldReturnCreated_WhenDataIsValid()
@@ -608,7 +584,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var matchId = Guid.NewGuid();
 
         await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-03");
-        await SeedAccessPolicyAsync(TestUserId, 0, 2, homeTeamId); // FullControl (0) for Team (2)
+        await SeedAccessPolicyAsync(TestUserId, 0, 2, homeTeamId);
 
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Timeout", true);
         var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
@@ -624,7 +600,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that an existing game event can be updated.
-    /// Adjusted assertion to OK (200) based on observed behavior.
     /// </summary>
     [Fact]
     public async Task UpdateMatchEvent_ShouldReturnOk_WhenUpdateIsValid()
@@ -652,7 +627,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that an existing game event can be updated via team route.
-    /// Seeds an access policy to avoid 403 Forbidden.
     /// </summary>
     [Fact]
     public async Task UpdateMatchEventByTeam_ShouldReturnNoContent_WhenUpdateIsValid()
@@ -681,7 +655,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that a game event can be successfully removed via the team-specific route.
-    /// Route: DELETE api/matches/{matchId}/teams/{teamId}/events/{id}
     /// </summary>
     [Fact]
     public async Task DeleteMatchEvent_ShouldReturnNoContent_WhenEventExists()
@@ -692,18 +665,14 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
         var matchId = Guid.NewGuid();
 
-        // 1. Seed match
         await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-06");
-
-        // 2. Seed access policy (Role 0 = FullControl/Editor) for the team to pass [Authorize(Policy = "TeamEditor")]
         await SeedAccessPolicyAsync(TestUserId, 0, 2, homeTeamId);
 
-        // 3. Seed required entities for event
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Technical Foul", false);
         var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
         var eventId = await SeedGameEventAsync(lineupId, eventDefId);
 
-        // Act - Using the EXACT route from your MatchesController
+        // Act
         var response = await Client.DeleteAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events/{eventId}");
 
         // Assert
@@ -728,7 +697,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var matchId = Guid.NewGuid();
         await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "TA-01");
 
-        // Seed initial anchors for the match
         await SeedTimeAnchorAsync(matchId, 1, (int)TimeAnchorType.PeriodStart);
         await SeedTimeAnchorAsync(matchId, 1, (int)TimeAnchorType.PeriodEnd);
 
@@ -738,7 +706,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Explicitly defining JSON options to handle string-to-enum conversion
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         jsonOptions.Converters.Add(new JsonStringEnumConverter());
 
@@ -769,7 +736,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Explicitly defining JSON options to handle string-to-enum conversion
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         jsonOptions.Converters.Add(new JsonStringEnumConverter());
 
@@ -844,7 +810,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var incomingPresenceId = Guid.NewGuid();
         var substitutionTime = DateTime.UtcNow;
 
-        // Record an initial active presence for the outgoing player.
         using (var conn = Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.ExecuteAsync(
@@ -871,7 +836,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var createdId = await response.Content.ReadFromJsonAsync<Guid>();
         createdId.Should().Be(incomingPresenceId);
 
-        // Secondary DB verification check asserting exact client-supplied ID and SubstitutionTime
         using var checkConn = Fixture.ConnectionFactory.CreateConnection();
         var matchPresences = (await checkConn.QueryAsync<PlayerPresence>(
             "SELECT id, matchlineupid, periodnumber, timein, timeout FROM public.playerpresences WHERE matchlineupid IN (@id1, @id2)",
@@ -889,7 +853,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> returns HTTP 400 Bad Request 
-    /// when FluentValidation rules fail (e.g., trying to substitute a player with themselves or empty incoming presence ID).
+    /// when FluentValidation rules fail.
     /// </summary>
     [Fact]
     public async Task SubstitutePlayer_ShouldReturnBadRequest_WhenValidationFails()
@@ -901,7 +865,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var invalidRequest = new SubstitutePlayerRequest(
             PeriodNumber: 1,
             PlayerOutLineupId: samePlayerLineupId,
-            PlayerInLineupId: samePlayerLineupId, // Violation: input and output cannot be identical
+            PlayerInLineupId: samePlayerLineupId,
             IncomingPresenceId: Guid.NewGuid(),
             SubstitutionTime: DateTime.UtcNow
         );
@@ -915,7 +879,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> returns HTTP 403 Forbidden 
-    /// when the authenticated user is not the owner of the tournament or a team editor.
+    /// when the authenticated user is not authorized.
     /// </summary>
     [Fact]
     public async Task SubstitutePlayer_ShouldReturnForbidden_WhenUserLacksEditAccess()
@@ -940,8 +904,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> returns HTTP 201 Created and functions idempotently
-    /// when the identical substitution payload is submitted twice, creating only a single presence record in the database.
+    /// Verifies that <see cref="MatchesController.SubstitutePlayer"/> functions idempotently when replayed.
     /// </summary>
     [Fact]
     public async Task SubstitutePlayer_ShouldBeIdempotent_WhenSamePayloadIsSubmittedTwice()
@@ -966,13 +929,11 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             SubstitutionTime: substitutionTime
         );
 
-        // Act 1: Initial Substitution Request
+        // Act
         var response1 = await Client.PostAsJsonAsync($"{BaseUrl}/{context.MatchId}/substitutions", request);
-
-        // Act 2: Replay Identical Request (e.g. Offline Sync Retry)
         var response2 = await Client.PostAsJsonAsync($"{BaseUrl}/{context.MatchId}/substitutions", request);
 
-        // Assert HTTP Responses
+        // Assert
         response1.StatusCode.Should().Be(HttpStatusCode.Created);
         response2.StatusCode.Should().Be(HttpStatusCode.Created);
 
@@ -982,7 +943,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         returnedId1.Should().Be(incomingPresenceId);
         returnedId2.Should().Be(incomingPresenceId);
 
-        // Secondary DB verification: Only ONE presence record with IncomingPresenceId must exist in the database
         using var checkConn = Fixture.ConnectionFactory.CreateConnection();
         var matchPresences = (await checkConn.QueryAsync<PlayerPresence>(
             "SELECT id, matchlineupid, periodnumber, timein FROM public.playerpresences WHERE id = @presenceId",
@@ -993,8 +953,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that <see cref="MatchesController.InitializePeriodPresence"/> returns HTTP 204 No Content 
-    /// when an authorized user submits a valid bulk starting lineup initialization request, and persists exact client IDs and timestamps.
+    /// Verifies that <see cref="MatchesController.InitializePeriodPresence"/> returns HTTP 204 No Content.
     /// </summary>
     [Fact]
     public async Task InitializePeriodPresence_ShouldReturnNoContent_WhenRequestIsValidAndUserHasAccess()
@@ -1021,7 +980,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
-        // Secondary DB verify check asserting exact client-supplied IDs and TimeIn
         using var conn = Fixture.ConnectionFactory.CreateConnection();
         var matchPresences = (await conn.QueryAsync<PlayerPresence>(
             "SELECT id, matchlineupid, periodnumber, timein FROM public.playerpresences WHERE periodnumber = 1 AND matchlineupid IN (@id1, @id2)",
@@ -1041,8 +999,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that <see cref="MatchesController.GetMatchPresence"/> returns HTTP 200 OK 
-    /// along with the complete timeline history array, and functions correctly under anonymous access context.
+    /// Verifies that <see cref="MatchesController.GetMatchPresence"/> returns HTTP 200 OK along with timeline history.
     /// </summary>
     [Fact]
     public async Task GetMatchPresence_ShouldReturnOkWithTimeline_WhenMatchExists()
@@ -1051,7 +1008,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var context = await SetupPresenceMatchContextAsync(TestUserId);
         var baseTime = DateTime.UtcNow;
 
-        // Directly insert two chronological presence tracking records into the database scope
         using (var conn = Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.ExecuteAsync(@"
@@ -1062,7 +1018,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
                 new { l1 = context.LineupId1, l2 = context.LineupId2, t1 = baseTime.AddMinutes(-10), t2 = baseTime });
         }
 
-        // Act - Invoke under default client wrapper (respects AllowAnonymous attribute configuration changes)
+        // Act
         var response = await Client.GetAsync($"{BaseUrl}/{context.MatchId}/presence");
 
         // Assert
@@ -1078,8 +1034,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that <see cref="MatchesController.GetPlayersTimeInMatchByTeam"/> returns 200 OK 
-    /// with an accurately calculated collection of clean and dirty play time metrics when the pipeline executes end-to-end.
+    /// Verifies that <see cref="MatchesController.GetPlayersTimeInMatchByTeam"/> returns 200 OK with calculated metrics.
     /// </summary>
     [Fact]
     public async Task GetPlayersTimeInMatchByTeam_ShouldReturnOk_WhenRequestIsValidAndTeamBelongsToMatch()
@@ -1087,7 +1042,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Arrange
         var context = await SeedAnalyticsEnvironmentAsync(ownerId: "auth0|different-owner");
 
-        // Grant TeamEditor permission (targettype 2 = Team, role 1 = Editor) to the current test user
         await GrantAccessPolicyAsync(BaseApiTest.TestUserId, targetType: 2, targetId: context.TeamId, role: 1);
 
         // Act
@@ -1100,9 +1054,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         analytics.Should().NotBeNull().And.NotBeEmpty();
         analytics.Should().HaveCount(1);
 
-        // Assert end-to-end piecewise-linear mathematical calculation accuracy:
-        // Nominal duration: 8 mins, Real duration: 10 mins -> K = 0.8
-        // Dirty time: 300 seconds -> Clean time: 300 * 0.8 = 240 seconds
         var playerRecord = analytics!.First();
         playerRecord.MatchLineupId.Should().Be(context.LineupId);
         playerRecord.DirtyTimeInMatch.Should().Be(TimeSpan.FromSeconds(300));
@@ -1111,7 +1062,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.GetPlayersTimeInMatchByTeam"/> returns 403 Forbidden
-    /// when the requested team ID does not belong to the home or guest team boundaries of the targeted match.
+    /// when the team is outside match boundaries.
     /// </summary>
     [Fact]
     public async Task GetPlayersTimeInMatchByTeam_ShouldReturnForbidden_WhenTeamIdIsOutsideMatchBoundaries()
@@ -1120,8 +1071,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var context = await SeedAnalyticsEnvironmentAsync(ownerId: "auth0|different-owner");
         var completelyRandomTeamId = Guid.NewGuid();
 
-        // Grant TeamEditor permission to the random team ID so the top-level authorization policy filter passes,
-        // allowing execution to safely reach the controller's internal domain multi-tenancy boundary checks.
         await GrantAccessPolicyAsync(BaseApiTest.TestUserId, targetType: 2, targetId: completelyRandomTeamId, role: 1);
 
         // Act
@@ -1132,8 +1081,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that <see cref="MatchesController.GetPlayersTimeInMatchByTeam"/> returns 400 Bad Request
-    /// when the input route parameters fail the FluentValidation empty GUID checks.
+    /// Verifies that <see cref="MatchesController.GetPlayersTimeInMatchByTeam"/> returns 400 Bad Request on empty GUID.
     /// </summary>
     [Fact]
     public async Task GetPlayersTimeInMatchByTeam_ShouldReturnBadRequest_WhenParametersAreEmptyGuids()
@@ -1141,8 +1089,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Arrange
         var validTeamId = Guid.NewGuid();
 
-        // Grant Global Editor permission (targettype 0 = Global, targetId = null, role = 1 = Editor)
-        // to bypass the top-level route authorization policy and ensure execution enters the action method's validator execution block.
         await GrantAccessPolicyAsync(BaseApiTest.TestUserId, targetType: 0, targetId: null, role: 1);
 
         // Act
@@ -1153,14 +1099,12 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that the administrative endpoint <see cref="MatchesController.GetPlayersTimeInMatch"/> returns 200 OK
-    /// and accurately processes the full analytic calculations when invoked by an authorized tournament owner.
+    /// Verifies that the administrative endpoint <see cref="MatchesController.GetPlayersTimeInMatch"/> returns 200 OK.
     /// </summary>
     [Fact]
     public async Task GetPlayersTimeInMatch_Admin_ShouldReturnOk_WhenUserIsTournamentOwner()
     {
         // Arrange
-        // Current logged-in user in BaseApiTest context is defined as BaseApiTest.TestUserId ("auth0|test-user")
         var context = await SeedAnalyticsEnvironmentAsync(ownerId: BaseApiTest.TestUserId);
 
         // Act
@@ -1173,176 +1117,18 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         analytics.Should().NotBeNull().And.NotBeEmpty();
         analytics.Should().HaveCount(1);
 
-        // Assert end-to-end piecewise-linear mathematical calculation accuracy for admin flow
         var playerRecord = analytics!.First();
         playerRecord.MatchLineupId.Should().Be(context.LineupId);
         playerRecord.DirtyTimeInMatch.Should().Be(TimeSpan.FromSeconds(300));
         playerRecord.CleanTimeInMatch.Should().Be(TimeSpan.FromSeconds(240));
     }
 
-    #region Seed Helpers for Analytics
-
-    /// <summary>
-    /// Seeds a complete relational aggregate structure (Geography, Sport, Club, Tournament, Team, Match, Lineups, Time Anchors, Presences) 
-    /// inside the containerized PostgreSQL instance to isolate integration test contexts and enforce complete performance calculations.
-    /// </summary>
-    /// <param name="ownerId">The Auth0 user identifier assigned as the owner of the tournament.</param>
-    /// <returns>A tuple containing the generated MatchId, TeamId, and target active MatchLineupId.</returns>
-    private async Task<(Guid MatchId, Guid TeamId, Guid LineupId)> SeedAnalyticsEnvironmentAsync(string ownerId)
-    {
-        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
-        await conn.OpenAsync();
-        await using var transaction = await conn.BeginTransactionAsync();
-
-        // 1. Geography
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.countries (name, code) 
-            VALUES ('Integration Country', 'INC') 
-            ON CONFLICT (name) DO NOTHING", transaction: transaction);
-        var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE code = 'INC'", transaction: transaction);
-
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.regions (countryid, name) 
-            VALUES (@cid, 'Integration Region') 
-            ON CONFLICT (countryid, name) DO NOTHING",
-            new { cid = countryId }, transaction: transaction);
-        var regionId = await conn.QuerySingleAsync<int>("SELECT id FROM public.regions WHERE name = 'Integration Region' AND countryid = @cid", new { cid = countryId }, transaction: transaction);
-
-        var cityId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.cities (id, regionid, name) 
-            VALUES (@id, @rid, 'Integration City') 
-            ON CONFLICT (regionid, name) DO NOTHING",
-            new { id = cityId, rid = regionId }, transaction: transaction);
-        cityId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.cities WHERE regionid = @rid AND name = 'Integration City'", new { rid = regionId }, transaction: transaction);
-
-        // 2. User & Sport Configuration (8 minutes nominal duration defined)
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.users (id, email, displayname, createdat) 
-            VALUES (@id, @email, 'Tester', NOW()) 
-            ON CONFLICT (id) DO NOTHING",
-            new { id = ownerId, email = $"{ownerId}@tta.com" }, transaction: transaction);
-
-        var sportId = Guid.NewGuid();
-        var configId = Guid.NewGuid();
-
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
-            VALUES (@id, 'Integration Sport', 'INS', @configId) 
-            ON CONFLICT (name) DO NOTHING",
-            new { id = sportId, configId }, transaction: transaction);
-        sportId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sports WHERE name = 'Integration Sport'", transaction: transaction);
-
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            SELECT @id, @sid, true, 4, 8, '30x20', 15, 7 
-            WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
-            new { id = configId, sid = sportId }, transaction: transaction);
-        configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId }, transaction: transaction);
-
-        var posId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
-            SELECT @id, @sid, 'Center Forward', 'CF' 
-            WHERE NOT EXISTS (SELECT 1 FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF')",
-            new { id = posId, sid = sportId }, transaction: transaction);
-        posId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF' LIMIT 1", new { sid = sportId }, transaction: transaction);
-
-        // 3. Organization (Club, Tournament, Team, Match setup)
-        var clubId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityid, @name, NOW())",
-            new { id = clubId, cityid = cityId, name = $"Club_{Guid.NewGuid():N}" }, transaction: transaction);
-
-        var tournamentId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
-            VALUES (@id, @sid, @cfgid, @cityid, @oid, @name, NOW(), NOW())",
-            new { id = tournamentId, sid = sportId, cfgid = configId, cityid = cityId, oid = ownerId, name = $"Tournament_{Guid.NewGuid():N}" }, transaction: transaction);
-
-        var teamId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @cid, @sid, @name, 0, NOW())",
-            new { id = teamId, cid = clubId, sid = sportId, name = $"Team_{Guid.NewGuid():N}" }, transaction: transaction);
-
-        var matchId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, createdat) 
-            VALUES (@id, @tid, @teamid, @teamid, NOW(), NOW())",
-            new { id = matchId, tid = tournamentId, teamid = teamId }, transaction: transaction);
-
-        // 4. Performance Analytics Computational Mock Data (Player, Roster, Lineup)
-        var playerId = Guid.NewGuid();
-        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'Analytics', 'Player', '2000-01-01', 0, NOW())", new { id = playerId, cid = clubId }, transaction: transaction);
-
-        var rosterId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 7, @posid, NOW())", new { id = rosterId, pid = playerId, tid = tournamentId, teamid = teamId, posid = posId }, transaction: transaction);
-
-        var lineupId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 7, @posid)", new { id = lineupId, mid = matchId, rid = rosterId, posid = posId }, transaction: transaction);
-
-        // 5. Setup Time Anchors for Period 1: PeriodStart (0) and PeriodEnd (1)
-        // Real duration: 10 minutes (600 seconds) -> Scaling coefficient K = 8 / 10 = 0.8
-        var baseTime = DateTime.UtcNow;
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp)
-            VALUES 
-            (@id1, @mid, 1, 0, @timeStart),
-            (@id2, @mid, 1, 1, @timeEnd)",
-            new
-            {
-                id1 = Guid.NewGuid(),
-                id2 = Guid.NewGuid(),
-                mid = matchId,
-                timeStart = baseTime,
-                timeEnd = baseTime.AddSeconds(600)
-            }, transaction: transaction);
-
-        // 6. Setup active Player Presence entry representing exactly 300 linear ("dirty") seconds in the water
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout)
-            VALUES (@id, @lineupId, 1, @timeIn, @timeOut)",
-            new
-            {
-                id = Guid.NewGuid(),
-                lineupId = lineupId,
-                timeIn = baseTime.AddSeconds(60),
-                timeOut = baseTime.AddSeconds(360)
-            }, transaction: transaction);
-
-        await transaction.CommitAsync();
-
-        return (matchId, teamId, lineupId);
-    }
-
-    /// <summary>
-    /// Grants a specific authorization permission policy to a user inside the test database context.
-    /// Safely ensures the referenced user exists inside public.users to satisfy database foreign key requirements.
-    /// </summary>
-    private async Task GrantAccessPolicyAsync(string userId, int targetType, Guid? targetId, int role)
-    {
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
-
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.users (id, email, displayname, createdat)
-            VALUES (@id, @email, 'Integration Policy User', NOW())
-            ON CONFLICT (id) DO NOTHING",
-            new { id = userId, email = $"{userId.Replace("|", "_")}@tta.com" });
-
-        await conn.ExecuteAsync(@"
-            INSERT INTO auth.accesspolicies (id, userid, targettype, targetid, role, createdat)
-            VALUES (@id, @userid, @targettype, @targetid, @role, NOW())
-            ON CONFLICT DO NOTHING",
-            new { id = Guid.NewGuid(), userid = userId, targettype = targetType, targetid = targetId, role = role });
-    }
-
-    #endregion
-
     #endregion
 
     #region Batch Event Time Normalization API Tests
 
     /// <summary>
-    /// Verifies that the <c>PUT /api/matches/{matchId}/teams/{teamId}/events/normalize</c> endpoint 
-    /// returns HTTP 204 No Content when called by an authorized team representative and the parameters are valid.
+    /// Verifies that <c>PUT /api/matches/{matchId}/teams/{teamId}/events/normalize</c> returns 204 No Content.
     /// </summary>
     [Fact]
     public async Task NormalizeMatchTimeByTeam_ShouldReturnNoContent_WhenRequestIsValidAndAuthorized()
@@ -1353,25 +1139,20 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var cityId = Guid.NewGuid();
         var tournamentId = Guid.NewGuid();
 
-        // Use exclusively the real existing helper methods from the bottom of this class
         await SeedRequiredLocationDataAsync(cityId);
         await SeedSportDataAsync(sportId, $"WaterPolo_Api_{Guid.NewGuid():N}");
         var configId = await SeedConfigurationAsync(sportId);
 
-        // Seed user first to satisfy the tournament foreign key constraint (tournaments_ownerid_fkey)
         await SeedUserAsync(TestUserId);
         await SeedTournamentAsync(tournamentId, sportId, configId, cityId, TestUserId, "Spring Cup");
 
-        // Seed both participating teams using the existing helper method
         var homeTeamId = await SeedTeamAsync(cityId, sportId, "Team A");
         var guestTeamId = await SeedTeamAsync(cityId, sportId, "Team B");
 
-        // Seed access policy to pass the [Authorize(Policy = "TeamEditor")] requirements (Role 1 = Editor, TargetType 2 = Team)
         await SeedAccessPolicyAsync(TestUserId, 1, 2, homeTeamId);
 
-        // Seed match and baseline time anchor using the existing helper methods
         await SeedMatchAsync(matchId, tournamentId, homeTeamId, guestTeamId, $"M-NORM-{Guid.NewGuid().ToString("N").Substring(0, 5)}");
-        await SeedTimeAnchorAsync(matchId, 1, 0); // 0 corresponds to PeriodStart type
+        await SeedTimeAnchorAsync(matchId, 1, 0);
 
         var url = $"{BaseUrl}/{matchId}/teams/{homeTeamId}/events/normalize";
 
@@ -1379,13 +1160,11 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var response = await Client.PutAsync(url, null);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.NoContent,
-            "The endpoint must return 204 No Content upon successful batch time normalization pipeline routing.");
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
     }
 
     /// <summary>
-    /// Verifies that the <c>PUT /api/matches/{matchId}/teams/{teamId}/events/normalize-admin</c> endpoint 
-    /// returns HTTP 204 No Content when executed by a tournament organizer.
+    /// Verifies that <c>PUT /api/matches/{matchId}/teams/{teamId}/events/normalize-admin</c> returns 204 No Content.
     /// </summary>
     [Fact]
     public async Task NormalizeMatchTime_AdminEndpoint_ShouldReturnNoContent_WhenOrganizerIsValid()
@@ -1396,22 +1175,18 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var cityId = Guid.NewGuid();
         var tournamentId = Guid.NewGuid();
 
-        // Use exclusively the real existing helper methods from the bottom of this class
         await SeedRequiredLocationDataAsync(cityId);
         await SeedSportDataAsync(sportId, $"WaterPolo_Admin_{Guid.NewGuid():N}");
         var configId = await SeedConfigurationAsync(sportId);
 
-        // Seed user first to satisfy the tournament foreign key constraint (tournaments_ownerid_fkey)
         await SeedUserAsync(TestUserId);
         await SeedTournamentAsync(tournamentId, sportId, configId, cityId, TestUserId, "Admin Tournament");
 
-        // Seed both participating teams using the existing helper method
         var homeTeamId = await SeedTeamAsync(cityId, sportId, "Team Admin A");
         var guestTeamId = await SeedTeamAsync(cityId, sportId, "Team Admin B");
 
-        // Seed match and baseline time anchor using the existing helper methods
         await SeedMatchAsync(matchId, tournamentId, homeTeamId, guestTeamId, $"M-NORM-ADM-{Guid.NewGuid().ToString("N").Substring(0, 5)}");
-        await SeedTimeAnchorAsync(matchId, 1, 0); // 0 corresponds to PeriodStart type
+        await SeedTimeAnchorAsync(matchId, 1, 0);
 
         var url = $"{BaseUrl}/{matchId}/teams/{homeTeamId}/events/normalize-admin";
 
@@ -1419,8 +1194,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var response = await Client.PutAsync(url, null);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.NoContent,
-            "The administrative endpoint must return 204 No Content when tournament ownership constraints match.");
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
     }
 
     #endregion
@@ -1428,18 +1202,18 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     #region Quick Match Tests
 
     /// <summary>
-    /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> returns <see cref="HttpStatusCode.Created"/> (201)
-    /// and a populated <see cref="QuickMatchResponse"/>, and verifies that starting lineups are initialized for both teams.
+    /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> returns <see cref="HttpStatusCode.Created"/> (201),
+    /// a populated <see cref="QuickMatchResponse"/>, Provisions JIT User in public.users, verifies tournament ownership,
+    /// and initializes starting lineups for both Home and Guest teams.
     /// </summary>
     [Fact]
     public async Task CreateQuickMatch_ShouldReturnCreated_WhenRequestIsValid()
     {
         // Arrange
+        var jitUserId = $"auth0|jit-{Guid.NewGuid():N}";
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"QuickPolo_{Guid.NewGuid():N}");
-        await SeedUserAsync(TestUserId);
 
-        // Seed JIT Default Infrastructure and Players for Default Club (11111111-1111-1111-1111-000000000001)
         var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
         var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
@@ -1454,7 +1228,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
                 INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
                 new { cityId = tempCityId });
 
-            // Resolve the actual persisted city ID (in case 'Dnipro' already existed with a different ID)
             var actualCityId = await conn.QuerySingleAsync<Guid>(
                 "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1");
 
@@ -1488,32 +1261,65 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             SportId = sportId
         };
 
-        // Act
-        var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
+        try
+        {
+            TestAuthHandler.CustomUserId = jitUserId;
 
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
+            // Act
+            var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
 
-        var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
-        result.Should().NotBeNull();
-        result!.Id.Should().NotBeEmpty();
+            // Assert 1: HTTP Response Status and Location Header
+            response.StatusCode.Should().Be(HttpStatusCode.Created);
+            response.Headers.Location.Should().NotBeNull();
 
-        // Verify that starting lineups were generated for both Home and Guest teams via team-filtered endpoints
-        var homeLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.HomeTeamId}/lineup");
-        homeLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+            var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
+            result.Should().NotBeNull();
+            result!.Id.Should().NotBeEmpty();
+            result.HomeTeamId.Should().NotBeEmpty();
+            result.GuestTeamId.Should().NotBeEmpty();
+            result.TournamentId.Should().NotBeEmpty();
 
-        var homeLineup = (await homeLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
-        homeLineup.Should().NotBeNull();
-        homeLineup!.Should().HaveCount(3, "home team lineup should contain 3 players based on lineuplimit=3");
-        homeLineup.Should().OnlyContain(l => l.TeamId == result.HomeTeamId, "all home lineup items must belong to HomeTeamId");
+            // Assert 2: Database State Verification - JIT User Provisioning in public.users
+            using (var checkConn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+            {
+                await checkConn.OpenAsync();
 
-        var guestLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.GuestTeamId}/lineup");
-        guestLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+                var jitUser = await checkConn.QueryFirstOrDefaultAsync<User>(
+                    "SELECT id, email, displayname FROM public.users WHERE id = @userId",
+                    new { userId = jitUserId });
 
-        var guestLineup = (await guestLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
-        guestLineup.Should().NotBeNull();
-        guestLineup!.Should().HaveCount(3, "guest team lineup should contain 3 players based on lineuplimit=3");
-        guestLineup.Should().OnlyContain(l => l.TeamId == result.GuestTeamId, "all guest lineup items must belong to GuestTeamId");
+                jitUser.Should().NotBeNull("JIT user record must be provisioned in public.users");
+
+                // Assert 3: Database State Verification - Tournament Ownership
+                var tournament = await checkConn.QueryFirstOrDefaultAsync<Tournament>(
+                    "SELECT id, ownerid FROM public.tournaments WHERE id = @tournamentId",
+                    new { tournamentId = result.TournamentId });
+
+                tournament.Should().NotBeNull("Tournament record must be created in public.tournaments");
+                tournament!.OwnerId.Should().Be(jitUserId, "Tournament owner must be set to the creator user ID");
+            }
+
+            // Assert 4: Verify starting lineups were generated for both Home and Guest teams
+            var homeLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.HomeTeamId}/lineup");
+            homeLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var homeLineup = (await homeLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
+            homeLineup.Should().NotBeNull();
+            homeLineup!.Should().HaveCount(3, "home team lineup should contain 3 players based on lineuplimit=3");
+            homeLineup.Should().OnlyContain(l => l.TeamId == result.HomeTeamId, "all home lineup items must belong to HomeTeamId");
+
+            var guestLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.GuestTeamId}/lineup");
+            guestLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var guestLineup = (await guestLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
+            guestLineup.Should().NotBeNull();
+            guestLineup!.Should().HaveCount(3, "guest team lineup should contain 3 players based on lineuplimit=3");
+            guestLineup.Should().OnlyContain(l => l.TeamId == result.GuestTeamId, "all guest lineup items must belong to GuestTeamId");
+        }
+        finally
+        {
+            TestAuthHandler.CustomUserId = null;
+        }
     }
 
     /// <summary>
@@ -1565,23 +1371,265 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         }
     }
 
-    #endregion
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> returns <see cref="HttpStatusCode.Unauthorized"/> (401)
+    /// when the authenticated user's email claim is missing or empty.
+    /// </summary>
+    [Fact]
+    public async Task CreateQuickMatch_ShouldReturnUnauthorized_WhenUserEmailClaimIsMissing()
+    {
+        // Arrange
+        var request = new
+        {
+            SportId = Guid.NewGuid()
+        };
 
-    #region Helpers for Player Presences
+        try
+        {
+            // Omit the email claim to trigger the missing userEmail validation check
+            TestAuthHandler.CustomEmail = string.Empty;
+
+            // Act
+            var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            var content = await response.Content.ReadAsStringAsync();
+            content.Should().Contain("Valid user identification claims are required.");
+        }
+        finally
+        {
+            TestAuthHandler.CustomEmail = null;
+        }
+    }
 
     /// <summary>
-    /// Sets up a robust transactional database context environment optimized for player presence tracking operations.
-    /// Generates parent hierarchies and yields a match containing 2 unique lineup references.
+    /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> falls back to using the user's email as display name
+    /// when the display name claim is null or whitespace, and persists it to public.users.
     /// </summary>
-    /// <param name="tournamentOwnerId">The explicit user identifier to configure as the master tournament owner asset.</param>
-    /// <returns>A structured tuple capturing the parent Match ID context alongside two validated Lineup entries.</returns>
+    [Fact]
+    public async Task CreateQuickMatch_ShouldFallbackToUserEmail_WhenDisplayNameClaimIsMissing()
+    {
+        // Arrange
+        var fallbackUserId = $"auth0|fallback-{Guid.NewGuid():N}";
+        const string fallbackEmail = "fallback@example.com";
+        var sportId = Guid.NewGuid();
+        sportId = await SeedSportDataAsync(sportId, $"FallbackPolo_{Guid.NewGuid():N}");
+
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+                new { cityId = tempCityId });
+
+            var actualCityId = await conn.QuerySingleAsync<Guid>(
+                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1");
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.clubs (id, cityid, name, createdat) 
+                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+                ON CONFLICT DO NOTHING;",
+                new { clubId = defaultClubId, cityId = actualCityId });
+
+            await conn.ExecuteAsync(@"
+                UPDATE public.sportconfigurations 
+                SET rosterlimit = 5, lineuplimit = 3 
+                WHERE sportid = @sportId;",
+                new { sportId });
+        }
+
+        var request = new
+        {
+            SportId = sportId
+        };
+
+        try
+        {
+            TestAuthHandler.CustomUserId = fallbackUserId;
+            TestAuthHandler.CustomEmail = fallbackEmail;
+            // Omit the display name claim to cover the ternary fallback branch
+            TestAuthHandler.CustomDisplayName = string.Empty;
+
+            // Act
+            var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
+
+            // Assert 1: HTTP Response
+            response.StatusCode.Should().Be(HttpStatusCode.Created);
+            var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
+            result.Should().NotBeNull();
+            result!.Id.Should().NotBeEmpty();
+
+            // Assert 2: Database State Verification - Persisted DisplayName falls back to user email
+            using var checkConn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+            await checkConn.OpenAsync();
+
+            var createdUser = await checkConn.QueryFirstOrDefaultAsync<User>(
+                "SELECT id, email, displayname FROM public.users WHERE id = @userId",
+                new { userId = fallbackUserId });
+
+            createdUser.Should().NotBeNull("JIT user record must be provisioned in public.users");
+            createdUser!.DisplayName.Should().Be(fallbackEmail, "displayname should fallback to user email when display name claim is missing");
+        }
+        finally
+        {
+            TestAuthHandler.CustomUserId = null;
+            TestAuthHandler.CustomEmail = null;
+            TestAuthHandler.CustomDisplayName = null;
+        }
+    }
+
+    #endregion
+
+    #region Helpers for Seed Operations
+
+    private async Task<(Guid MatchId, Guid TeamId, Guid LineupId)> SeedAnalyticsEnvironmentAsync(string ownerId)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.countries (name, code) 
+            VALUES ('Integration Country', 'INC') 
+            ON CONFLICT (name) DO NOTHING", transaction: transaction);
+        var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE code = 'INC'", transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.regions (countryid, name) 
+            VALUES (@cid, 'Integration Region') 
+            ON CONFLICT (countryid, name) DO NOTHING",
+            new { cid = countryId }, transaction: transaction);
+        var regionId = await conn.QuerySingleAsync<int>("SELECT id FROM public.regions WHERE name = 'Integration Region' AND countryid = @cid", new { cid = countryId }, transaction: transaction);
+
+        var cityId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.cities (id, regionid, name) 
+            VALUES (@id, @rid, 'Integration City') 
+            ON CONFLICT (regionid, name) DO NOTHING",
+            new { id = cityId, rid = regionId }, transaction: transaction);
+        cityId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.cities WHERE regionid = @rid AND name = 'Integration City'", new { rid = regionId }, transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.users (id, email, displayname, createdat) 
+            VALUES (@id, @email, 'Tester', NOW()) 
+            ON CONFLICT (id) DO NOTHING",
+            new { id = ownerId, email = $"{ownerId}@tta.com" }, transaction: transaction);
+
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@id, 'Integration Sport', 'INS', @configId) 
+            ON CONFLICT (name) DO NOTHING",
+            new { id = sportId, configId }, transaction: transaction);
+        sportId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sports WHERE name = 'Integration Sport'", transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
+            SELECT @id, @sid, true, 4, 8, '30x20', 15, 7 
+            WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
+            new { id = configId, sid = sportId }, transaction: transaction);
+        configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId }, transaction: transaction);
+
+        var posId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
+            SELECT @id, @sid, 'Center Forward', 'CF' 
+            WHERE NOT EXISTS (SELECT 1 FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF')",
+            new { id = posId, sid = sportId }, transaction: transaction);
+        posId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF' LIMIT 1", new { sid = sportId }, transaction: transaction);
+
+        var clubId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityid, @name, NOW())",
+            new { id = clubId, cityid = cityId, name = $"Club_{Guid.NewGuid():N}" }, transaction: transaction);
+
+        var tournamentId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
+            VALUES (@id, @sid, @cfgid, @cityid, @oid, @name, NOW(), NOW())",
+            new { id = tournamentId, sid = sportId, cfgid = configId, cityid = cityId, oid = ownerId, name = $"Tournament_{Guid.NewGuid():N}" }, transaction: transaction);
+
+        var teamId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @cid, @sid, @name, 0, NOW())",
+            new { id = teamId, cid = clubId, sid = sportId, name = $"Team_{Guid.NewGuid():N}" }, transaction: transaction);
+
+        var matchId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, createdat) 
+            VALUES (@id, @tid, @teamid, @teamid, NOW(), NOW())",
+            new { id = matchId, tid = tournamentId, teamid = teamId }, transaction: transaction);
+
+        var playerId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'Analytics', 'Player', '2000-01-01', 0, NOW())", new { id = playerId, cid = clubId }, transaction: transaction);
+
+        var rosterId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 7, @posid, NOW())", new { id = rosterId, pid = playerId, tid = tournamentId, teamid = teamId, posid = posId }, transaction: transaction);
+
+        var lineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 7, @posid)", new { id = lineupId, mid = matchId, rid = rosterId, posid = posId }, transaction: transaction);
+
+        var baseTime = DateTime.UtcNow;
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp)
+            VALUES 
+            (@id1, @mid, 1, 0, @timeStart),
+            (@id2, @mid, 1, 1, @timeEnd)",
+            new
+            {
+                id1 = Guid.NewGuid(),
+                id2 = Guid.NewGuid(),
+                mid = matchId,
+                timeStart = baseTime,
+                timeEnd = baseTime.AddSeconds(600)
+            }, transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout)
+            VALUES (@id, @lineupId, 1, @timeIn, @timeOut)",
+            new
+            {
+                id = Guid.NewGuid(),
+                lineupId = lineupId,
+                timeIn = baseTime.AddSeconds(60),
+                timeOut = baseTime.AddSeconds(360)
+            }, transaction: transaction);
+
+        await transaction.CommitAsync();
+
+        return (matchId, teamId, lineupId);
+    }
+
+    private async Task GrantAccessPolicyAsync(string userId, int targetType, Guid? targetId, int role)
+    {
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.users (id, email, displayname, createdat)
+            VALUES (@id, @email, 'Integration Policy User', NOW())
+            ON CONFLICT (id) DO NOTHING",
+            new { id = userId, email = $"{userId.Replace("|", "_")}@tta.com" });
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO auth.accesspolicies (id, userid, targettype, targetid, role, createdat)
+            VALUES (@id, @userid, @targettype, @targetid, @role, NOW())
+            ON CONFLICT DO NOTHING",
+            new { id = Guid.NewGuid(), userid = userId, targettype = targetType, targetid = targetId, role = role });
+    }
+
     private async Task<(Guid MatchId, Guid LineupId1, Guid LineupId2)> SetupPresenceMatchContextAsync(string tournamentOwnerId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
 
-        // 1. Establish Geography structures securely
         await conn.ExecuteAsync(@"
             INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT (name) DO NOTHING;", transaction: transaction);
         var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE name = 'Ukraine'", transaction: transaction);
@@ -1597,7 +1645,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             new { id = cityId, rid = regionId }, transaction: transaction);
         cityId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.cities WHERE regionid = @rid AND name = 'Dnipro'", new { rid = regionId }, transaction: transaction);
 
-        // 2. Setup Security Identity and Sport structures configurations
         await conn.ExecuteAsync(@"
             INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, 'owner@tta.com', 'Manager', NOW()) ON CONFLICT (id) DO NOTHING;",
             new { id = tournamentOwnerId }, transaction: transaction);
@@ -1625,7 +1672,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             new { id = posId, sid = sportId }, transaction: transaction);
         posId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'GK' LIMIT 1", new { sid = sportId }, transaction: transaction);
 
-        // 3. Organization level setup strings data definitions
         var clubId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityid, 'API_Presence_Club', NOW())",
             new { id = clubId, cityid = cityId }, transaction: transaction);
@@ -1646,7 +1692,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             VALUES (@id, @tid, @teamid, @teamid, NOW(), NOW())",
             new { id = matchId, tid = tournamentId, teamid = teamId }, transaction: transaction);
 
-        // 4. Register two distinct physical players into the active game lineup ledger system 
         var playerId1 = Guid.NewGuid();
         var playerId2 = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'Sub', 'Out', '2000-01-01', 0, NOW())", new { id = playerId1, cid = clubId }, transaction: transaction);
@@ -1667,18 +1712,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return (matchId, lineupId1, lineupId2);
     }
 
-    #endregion
-
-    #region Helpers for Time Anchors
-
-    /// <summary>
-    /// Seeds a time anchor record directly into the database for integration testing.
-    /// Bypasses the application layer to set up reliable initial state.
-    /// </summary>
-    /// <param name="matchId">The unique identifier of the associated match.</param>
-    /// <param name="periodNumber">The match period number.</param>
-    /// <param name="type">The integer representation of the time anchor type.</param>
-    /// <returns>The unique identifier of the seeded time anchor.</returns>
     private async Task<Guid> SeedTimeAnchorAsync(Guid matchId, int periodNumber, int type)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -1699,13 +1732,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return id;
     }
 
-    #endregion
-
-    #region Helpers for Events
-
-    /// <summary>
-    /// Seeds an access policy to satisfy authorization requirements.
-    /// </summary>
     private async Task SeedAccessPolicyAsync(string userId, int role, int targetType, Guid targetId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -1715,9 +1741,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             new { id = Guid.NewGuid(), userId, role, targetType, targetId, now = DateTime.UtcNow });
     }
 
-    /// <summary>
-    /// Seeds an event definition record.
-    /// </summary>
     private async Task<Guid> SeedEventDefinitionAsync(Guid sportId, string name, bool isPositive)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -1731,9 +1754,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return id;
     }
 
-    /// <summary>
-    /// Seeds a complete hierarchy for match lineups.
-    /// </summary>
     private async Task<Guid> SeedMatchLineupAsync(Guid matchId, Guid teamId, Guid cityId, Guid tournamentId, Guid sportId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -1770,9 +1790,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return lineupId;
     }
 
-    /// <summary>
-    /// Seeds a game event record.
-    /// </summary>
     private async Task<Guid> SeedGameEventAsync(Guid lineupId, Guid eventDefId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -1784,14 +1801,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return id;
     }
 
-    /// <summary>
-    /// Seeds a game event record directly into the database.
-    /// </summary>
-    /// <param name="lineupId">The target match lineup identifier.</param>
-    /// <param name="eventDefId">The event definition identifier.</param>
-    /// <param name="timestamp">The absolute timestamp of the event.</param>
-    /// <param name="normalizedTime">The relative match time.</param>
-    /// <returns>The GUID of the created game event.</returns>
     protected async Task<Guid> SeedGameEventAsync(
         Guid lineupId,
         Guid eventDefId,
@@ -1818,16 +1827,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return id;
     }
 
-    #endregion
-
-    #region Helpers
-
-    /// <summary>
-    /// Retrieves the lineup identifier for a specific match and team by joining with player rosters.
-    /// </summary>
-    /// <param name="matchId">The unique identifier of the match.</param>
-    /// <param name="teamId">The unique identifier of the team.</param>
-    /// <returns>The GUID of the found match lineup.</returns>
     private async Task<Guid> GetLineupIdAsync(Guid matchId, Guid teamId)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -2004,15 +2003,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         }
     }
 
-    /// <summary>
-    /// Seeds a sport entity along with its associated default sport configuration atomically within an explicit transaction.
-    /// Satisfies mandatory <c>shortname</c> and <c>defaultconfigid</c> column requirements as well as deferred foreign key constraints.
-    /// </summary>
-    /// <param name="sportId">The unique identifier to assign to the new or existing sport record.</param>
-    /// <param name="name">The display name of the sport.</param>
-    /// <returns>
-    /// A task representing the asynchronous database operation, returning the persisted <see cref="Guid"/> identifier of the sport.
-    /// </returns>
     private async Task<Guid> SeedSportDataAsync(Guid sportId, string name)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -2022,7 +2012,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var configId = Guid.NewGuid();
         var shortName = name.Length > 10 ? name[..10] : name;
 
-        // 1. Insert Sport (Updated with shortname & defaultconfigid)
         var sportSql = @"
             INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
             VALUES (@id, @name, @shortName, @configId) 
@@ -2040,7 +2029,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             sportId = (Guid)result!;
         }
 
-        // 2. Insert SportConfiguration
         var configSql = @"
             INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
             VALUES (@configId, @sportId, false, 2, 45, '105x68', 25, 11)

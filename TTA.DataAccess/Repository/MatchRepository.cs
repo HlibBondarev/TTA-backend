@@ -2,7 +2,6 @@
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
-using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository;
 
@@ -15,14 +14,12 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
     /// <inheritdoc />
     public async Task<Match> UpsertMatchAsync(Match match, CancellationToken cancellationToken = default)
     {
-        // Explicitly calling base CreateOrUpdate with the specific entity type
         return await CreateOrUpdate(match, SqlStatements.ForMatches.UpsertMatch, null, cancellationToken);
     }
 
     /// <inheritdoc />
     public async Task<Match?> GetByIdAsync(Guid matchId, CancellationToken cancellationToken = default)
     {
-        // Using base GetById for single entity retrieval by primary key
         return await GetById(
             matchId,
             SqlStatements.ForMatches.GetMatchById,
@@ -36,7 +33,6 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
         parameters.Add("p_tournament_id", tournamentId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
-        // We use dynamic to capture extra fields like Team Names for the DTO
         return await connection.QueryAsync<dynamic>(new CommandDefinition(
             SqlStatements.ForMatches.GetTournamentMatches,
             parameters,
@@ -57,17 +53,19 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
-    public async Task<QuickMatchProjection?> CreateQuickMatchAsync(
+    public async Task<Match?> CreateQuickMatchAsync(
         Guid sportId,
-        Guid? configurationId,
+        string userId,
+        Guid? configurationId = null,
         CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("SportId", sportId);
+        parameters.Add("UserId", userId);
         parameters.Add("ConfigurationId", configurationId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
-        return await connection.QueryFirstOrDefaultAsync<QuickMatchProjection>(new CommandDefinition(
+        return await connection.QueryFirstOrDefaultAsync<Match>(new CommandDefinition(
             SqlStatements.ForMatches.CreateQuickMatch,
             parameters,
             cancellationToken: cancellationToken));
