@@ -140,7 +140,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 /********************************************************************************
- * Upserts a user record into the public.users table.
+ * Upserts a user record into the public.users table and returns insertion provenance.
  * Used for Just-In-Time (JIT) user registration upon authentication/quick actions.
  ********************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_user(
@@ -149,15 +149,47 @@ CREATE OR REPLACE FUNCTION public.upsert_user(
     p_displayname VARCHAR(50),
     p_createdat TIMESTAMPTZ
 )
-RETURNS SETOF public.users AS $$
+RETURNS TABLE (
+    out_id VARCHAR(64),
+    out_email VARCHAR(255),
+    out_displayname VARCHAR(50),
+    out_createdat TIMESTAMPTZ,
+    is_inserted BOOLEAN
+) AS $$
+DECLARE
+    v_inserted BOOLEAN := FALSE;
+    v_rows INT := 0;
 BEGIN
-    RETURN QUERY
+    -- 1. Try to insert the new record. If a conflict on id occurs, do nothing.
     INSERT INTO public.users (id, email, displayname, createdat)
     VALUES (p_id, p_email, p_displayname, p_createdat)
-    ON CONFLICT (id) DO UPDATE SET
-        email = EXCLUDED.email,
-        displayname = EXCLUDED.displayname
-    RETURNING *;
+    ON CONFLICT (id) DO NOTHING;
+
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+    -- If 1 row was inserted, set v_inserted to true
+    IF v_rows > 0 THEN
+        v_inserted := TRUE;
+    ELSE
+        -- If the record already existed, explicitly update its fields
+        UPDATE public.users
+        SET email = p_email,
+            displayname = p_displayname
+        WHERE public.users.id = p_id;
+        
+        v_inserted := FALSE;
+    END IF;
+
+    -- 2. Return the user record mapped to explicit out_ parameters to avoid ambiguity
+    RETURN QUERY
+    SELECT 
+        us.id, 
+        us.email, 
+        us.displayname, 
+        us.createdat, 
+        v_inserted AS is_inserted
+    FROM public.users AS us
+    WHERE us.id = p_id;
 END;$$ LANGUAGE plpgsql;
 
 /********************************************************************************

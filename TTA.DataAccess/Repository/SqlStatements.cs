@@ -26,7 +26,7 @@ public static class SqlStatements
         /// SQL command to insert or update a user entity JIT via stored function.
         /// </summary>
         public const string UpsertUser =
-            "SELECT * FROM public.upsert_user(@Id, @Email, @DisplayName, @CreatedAt)";
+            "SELECT * FROM public.upsert_user(@p_id, @p_email, @p_displayname, @p_createdat)";
 
         /// <summary>
         /// SQL statement to delete a user by primary key ID via stored function.

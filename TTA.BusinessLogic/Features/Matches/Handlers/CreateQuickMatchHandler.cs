@@ -80,21 +80,13 @@ public class CreateQuickMatchHandler(
     }
 
     /// <summary>
-    /// Checks if the requesting user exists in the database and provisions a JIT record if missing.
+    /// Attempts to provision a JIT user record using atomic upsert, returning true only if a new row was inserted.
     /// </summary>
     /// <param name="command">The command containing user claim details.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns><c>true</c> if a new user record was provisioned; otherwise, <c>false</c>.</returns>
+    /// <returns><c>true</c> if a new user record was newly provisioned by this request; otherwise, <c>false</c>.</returns>
     private async Task<bool> ProvisionJitUserAsync(CreateQuickMatchCommand command, CancellationToken cancellationToken)
     {
-        var existingUser = await _userRepository.GetByIdAsync(command.UserId, cancellationToken);
-        if (existingUser != null)
-        {
-            return false;
-        }
-
-        _logger.LogInformation("User {UserId} not found in database. Provisioning JIT record.", command.UserId);
-
         var userEntity = new User
         {
             Id = command.UserId,
@@ -103,8 +95,14 @@ public class CreateQuickMatchHandler(
             CreatedAt = DateTime.UtcNow
         };
 
-        await _userRepository.UpsertAsync(userEntity, cancellationToken);
-        return true;
+        var (_, isInserted) = await _userRepository.UpsertAsync(userEntity, cancellationToken);
+
+        if (isInserted)
+        {
+            _logger.LogInformation("Provisioned new JIT record for user {UserId}.", command.UserId);
+        }
+
+        return isInserted;
     }
 
     /// <summary>

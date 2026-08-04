@@ -158,12 +158,8 @@ public class CreateQuickMatchHandlerTests
         };
 
         _userRepositoryMock
-            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new User { Id = userId, Email = userEmail, DisplayName = userName, CreatedAt = DateTime.UtcNow });
-
-        _userRepositoryMock
             .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((User user, CancellationToken _) => user);
+            .ReturnsAsync((User user, CancellationToken _) => (user, false));
 
         _matchRepositoryMock
             .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
@@ -198,11 +194,6 @@ public class CreateQuickMatchHandlerTests
         Assert.Equal(createdMatch.TournamentId, result.TournamentId);
         Assert.Equal(createdMatch.HomeTeamId, result.HomeTeamId);
         Assert.Equal(createdMatch.GuestTeamId, result.GuestTeamId);
-
-        // Verify JIT User Upsert was NOT called for an existing user
-        _userRepositoryMock.Verify(
-            u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()),
-            Times.Never);
 
         // Verify TeamEditor access policy grant for Home Team
         _accessRepositoryMock.Verify(
@@ -261,12 +252,8 @@ public class CreateQuickMatchHandlerTests
         var sportConfig = new SportConfiguration { Id = configId, SportId = sportId, LineupLimit = 7 };
 
         _userRepositoryMock
-            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((User?)null);
-
-        _userRepositoryMock
             .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((User user, CancellationToken _) => user);
+            .ReturnsAsync((User user, CancellationToken _) => (user, true));
 
         _matchRepositoryMock
             .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
@@ -418,10 +405,10 @@ public class CreateQuickMatchHandlerTests
             CreatedAt = DateTime.UtcNow
         };
 
-        // User does not exist initially -> marked as new user for JIT provisioning
+        // User is newly provisioned -> UpsertAsync returns IsInserted = true
         _userRepositoryMock
-            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((User?)null);
+            .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => (user, true));
 
         _matchRepositoryMock
             .Setup(r => r.CreateQuickMatchAsync(sportId, userId, null, It.IsAny<CancellationToken>()))

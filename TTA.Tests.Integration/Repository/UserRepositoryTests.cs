@@ -109,10 +109,10 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
 
     /// <summary>
     /// Verifies that <see cref="UserRepository.UpsertAsync"/> creates a new user record 
-    /// when the specified user ID does not yet exist in the database.
+    /// and sets IsInserted to true when the specified user ID does not yet exist.
     /// </summary>
     [Fact]
-    public async Task UpsertAsync_WhenUserIsNew_ShouldInsertUser()
+    public async Task UpsertAsync_WhenUserIsNew_ShouldInsertUserAndReturnTrue()
     {
         // Arrange
         var user = new User
@@ -124,11 +124,12 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         };
 
         // Act
-        var upsertedUser = await _repository.UpsertAsync(user, CancellationToken.None);
+        var (upsertedUser, isInserted) = await _repository.UpsertAsync(user, CancellationToken.None);
 
         // Assert
         upsertedUser.Should().NotBeNull();
         upsertedUser.Id.Should().Be(user.Id);
+        isInserted.Should().BeTrue("because the user record was newly inserted");
 
         var dbUser = await _repository.GetByIdAsync(user.Id, CancellationToken.None);
         dbUser.Should().NotBeNull();
@@ -138,10 +139,10 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
 
     /// <summary>
     /// Verifies that <see cref="UserRepository.UpsertAsync"/> updates existing user details 
-    /// when a record with the same primary key already exists in the database.
+    /// and sets IsInserted to false when a record with the same primary key already exists.
     /// </summary>
     [Fact]
-    public async Task UpsertAsync_WhenUserExists_ShouldUpdateUser()
+    public async Task UpsertAsync_WhenUserExists_ShouldUpdateUserAndReturnFalse()
     {
         // Arrange
         var userId = "auth0|existing-user-" + Guid.NewGuid();
@@ -165,11 +166,12 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         };
 
         // Act
-        var result = await _repository.UpsertAsync(updatedUser, CancellationToken.None);
+        var (resultUser, isInserted) = await _repository.UpsertAsync(updatedUser, CancellationToken.None);
 
         // Assert
-        result.Should().NotBeNull();
-        result.DisplayName.Should().Be("New Name");
+        resultUser.Should().NotBeNull();
+        resultUser.DisplayName.Should().Be("New Name");
+        isInserted.Should().BeFalse("because the user record already existed and was updated");
 
         var dbUser = await _repository.GetByIdAsync(userId, CancellationToken.None);
         dbUser.Should().NotBeNull();

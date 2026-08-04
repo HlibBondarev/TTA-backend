@@ -25,12 +25,12 @@ public interface IUserRepository : IEntityRepositoryBase<string, User>
     Task<IEnumerable<User>> GetByEmailAsync(string email, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Persists a user entity to the database using an upsert operation (JIT provisioning).
+    /// Persists a user entity to the database using an upsert operation and returns insertion provenance.
     /// </summary>
     /// <param name="user">The user entity to save or update.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The persisted user entity.</returns>
-    Task<User> UpsertAsync(User user, CancellationToken cancellationToken = default);
+    /// <returns>A tuple containing the persisted user entity and a boolean indicating whether a new row was inserted.</returns>
+    Task<(User User, bool IsInserted)> UpsertAsync(User user, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Deletes a user record by their unique identifier.
