@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using Npgsql;
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
@@ -84,40 +85,20 @@ public class UserRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <summary>
-    /// Internal projection model used by Dapper to map the output parameters 
+    /// Internal immutable projection record used by Dapper to map output parameters 
     /// returned by the <c>public.upsert_user</c> stored procedure.
     /// </summary>
-    private class UserWithInsertionFlag
-    {
-        /// <summary>
-        /// Gets or sets the unique identifier of the user.
-        /// Mapped from the <c>out_id</c> database column.
-        /// </summary>
-        public string Out_Id { get; set; } = null!;
-
-        /// <summary>
-        /// Gets or sets the email address of the user.
-        /// Mapped from the <c>out_email</c> database column.
-        /// </summary>
-        public string Out_Email { get; set; } = null!;
-
-        /// <summary>
-        /// Gets or sets the display name of the user.
-        /// Mapped from the <c>out_displayname</c> database column.
-        /// </summary>
-        public string Out_Displayname { get; set; } = null!;
-
-        /// <summary>
-        /// Gets or sets the timestamp when the user account was created.
-        /// Mapped from the <c>out_createdat</c> database column.
-        /// </summary>
-        public DateTime Out_Createdat { get; set; }
-
-        /// <summary>
-        /// Gets or sets a value indicating whether a new record was inserted (<c>true</c>)
-        /// or an existing record was updated (<c>false</c>).
-        /// Mapped from the <c>is_inserted</c> database column.
-        /// </summary>
-        public bool Is_Inserted { get; set; }
-    }
+    /// <param name="Out_Id">The unique identifier of the user mapped from the <c>out_id</c> database column.</param>
+    /// <param name="Out_Email">The email address of the user mapped from the <c>out_email</c> database column.</param>
+    /// <param name="Out_Displayname">The display name of the user mapped from the <c>out_displayname</c> database column.</param>
+    /// <param name="Out_Createdat">The timestamp when the user was created mapped from the <c>out_createdat</c> database column.</param>
+    /// <param name="Is_Inserted">A boolean flag indicating whether a new record was inserted (<c>true</c>) or updated (<c>false</c>) mapped from the <c>is_inserted</c> database column.</param>
+    [SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "Parameter names match PostgreSQL output column names for direct Dapper constructor mapping.")]
+    [SuppressMessage("Naming", "CA1707:Identifiers should not contain underscores", Justification = "Parameter names match PostgreSQL output column names for direct Dapper constructor mapping.")]
+    private sealed record UserWithInsertionFlag(
+        string Out_Id,
+        string Out_Email,
+        string Out_Displayname,
+        DateTime Out_Createdat,
+        bool Is_Inserted);
 }
