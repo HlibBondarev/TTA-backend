@@ -207,13 +207,11 @@ public class CreateQuickMatchHandler(
             // Roll back created entities if quick match provisioning fails
             if (quickMatch != null)
             {
-                _logger.LogWarning("Rolling back newly created quick match {MatchId}.", quickMatch.Id);
                 await _matchRepository.DeleteAsync(quickMatch.Id, CancellationToken.None);
             }
 
             if (isNewUser)
             {
-                _logger.LogWarning("Rolling back JIT-provisioned user {UserId}.", command.UserId);
                 await _userRepository.DeleteAsync(command.UserId, CancellationToken.None);
             }
 
