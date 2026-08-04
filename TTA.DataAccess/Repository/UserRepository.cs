@@ -25,10 +25,21 @@ public class UserRepository(IDbConnectionFactory connectionFactory)
         var parameters = new DynamicParameters();
         parameters.Add("p_email", email);
 
-        // Aligned with UserRepository: use GetByPropValues for collections
         return await GetByPropValues(
             SqlStatements.ForUsers.GetUsersByEmail,
             parameters,
             cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<User> UpsertAsync(User user, CancellationToken cancellationToken = default)
+    {
+        return await CreateOrUpdate(user, SqlStatements.ForUsers.UpsertUser, null, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> DeleteAsync(string id, CancellationToken cancellationToken = default)
+    {
+        return await Delete(id, SqlStatements.ForUsers.DeleteUser, cancellationToken);
     }
 }

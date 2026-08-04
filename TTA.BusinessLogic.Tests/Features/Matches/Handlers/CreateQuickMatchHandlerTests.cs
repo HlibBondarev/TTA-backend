@@ -9,7 +9,7 @@ using TTA.DataAccess.Models;
 using TTA.DataAccess.Models.Auth;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Auth;
-using TTA.DataAccess.Repository.Projections;
+using Match = TTA.DataAccess.Models.Match;
 
 namespace TTA.BusinessLogic.Tests.Features.Matches.Handlers;
 
@@ -19,6 +19,7 @@ namespace TTA.BusinessLogic.Tests.Features.Matches.Handlers;
 /// <remarks>
 /// Validates business rules and orchestration logic during quick match creation, including:
 /// <list type="bullet">
+///   <item><description>Just-in-time user provisioning and registration in database.</description></item>
 ///   <item><description>Atomic just-in-time infrastructure provisioning via database repositories.</description></item>
 ///   <item><description>Automated granting of team editor permissions for home squad managers.</description></item>
 ///   <item><description>Fallback resolution to default sport configurations when config IDs are omitted.</description></item>
@@ -28,6 +29,11 @@ namespace TTA.BusinessLogic.Tests.Features.Matches.Handlers;
 /// </remarks>
 public class CreateQuickMatchHandlerTests
 {
+    /// <summary>
+    /// Mock instance for managing user JIT registration and compensating deletions.
+    /// </summary>
+    private readonly Mock<IUserRepository> _userRepositoryMock = new();
+
     /// <summary>
     /// Mock instance for managing match persistence and invoking underlying stored procedures.
     /// </summary>
@@ -75,6 +81,7 @@ public class CreateQuickMatchHandlerTests
     public CreateQuickMatchHandlerTests()
     {
         _handler = new CreateQuickMatchHandler(
+            _userRepositoryMock.Object,
             _matchRepositoryMock.Object,
             _accessRepositoryMock.Object,
             _sportRepositoryMock.Object,
@@ -100,16 +107,6 @@ public class CreateQuickMatchHandlerTests
     /// Verifies successful quick match creation and starting lineup population for both Home and Guest squads
     /// when an explicit configuration ID is supplied and the requesting user holds no prior team policy.
     /// </summary>
-    /// <remarks>
-    /// Ensures that:
-    /// <list type="number">
-    ///   <item><description>Quick match infrastructure projection is fetched correctly.</description></item>
-    ///   <item><description>TeamEditor access policy is granted to the requesting user for the Home Team.</description></item>
-    ///   <item><description>Rosters for both Home and Guest squads are fetched and sliced according to <see cref="SportConfiguration.LineupLimit"/>.</description></item>
-    ///   <item><description>The command returns a populated <see cref="QuickMatchResponse"/> DTO.</description></item>
-    /// </list>
-    /// </remarks>
-    /// <returns>A <see cref="Task"/> representing the asynchronous unit test execution.</returns>
     [Fact]
     public async Task Handle_ShouldCreateQuickMatchAndPopulateLineupsForBothTeams_WhenRequestIsValid()
     {
@@ -117,16 +114,21 @@ public class CreateQuickMatchHandlerTests
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         var userId = "auth0|user123";
-        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
-        var command = new CreateQuickMatchCommand(request, userId);
+        var userEmail = "user123@example.com";
+        var userName = "Test User";
 
-        var projection = new QuickMatchProjection(
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            DateTime.UtcNow,
-            DateTime.UtcNow);
+        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
+        var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
+
+        var createdMatch = new Match
+        {
+            Id = Guid.NewGuid(),
+            TournamentId = Guid.NewGuid(),
+            HomeTeamId = Guid.NewGuid(),
+            GuestTeamId = Guid.NewGuid(),
+            ScheduledAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
+        };
 
         var sportConfig = new SportConfiguration
         {
@@ -155,12 +157,20 @@ public class CreateQuickMatchHandlerTests
             CreateMockRosterItem(guestRoster2Id)
         };
 
+        _userRepositoryMock
+            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new User { Id = userId, Email = userEmail, DisplayName = userName, CreatedAt = DateTime.UtcNow });
+
+        _userRepositoryMock
+            .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => user);
+
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, configId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(projection);
+            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdMatch);
 
         _accessRepositoryMock
-            .Setup(a => a.GetActiveTeamPolicyAsync(userId, projection.HomeTeamId, It.IsAny<CancellationToken>()))
+            .Setup(a => a.GetActiveTeamPolicyAsync(userId, createdMatch.HomeTeamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((AccessPolicy?)null);
 
         _sportConfigurationRepositoryMock
@@ -168,15 +178,15 @@ public class CreateQuickMatchHandlerTests
             .ReturnsAsync(sportConfig);
 
         _rosterRepositoryMock
-            .Setup(r => r.GetTeamRosterAsync(projection.TournamentId, projection.HomeTeamId, It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetTeamRosterAsync(createdMatch.TournamentId, createdMatch.HomeTeamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(mockHomeRoster);
 
         _rosterRepositoryMock
-            .Setup(r => r.GetTeamRosterAsync(projection.TournamentId, projection.GuestTeamId, It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetTeamRosterAsync(createdMatch.TournamentId, createdMatch.GuestTeamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(mockGuestRoster);
 
         _matchLineupRepositoryMock
-            .Setup(l => l.CopyFromRosterAsync(projection.Id, It.IsAny<Guid>(), It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .Setup(l => l.CopyFromRosterAsync(createdMatch.Id, It.IsAny<Guid>(), It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(2);
 
         // Act
@@ -184,23 +194,30 @@ public class CreateQuickMatchHandlerTests
 
         // Assert
         Assert.NotNull(result);
-        Assert.Equal(projection.Id, result.Id);
-        Assert.Equal(projection.TournamentId, result.TournamentId);
-        Assert.Equal(projection.HomeTeamId, result.HomeTeamId);
-        Assert.Equal(projection.GuestTeamId, result.GuestTeamId);
+        Assert.Equal(createdMatch.Id, result.Id);
+        Assert.Equal(createdMatch.TournamentId, result.TournamentId);
+        Assert.Equal(createdMatch.HomeTeamId, result.HomeTeamId);
+        Assert.Equal(createdMatch.GuestTeamId, result.GuestTeamId);
+
+        // Verify JIT User Upsert
+        _userRepositoryMock.Verify(
+            u => u.UpsertAsync(
+                It.Is<User>(user => user.Id == userId && user.Email == userEmail && user.DisplayName == userName),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
 
         // Verify TeamEditor access policy grant for Home Team
         _accessRepositoryMock.Verify(
             a => a.AddAccessAsync(
-                It.Is<AccessPolicy>(p => p.UserId == userId && p.TargetId == projection.HomeTeamId && p.TargetType == TargetScope.Team && p.Role == AppRole.Editor),
+                It.Is<AccessPolicy>(p => p.UserId == userId && p.TargetId == createdMatch.HomeTeamId && p.TargetType == TargetScope.Team && p.Role == AppRole.Editor),
                 It.IsAny<CancellationToken>()),
             Times.Once);
 
         // Verify CopyFromRosterAsync for Home Team (sliced to LineupLimit = 2)
         _matchLineupRepositoryMock.Verify(
             l => l.CopyFromRosterAsync(
-                projection.Id,
-                projection.HomeTeamId,
+                createdMatch.Id,
+                createdMatch.HomeTeamId,
                 It.Is<IEnumerable<Guid>>(ids => ids.Count() == 2 && ids.Contains(homeRoster1Id) && ids.Contains(homeRoster2Id)),
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -208,8 +225,8 @@ public class CreateQuickMatchHandlerTests
         // Verify CopyFromRosterAsync for Guest Team (sliced to LineupLimit = 2)
         _matchLineupRepositoryMock.Verify(
             l => l.CopyFromRosterAsync(
-                projection.Id,
-                projection.GuestTeamId,
+                createdMatch.Id,
+                createdMatch.GuestTeamId,
                 It.Is<IEnumerable<Guid>>(ids => ids.Count() == 2 && ids.Contains(guestRoster1Id) && ids.Contains(guestRoster2Id)),
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -221,7 +238,6 @@ public class CreateQuickMatchHandlerTests
     /// Verifies that the default sport configuration identifier is resolved from the target sport entity
     /// when <see cref="CreateQuickMatchRequest.ConfigurationId"/> is omitted or null in the incoming payload.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous unit test execution.</returns>
     [Fact]
     public async Task Handle_ShouldResolveDefaultConfig_WhenConfigurationIdIsNull()
     {
@@ -229,26 +245,35 @@ public class CreateQuickMatchHandlerTests
         var sportId = Guid.NewGuid();
         var defaultConfigId = Guid.NewGuid();
         var userId = "auth0|user123";
-        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = null };
-        var command = new CreateQuickMatchCommand(request, userId);
+        var userEmail = "user123@example.com";
+        var userName = "Test User";
 
-        var projection = new QuickMatchProjection(
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            DateTime.UtcNow,
-            DateTime.UtcNow);
+        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = null };
+        var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
+
+        var createdMatch = new Match
+        {
+            Id = Guid.NewGuid(),
+            TournamentId = Guid.NewGuid(),
+            HomeTeamId = Guid.NewGuid(),
+            GuestTeamId = Guid.NewGuid(),
+            ScheduledAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
+        };
 
         var sport = new Sport { Id = sportId, Name = "Water Polo", ShortName = "WP", DefaultConfigId = defaultConfigId };
         var sportConfig = new SportConfiguration { Id = defaultConfigId, SportId = sportId, LineupLimit = 13 };
 
+        _userRepositoryMock
+            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new User { Id = userId, Email = userEmail, DisplayName = userName });
+
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(projection);
+            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdMatch);
 
         _accessRepositoryMock
-            .Setup(a => a.GetActiveTeamPolicyAsync(userId, projection.HomeTeamId, It.IsAny<CancellationToken>()))
+            .Setup(a => a.GetActiveTeamPolicyAsync(userId, createdMatch.HomeTeamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AccessPolicy());
 
         _sportRepositoryMock
@@ -260,7 +285,7 @@ public class CreateQuickMatchHandlerTests
             .ReturnsAsync(sportConfig);
 
         _rosterRepositoryMock
-            .Setup(r => r.GetTeamRosterAsync(projection.TournamentId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetTeamRosterAsync(createdMatch.TournamentId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<dynamic>());
 
         // Act
@@ -278,18 +303,25 @@ public class CreateQuickMatchHandlerTests
     /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when database-level quick match provisioning returns null,
     /// indicating an infrastructure or stored procedure execution failure.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous unit test execution.</returns>
     [Fact]
     public async Task Handle_ShouldThrowKeyNotFoundException_WhenProvisioningFails()
     {
         // Arrange
         var sportId = Guid.NewGuid();
+        var userId = "auth0|user123";
+        var userEmail = "user123@example.com";
+        var userName = "Test User";
+
         var request = new CreateQuickMatchRequest { SportId = sportId };
-        var command = new CreateQuickMatchCommand(request, "auth0|user123");
+        var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
+
+        _userRepositoryMock
+            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new User { Id = userId });
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((QuickMatchProjection?)null);
+            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Match?)null);
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
@@ -298,32 +330,41 @@ public class CreateQuickMatchHandlerTests
 
     /// <summary>
     /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when fallback sport resolution fails,
-    /// and that a compensating rollback deletion is dispatched to purge the provisioned match entity.
+    /// and that a compensating rollback deletion is dispatched to purge the provisioned match entity and newly provisioned user.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous unit test execution.</returns>
     [Fact]
-    public async Task Handle_ShouldThrowKeyNotFoundException_WhenSportNotFoundForDefaultConfig()
+    public async Task Handle_ShouldThrowKeyNotFoundExceptionAndRollbackNewUser_WhenSportNotFoundForDefaultConfig()
     {
         // Arrange
         var sportId = Guid.NewGuid();
         var userId = "auth0|user123";
-        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = null };
-        var command = new CreateQuickMatchCommand(request, userId);
+        var userEmail = "user123@example.com";
+        var userName = "Test User";
 
-        var projection = new QuickMatchProjection(
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            DateTime.UtcNow,
-            DateTime.UtcNow);
+        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = null };
+        var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
+
+        var createdMatch = new Match
+        {
+            Id = Guid.NewGuid(),
+            TournamentId = Guid.NewGuid(),
+            HomeTeamId = Guid.NewGuid(),
+            GuestTeamId = Guid.NewGuid(),
+            ScheduledAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // User does not exist initially -> marked as new user for JIT provisioning
+        _userRepositoryMock
+            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User?)null);
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(projection);
+            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdMatch);
 
         _accessRepositoryMock
-            .Setup(a => a.GetActiveTeamPolicyAsync(userId, projection.HomeTeamId, It.IsAny<CancellationToken>()))
+            .Setup(a => a.GetActiveTeamPolicyAsync(userId, createdMatch.HomeTeamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((AccessPolicy?)null);
 
         _sportRepositoryMock
@@ -334,44 +375,53 @@ public class CreateQuickMatchHandlerTests
         var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
         Assert.Contains(sportId.ToString(), exception.Message);
 
-        _accessRepositoryMock.Verify(
-            a => a.AddAccessAsync(It.Is<AccessPolicy>(p => p.UserId == userId && p.TargetId == projection.HomeTeamId), It.IsAny<CancellationToken>()),
+        _matchRepositoryMock.Verify(
+            m => m.DeleteAsync(createdMatch.Id, It.IsAny<CancellationToken>()),
             Times.Once);
 
-        _matchRepositoryMock.Verify(
-            m => m.DeleteAsync(projection.Id, It.IsAny<CancellationToken>()),
+        _userRepositoryMock.Verify(
+            u => u.DeleteAsync(userId, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     /// <summary>
     /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when the target sport configuration entity is missing,
-    /// and that compensating rollback triggers deletion of the created match entity.
+    /// and that compensating rollback triggers deletion of the created match entity without deleting an existing user.
     /// </summary>
-    /// <returns>A <see cref="Task"/> representing the asynchronous unit test execution.</returns>
     [Fact]
-    public async Task Handle_ShouldThrowKeyNotFoundException_WhenSportConfigurationNotFound()
+    public async Task Handle_ShouldThrowKeyNotFoundExceptionAndNotDeleteExistingUser_WhenSportConfigurationNotFound()
     {
         // Arrange
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         var userId = "auth0|user123";
-        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
-        var command = new CreateQuickMatchCommand(request, userId);
+        var userEmail = "user123@example.com";
+        var userName = "Test User";
 
-        var projection = new QuickMatchProjection(
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            DateTime.UtcNow,
-            DateTime.UtcNow);
+        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
+        var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
+
+        var createdMatch = new Match
+        {
+            Id = Guid.NewGuid(),
+            TournamentId = Guid.NewGuid(),
+            HomeTeamId = Guid.NewGuid(),
+            GuestTeamId = Guid.NewGuid(),
+            ScheduledAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // User already existed prior to request
+        _userRepositoryMock
+            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new User { Id = userId, Email = userEmail });
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, configId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(projection);
+            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdMatch);
 
         _accessRepositoryMock
-            .Setup(a => a.GetActiveTeamPolicyAsync(userId, projection.HomeTeamId, It.IsAny<CancellationToken>()))
+            .Setup(a => a.GetActiveTeamPolicyAsync(userId, createdMatch.HomeTeamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((AccessPolicy?)null);
 
         _sportConfigurationRepositoryMock
@@ -382,12 +432,12 @@ public class CreateQuickMatchHandlerTests
         var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
         Assert.Contains(configId.ToString(), exception.Message);
 
-        _accessRepositoryMock.Verify(
-            a => a.AddAccessAsync(It.Is<AccessPolicy>(p => p.UserId == userId && p.TargetId == projection.HomeTeamId), It.IsAny<CancellationToken>()),
+        _matchRepositoryMock.Verify(
+            m => m.DeleteAsync(createdMatch.Id, It.IsAny<CancellationToken>()),
             Times.Once);
 
-        _matchRepositoryMock.Verify(
-            m => m.DeleteAsync(projection.Id, It.IsAny<CancellationToken>()),
-            Times.Once);
+        _userRepositoryMock.Verify(
+            u => u.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 }

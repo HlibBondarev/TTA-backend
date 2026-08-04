@@ -23,4 +23,20 @@ public interface IUserRepository : IEntityRepositoryBase<string, User>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A collection of <see cref="User"/> entities with a specific email.</returns>
     Task<IEnumerable<User>> GetByEmailAsync(string email, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Persists a user entity to the database using an upsert operation (JIT provisioning).
+    /// </summary>
+    /// <param name="user">The user entity to save or update.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The persisted user entity.</returns>
+    Task<User> UpsertAsync(User user, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes a user record by their unique identifier.
+    /// </summary>
+    /// <param name="id">The unique identifier of the user to delete.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task returning true if the record was successfully deleted; otherwise, false.</returns>
+    Task<bool> DeleteAsync(string id, CancellationToken cancellationToken = default);
 }

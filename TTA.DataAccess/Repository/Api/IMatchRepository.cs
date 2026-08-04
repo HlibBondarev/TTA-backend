@@ -1,6 +1,5 @@
 ﻿using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Base;
-using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository.Api;
 
@@ -43,12 +42,14 @@ public interface IMatchRepository : IEntityRepositoryBase<Guid, Match>
     /// Provisions JIT quick match infrastructure (teams, tournament, rosters) and creates a match record.
     /// </summary>
     /// <param name="sportId">The unique identifier of the sport.</param>
+    /// <param name="userId">The requesting user identifier for tournament ownership.</param>
     /// <param name="configurationId">The optional unique identifier of the sport configuration.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="QuickMatchProjection"/> containing the created match and provisioned entity identifiers.</returns>
-    Task<QuickMatchProjection?> CreateQuickMatchAsync(
+    /// <returns>The created <see cref="Match"/> entity if successful; otherwise, null.</returns>
+    Task<Match?> CreateQuickMatchAsync(
         Guid sportId,
-        Guid? configurationId,
+        string userId,
+        Guid? configurationId = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -123,6 +123,43 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+/********************************************************************************
+ * Upserts a user record into the public.users table.
+ * Used for Just-In-Time (JIT) user registration upon authentication/quick actions.
+ ********************************************************************************/
+CREATE OR REPLACE FUNCTION public.upsert_user(
+    p_id VARCHAR(64),
+    p_email VARCHAR(255),
+    p_displayname VARCHAR(50),
+    p_createdat TIMESTAMPTZ
+)
+RETURNS SETOF public.users AS $$
+BEGIN
+    RETURN QUERY
+    INSERT INTO public.users (id, email, displayname, createdat)
+    VALUES (p_id, p_email, p_displayname, p_createdat)
+    ON CONFLICT (id) DO UPDATE SET
+        email = EXCLUDED.email,
+        displayname = EXCLUDED.displayname
+    RETURNING *;
+END;$$ LANGUAGE plpgsql;
+
+/********************************************************************************
+ * Removes a user record from the public.users table by identifier.
+ * Returns TRUE if a record was actually deleted, FALSE otherwise.
+ * Used for compensating transactions and entity cleanups.
+ ********************************************************************************/
+CREATE OR REPLACE FUNCTION public.delete_user(
+    p_id VARCHAR(64)
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+    DELETE FROM public.users
+    WHERE id = p_id;
+
+    RETURN FOUND;
+END;$$ LANGUAGE plpgsql;
+
 -- =============================================================
 -- SPORT & SPORT CONFIGURATION STORED FUNCTIONS
 -- =============================================================
@@ -862,28 +899,25 @@ $$ LANGUAGE plpgsql;
  * Function: public.create_quick_match
  * Description: Provisions JIT teams, tournament container, player rosters (capped by rosterlimit 
  *              for both Home and Guest teams), AND creates the match entity.
- *              Ensures base user, geography, and default club exist JIT to guarantee idempotency.
+ *              Ensures base geography and default club exist JIT to guarantee idempotency.
+ *              Requires an authenticated user identifier (p_user_id) to set as fallback owner.
+ *              Assigns Global FullControl Admin as tournament owner if available.
  *              Falls back to sports.defaultconfigid if p_configuration_id is NULL.
+ *              Returns full match entity record matching public.matches structure.
  ************************************************************************************************/
 CREATE OR REPLACE FUNCTION public.create_quick_match(
     p_sport_id UUID,
+    p_user_id VARCHAR(64),
     p_configuration_id UUID DEFAULT NULL
 )
-RETURNS TABLE (
-    id UUID,
-    tournamentid UUID,
-    hometeamid UUID,
-    guestteamid UUID,
-    scheduledat TIMESTAMP WITH TIME ZONE,
-    createdat TIMESTAMP WITH TIME ZONE
-)
+RETURNS SETOF public.matches
 LANGUAGE plpgsql
 AS $$
 #variable_conflict use_column
 DECLARE
     v_club_id UUID := '11111111-1111-1111-1111-000000000001';
     v_city_id UUID := '11111111-1111-1111-1111-111111111111';
-    v_owner_id VARCHAR(64) := 'auth0|system-seed';
+    v_owner_id VARCHAR(64);
     v_country_id INT;
     v_region_id INT;
     v_effective_config_id UUID;
@@ -895,11 +929,26 @@ DECLARE
     v_position_id UUID;
     v_roster_limit INT;
 BEGIN
-    -- 0. Ensure JIT base infrastructure (User, Geography, Base Club) exists if missing
-    INSERT INTO public.users (id, email, displayname, createdat)
-    VALUES (v_owner_id, 'system-seed@tta.com', 'System Seed User', v_now)
-    ON CONFLICT DO NOTHING;
+    -- Validation: Ensure user ID is provided
+    IF p_user_id IS NULL OR trim(p_user_id) = '' THEN
+        RAISE EXCEPTION 'User ID is required for quick match tournament creation.'
+            USING ERRCODE = '22004'; -- Null Value Not Allowed
+    END IF;
 
+    -- 0. Resolve tournament owner: 
+    -- Search for Global FullControl (Admin) policy (targettype = 0 AND role = 0)
+    SELECT userid INTO v_owner_id
+    FROM auth.accesspolicies
+    WHERE targettype = 0 AND role = 0 AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
+    ORDER BY createdat ASC
+    LIMIT 1;
+
+    -- Fallback to caller p_user_id if no Global Admin exists
+    IF v_owner_id IS NULL THEN
+        v_owner_id := p_user_id;
+    END IF;
+
+    -- 1. Ensure JIT base infrastructure (Geography, Base Club) exists if missing
     INSERT INTO public.countries (name, code)
     SELECT 'Ukraine', 'UA' WHERE NOT EXISTS (SELECT 1 FROM public.countries c WHERE c.name = 'Ukraine');
     
@@ -918,7 +967,7 @@ BEGIN
     VALUES (v_club_id, v_city_id, 'TTA Training Club', v_now)
     ON CONFLICT DO NOTHING;
 
-    -- 1. Determine effective configuration ID (Use provided or fallback to sports.defaultconfigid)
+    -- 2. Determine effective configuration ID (Use provided or fallback to sports.defaultconfigid)
     IF p_configuration_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
         p_configuration_id := NULL;
     END IF;
@@ -946,7 +995,7 @@ BEGIN
     -- Concurrency Protection: Acquire transactional advisory lock scoped to sport and configuration
     PERFORM pg_advisory_xact_lock(hashtext(p_sport_id::text), hashtext(v_effective_config_id::text));
 
-    -- 2. Ensure Home Squad team exists for the given sportId (with gender = 0)
+    -- 3. Ensure Home Squad team exists for the given sportId (with gender = 0)
     SELECT t.id INTO v_home_team_id
     FROM public.teams t
     WHERE t.clubid = v_club_id AND t.sportid = p_sport_id AND t.name = 'Home Squad'
@@ -958,7 +1007,7 @@ BEGIN
         VALUES (v_home_team_id, v_club_id, p_sport_id, 'Home Squad', 0, v_now);
     END IF;
 
-    -- 3. Ensure Opponent Squad team exists for the given sportId (with gender = 0)
+    -- 4. Ensure Opponent Squad team exists for the given sportId (with gender = 0)
     SELECT t.id INTO v_guest_team_id
     FROM public.teams t
     WHERE t.clubid = v_club_id AND t.sportid = p_sport_id AND t.name = 'Opponent Squad'
@@ -970,7 +1019,7 @@ BEGIN
         VALUES (v_guest_team_id, v_club_id, p_sport_id, 'Opponent Squad', 0, v_now);
     END IF;
 
-    -- 4. Ensure Training Tournament exists for the effective configurationId
+    -- 5. Ensure Training Tournament exists for the effective configurationId
     SELECT t.id INTO v_tournament_id
     FROM public.tournaments t
     WHERE t.configurationid = v_effective_config_id AND t.name = 'Training & Friendly Matches'
@@ -982,7 +1031,7 @@ BEGIN
         VALUES (v_tournament_id, p_sport_id, v_effective_config_id, v_city_id, v_owner_id, 'Training & Friendly Matches', CURRENT_DATE, v_now);
     END IF;
 
-    -- 5. Get or create a default position definition for this sport
+    -- 6. Get or create a default position definition for this sport
     SELECT ppd.id INTO v_position_id
     FROM public.playerpositiondefinitions ppd
     WHERE ppd.sportid = p_sport_id
@@ -994,7 +1043,7 @@ BEGIN
         VALUES (v_position_id, p_sport_id, 'Universal', 'UNI');
     END IF;
 
-    -- 6. Bulk-register up to rosterlimit players for HOME SQUAD
+    -- 7. Bulk-register up to rosterlimit players for HOME SQUAD
     WITH ranked_players AS (
         SELECT 
             p.id AS player_id,
@@ -1015,7 +1064,7 @@ BEGIN
     WHERE rp.rn <= v_roster_limit
     ON CONFLICT (tournamentid, playerid) DO NOTHING;
 
-    -- 7. Bulk-register up to rosterlimit players for OPPONENT (GUEST) SQUAD
+    -- 8. Bulk-register up to rosterlimit players for OPPONENT (GUEST) SQUAD
     WITH ranked_players AS (
         SELECT 
             p.id AS player_id,
@@ -1036,7 +1085,7 @@ BEGIN
     WHERE rp.rn > v_roster_limit AND rp.rn <= (v_roster_limit * 2)
     ON CONFLICT (tournamentid, playerid) DO NOTHING;
 
-    -- 8. Insert Match entity directly
+    -- 9. Insert Match entity directly
     INSERT INTO public.matches (
         id,
         tournamentid,
@@ -1054,15 +1103,11 @@ BEGIN
         v_now
     );
 
-    -- 9. Return created quick match projection
+    -- 10. Return full created match entity matching public.matches
     RETURN QUERY
-    SELECT 
-        v_match_id,
-        v_tournament_id,
-        v_home_team_id,
-        v_guest_team_id,
-        v_now,
-        v_now;
+    SELECT m.*
+    FROM public.matches m
+    WHERE m.id = v_match_id;
 END;
 $$;
 

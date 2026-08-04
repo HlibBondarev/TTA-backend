@@ -21,6 +21,18 @@ public static class SqlStatements
         /// </summary>
         public const string GetUsersByEmail =
             "SELECT * FROM public.get_users_by_email(@p_email)";
+
+        /// <summary>
+        /// SQL command to insert or update a user entity JIT via stored function.
+        /// </summary>
+        public const string UpsertUser =
+            "SELECT * FROM public.upsert_user(@Id, @Email, @DisplayName, @CreatedAt)";
+
+        /// <summary>
+        /// SQL statement to delete a user by primary key ID via stored function.
+        /// </summary>
+        public const string DeleteUser =
+            "SELECT public.delete_user(@p_id)";
     }
 
     /// <summary>
@@ -274,7 +286,8 @@ public static class SqlStatements
         /// <summary>
         /// Executes the storage function to provision infrastructure and create a quick match.
         /// </summary>
-        public const string CreateQuickMatch = @"SELECT * FROM public.create_quick_match(@SportId, @ConfigurationId)";
+        public const string CreateQuickMatch =
+            "SELECT * FROM public.create_quick_match(@SportId, @UserId, @ConfigurationId)";
 
         /// <summary>
         /// Executes the storage function to delete a match by its unique identifier.
