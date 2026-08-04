@@ -1405,12 +1405,14 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> falls back to using the user's email as display name
-    /// when the display name claim is null or whitespace.
+    /// when the display name claim is null or whitespace, and persists it to public.users.
     /// </summary>
     [Fact]
     public async Task CreateQuickMatch_ShouldFallbackToUserEmail_WhenDisplayNameClaimIsMissing()
     {
         // Arrange
+        var fallbackUserId = $"auth0|fallback-{Guid.NewGuid():N}";
+        const string fallbackEmail = "fallback@example.com";
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"FallbackPolo_{Guid.NewGuid():N}");
 
@@ -1450,20 +1452,35 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         try
         {
-            // Omit the display name claim to cover the ternary fallback branch (userName ? userEmail : userName)
+            TestAuthHandler.CustomUserId = fallbackUserId;
+            TestAuthHandler.CustomEmail = fallbackEmail;
+            // Omit the display name claim to cover the ternary fallback branch
             TestAuthHandler.CustomDisplayName = string.Empty;
 
             // Act
             var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
 
-            // Assert
+            // Assert 1: HTTP Response
             response.StatusCode.Should().Be(HttpStatusCode.Created);
             var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
             result.Should().NotBeNull();
             result!.Id.Should().NotBeEmpty();
+
+            // Assert 2: Database State Verification - Persisted DisplayName falls back to user email
+            using var checkConn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+            await checkConn.OpenAsync();
+
+            var createdUser = await checkConn.QueryFirstOrDefaultAsync<User>(
+                "SELECT id, email, displayname FROM public.users WHERE id = @userId",
+                new { userId = fallbackUserId });
+
+            createdUser.Should().NotBeNull("JIT user record must be provisioned in public.users");
+            createdUser!.DisplayName.Should().Be(fallbackEmail, "displayname should fallback to user email when display name claim is missing");
         }
         finally
         {
+            TestAuthHandler.CustomUserId = null;
+            TestAuthHandler.CustomEmail = null;
             TestAuthHandler.CustomDisplayName = null;
         }
     }
