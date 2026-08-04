@@ -108,8 +108,8 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
     }
 
     /// <summary>
-    /// Verifies that <see cref="UserRepository.UpsertAsync"/> creates a new user record 
-    /// and sets IsInserted to true when the specified user ID does not yet exist.
+    /// Verifies that <see cref="UserRepository.UpsertAsync"/> creates a new user record, 
+    /// returns the correctly mapped user, and sets IsInserted to true when the user ID does not exist.
     /// </summary>
     [Fact]
     public async Task UpsertAsync_WhenUserIsNew_ShouldInsertUserAndReturnTrue()
@@ -127,9 +127,12 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         var (upsertedUser, isInserted) = await _repository.UpsertAsync(user, CancellationToken.None);
 
         // Assert
+        isInserted.Should().BeTrue("because the user record was newly inserted");
+
         upsertedUser.Should().NotBeNull();
         upsertedUser.Id.Should().Be(user.Id);
-        isInserted.Should().BeTrue("because the user record was newly inserted");
+        upsertedUser.DisplayName.Should().Be(user.DisplayName);
+        upsertedUser.Email.Should().Be(user.Email);
 
         var dbUser = await _repository.GetByIdAsync(user.Id, CancellationToken.None);
         dbUser.Should().NotBeNull();
@@ -138,8 +141,8 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
     }
 
     /// <summary>
-    /// Verifies that <see cref="UserRepository.UpsertAsync"/> updates existing user details 
-    /// and sets IsInserted to false when a record with the same primary key already exists.
+    /// Verifies that <see cref="UserRepository.UpsertAsync"/> updates existing user details, 
+    /// returns the updated mapped user entity, and sets IsInserted to false when a record already exists.
     /// </summary>
     [Fact]
     public async Task UpsertAsync_WhenUserExists_ShouldUpdateUserAndReturnFalse()
@@ -166,11 +169,16 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         };
 
         // Act
-        var result = await _repository.UpsertAsync(updatedUser, CancellationToken.None);
+        var (upsertedUser, isInserted) = await _repository.UpsertAsync(updatedUser, CancellationToken.None);
 
         // Assert
-        result.Should().NotBeNull();
-        result.User.DisplayName.Should().Be("New Name");
+        isInserted.Should().BeFalse("because an existing user record was updated");
+
+        upsertedUser.Should().NotBeNull();
+        upsertedUser.Id.Should().Be(userId);
+        upsertedUser.DisplayName.Should().Be("New Name");
+        upsertedUser.Email.Should().Be(updatedUser.Email);
+        upsertedUser.CreatedAt.Should().BeCloseTo(initialUser.CreatedAt, TimeSpan.FromSeconds(1));
 
         var dbUser = await _repository.GetByIdAsync(userId, CancellationToken.None);
         dbUser.Should().NotBeNull();
@@ -178,6 +186,36 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
         dbUser.Email.Should().Be(updatedUser.Email);
         dbUser.CreatedAt.Should().BeCloseTo(initialUser.CreatedAt, TimeSpan.FromSeconds(1),
             "the original registration timestamp must survive an upsert");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="UserRepository.UpsertAsync"/> executes transaction rollback 
+    /// and rethrows an exception when the operation is cancelled via CancellationToken.
+    /// </summary>
+    [Fact]
+    public async Task UpsertAsync_WhenCancelled_ShouldRollbackTransactionAndThrowException()
+    {
+        // Arrange
+        var user = new User
+        {
+            Id = "auth0|cancelled-user-" + Guid.NewGuid(),
+            DisplayName = "Cancelled User",
+            Email = $"cancelled_{Guid.NewGuid()}@example.com",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        // Act
+        var act = () => _repository.UpsertAsync(user, cts.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // Verify that user was NOT inserted due to transaction rollback
+        var dbUser = await _repository.GetByIdAsync(user.Id, CancellationToken.None);
+        dbUser.Should().BeNull("transaction should have been rolled back without persisting changes");
     }
 
     /// <summary>
