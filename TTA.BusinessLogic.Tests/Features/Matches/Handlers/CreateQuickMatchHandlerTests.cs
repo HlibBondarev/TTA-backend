@@ -199,12 +199,10 @@ public class CreateQuickMatchHandlerTests
         Assert.Equal(createdMatch.HomeTeamId, result.HomeTeamId);
         Assert.Equal(createdMatch.GuestTeamId, result.GuestTeamId);
 
-        // Verify JIT User Upsert
+        // Verify JIT User Upsert was NOT called for an existing user
         _userRepositoryMock.Verify(
-            u => u.UpsertAsync(
-                It.Is<User>(user => user.Id == userId && user.Email == userEmail && user.DisplayName == userName),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+            u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()),
+            Times.Never);
 
         // Verify TeamEditor access policy grant for Home Team
         _accessRepositoryMock.Verify(
@@ -232,6 +230,71 @@ public class CreateQuickMatchHandlerTests
             Times.Once);
 
         _sportRepositoryMock.Verify(s => s.GetByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that JIT user provisioning is executed when the requesting user record does not exist in the database.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldProvisionJitUser_WhenUserDoesNotExist()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var userId = "auth0|newuser123";
+        var userEmail = "newuser123@example.com";
+        var userName = "New User";
+
+        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
+        var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
+
+        var createdMatch = new Match
+        {
+            Id = Guid.NewGuid(),
+            TournamentId = Guid.NewGuid(),
+            HomeTeamId = Guid.NewGuid(),
+            GuestTeamId = Guid.NewGuid(),
+            ScheduledAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var sportConfig = new SportConfiguration { Id = configId, SportId = sportId, LineupLimit = 7 };
+
+        _userRepositoryMock
+            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User?)null);
+
+        _userRepositoryMock
+            .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => user);
+
+        _matchRepositoryMock
+            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdMatch);
+
+        _accessRepositoryMock
+            .Setup(a => a.GetActiveTeamPolicyAsync(userId, createdMatch.HomeTeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AccessPolicy());
+
+        _sportConfigurationRepositoryMock
+            .Setup(c => c.GetByIdAsync(configId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(sportConfig);
+
+        _rosterRepositoryMock
+            .Setup(r => r.GetTeamRosterAsync(createdMatch.TournamentId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<dynamic>());
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result);
+
+        _userRepositoryMock.Verify(
+            u => u.UpsertAsync(
+                It.Is<User>(user => user.Id == userId && user.Email == userEmail && user.DisplayName == userName),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     /// <summary>

@@ -87,12 +87,12 @@ public class CreateQuickMatchHandler(
     private async Task<bool> ProvisionJitUserAsync(CreateQuickMatchCommand command, CancellationToken cancellationToken)
     {
         var existingUser = await _userRepository.GetByIdAsync(command.UserId, cancellationToken);
-        var isNewUser = existingUser == null;
-
-        if (isNewUser)
+        if (existingUser != null)
         {
-            _logger.LogInformation("User {UserId} not found in database. Provisioning JIT record.", command.UserId);
+            return false;
         }
+
+        _logger.LogInformation("User {UserId} not found in database. Provisioning JIT record.", command.UserId);
 
         var userEntity = new User
         {
@@ -103,7 +103,7 @@ public class CreateQuickMatchHandler(
         };
 
         await _userRepository.UpsertAsync(userEntity, cancellationToken);
-        return isNewUser;
+        return true;
     }
 
     /// <summary>

@@ -145,12 +145,13 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
     {
         // Arrange
         var userId = "auth0|existing-user-" + Guid.NewGuid();
+        var initialCreatedAt = DateTime.UtcNow.AddDays(-10);
         var initialUser = new User
         {
             Id = userId,
             DisplayName = "Old Name",
             Email = $"initial_{Guid.NewGuid()}@example.com",
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = initialCreatedAt
         };
 
         await SeedUserAsync(initialUser);
@@ -160,7 +161,7 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
             Id = userId,
             DisplayName = "New Name",
             Email = $"updated_{Guid.NewGuid()}@example.com",
-            CreatedAt = initialUser.CreatedAt
+            CreatedAt = DateTime.UtcNow
         };
 
         // Act
