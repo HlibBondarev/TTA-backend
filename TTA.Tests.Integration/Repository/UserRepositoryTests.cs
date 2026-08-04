@@ -190,32 +190,55 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
 
     /// <summary>
     /// Verifies that <see cref="UserRepository.UpsertAsync"/> executes transaction rollback 
-    /// and rethrows an exception when the operation is cancelled via CancellationToken.
+    /// and rethrows an exception when the operation is cancelled while in-flight.
     /// </summary>
     [Fact]
     public async Task UpsertAsync_WhenCancelled_ShouldRollbackTransactionAndThrowException()
     {
         // Arrange
-        var user = new User
+        var userId = "auth0|cancelled-user-" + Guid.NewGuid();
+        var initialUser = new User
         {
-            Id = "auth0|cancelled-user-" + Guid.NewGuid(),
-            DisplayName = "Cancelled User",
-            Email = $"cancelled_{Guid.NewGuid()}@example.com",
+            Id = userId,
+            DisplayName = "Initial Name",
+            Email = $"initial_{Guid.NewGuid()}@example.com",
+            CreatedAt = DateTime.UtcNow
+        };
+        await SeedUserAsync(initialUser);
+
+        var updatedUser = new User
+        {
+            Id = userId,
+            DisplayName = "Updated Name Should Rollback",
+            Email = $"updated_{Guid.NewGuid()}@example.com",
             CreatedAt = DateTime.UtcNow
         };
 
-        // Delay cancellation slightly to allow connection opening and transaction initialization
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(10));
+        // Hold an exclusive row lock on a separate connection to block UpsertAsync during SQL execution
+        using var lockConn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await lockConn.OpenAsync();
+        await using var lockTx = await lockConn.BeginTransactionAsync();
+        await lockConn.ExecuteAsync("SELECT id FROM public.users WHERE id = @id FOR UPDATE", new { id = userId }, transaction: lockTx);
 
-        // Act
-        var act = () => _repository.UpsertAsync(user, cts.Token);
+        using var cts = new CancellationTokenSource();
+
+        // Act - Start UpsertAsync (will block inside PostgreSQL waiting for the row lock)
+        var upsertTask = _repository.UpsertAsync(updatedUser, cts.Token);
+
+        // Allow task to reach the blocked query in DB, then trigger cancellation
+        await Task.Delay(50);
+        await cts.CancelAsync();
 
         // Assert
+        var act = () => upsertTask;
         await act.Should().ThrowAsync<OperationCanceledException>();
 
-        // Verify that user was NOT inserted due to transaction rollback
-        var dbUser = await _repository.GetByIdAsync(user.Id, CancellationToken.None);
-        dbUser.Should().BeNull("transaction should have been rolled back without persisting changes");
+        await lockTx.RollbackAsync();
+
+        // Verify that user was NOT updated due to transaction rollback
+        var dbUser = await _repository.GetByIdAsync(userId, CancellationToken.None);
+        dbUser.Should().NotBeNull();
+        dbUser!.DisplayName.Should().Be("Initial Name", "transaction should have been rolled back without persisting changes");
     }
 
     /// <summary>
