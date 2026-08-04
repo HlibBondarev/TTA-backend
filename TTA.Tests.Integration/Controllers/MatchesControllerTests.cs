@@ -1361,6 +1361,103 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         }
     }
 
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> returns <see cref="HttpStatusCode.Unauthorized"/> (401)
+    /// when the authenticated user's email claim is missing or empty.
+    /// </summary>
+    [Fact]
+    public async Task CreateQuickMatch_ShouldReturnUnauthorized_WhenUserEmailClaimIsMissing()
+    {
+        // Arrange
+        var request = new
+        {
+            SportId = Guid.NewGuid()
+        };
+
+        try
+        {
+            // Omit the email claim to trigger the missing userEmail validation check
+            TestAuthHandler.CustomEmail = string.Empty;
+
+            // Act
+            var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            var content = await response.Content.ReadAsStringAsync();
+            content.Should().Contain("Valid user identification claims are required.");
+        }
+        finally
+        {
+            TestAuthHandler.CustomEmail = null;
+        }
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> falls back to using the user's email as display name
+    /// when the display name claim is null or whitespace.
+    /// </summary>
+    [Fact]
+    public async Task CreateQuickMatch_ShouldFallbackToUserEmail_WhenDisplayNameClaimIsMissing()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        sportId = await SeedSportDataAsync(sportId, $"FallbackPolo_{Guid.NewGuid():N}");
+
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+                new { cityId = tempCityId });
+
+            var actualCityId = await conn.QuerySingleAsync<Guid>(
+                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1");
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.clubs (id, cityid, name, createdat) 
+                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+                ON CONFLICT DO NOTHING;",
+                new { clubId = defaultClubId, cityId = actualCityId });
+
+            await conn.ExecuteAsync(@"
+                UPDATE public.sportconfigurations 
+                SET rosterlimit = 5, lineuplimit = 3 
+                WHERE sportid = @sportId;",
+                new { sportId });
+        }
+
+        var request = new
+        {
+            SportId = sportId
+        };
+
+        try
+        {
+            // Omit the display name claim to cover the ternary fallback branch (userName ? userEmail : userName)
+            TestAuthHandler.CustomDisplayName = string.Empty;
+
+            // Act
+            var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Created);
+            var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
+            result.Should().NotBeNull();
+            result!.Id.Should().NotBeEmpty();
+        }
+        finally
+        {
+            TestAuthHandler.CustomDisplayName = null;
+        }
+    }
+
     #endregion
 
     #region Helpers for Seed Operations
