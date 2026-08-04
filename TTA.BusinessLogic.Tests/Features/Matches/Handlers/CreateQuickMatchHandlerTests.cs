@@ -393,7 +393,8 @@ public class CreateQuickMatchHandlerTests
 
     /// <summary>
     /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when fallback sport resolution fails,
-    /// and that a compensating rollback deletion is dispatched to purge the provisioned match entity and newly provisioned user.
+    /// and that a compensating rollback deletion is dispatched to purge the provisioned match entity, 
+    /// the newly created access policy, and the newly provisioned user.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldThrowKeyNotFoundExceptionAndRollbackNewUser_WhenSportNotFoundForDefaultConfig()
@@ -426,6 +427,7 @@ public class CreateQuickMatchHandlerTests
             .Setup(r => r.CreateQuickMatchAsync(sportId, userId, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdMatch);
 
+        // No prior active policy exists, so EnsureTeamEditorPolicyAsync will create one
         _accessRepositoryMock
             .Setup(a => a.GetActiveTeamPolicyAsync(userId, createdMatch.HomeTeamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((AccessPolicy?)null);
@@ -438,10 +440,17 @@ public class CreateQuickMatchHandlerTests
         var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
         Assert.Contains(sportId.ToString(), exception.Message);
 
+        // Verify match rollback
         _matchRepositoryMock.Verify(
             m => m.DeleteAsync(createdMatch.Id, It.IsAny<CancellationToken>()),
             Times.Once);
 
+        // Verify access policy rollback (since EnsureTeamEditorPolicyAsync created one)
+        _accessRepositoryMock.Verify(
+            a => a.DeleteAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Verify JIT user rollback
         _userRepositoryMock.Verify(
             u => u.DeleteAsync(userId, It.IsAny<CancellationToken>()),
             Times.Once);
@@ -449,7 +458,7 @@ public class CreateQuickMatchHandlerTests
 
     /// <summary>
     /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when the target sport configuration entity is missing,
-    /// and that compensating rollback triggers deletion of the created match entity without deleting an existing user.
+    /// and that compensating rollback triggers deletion of the created match entity and access policy, without deleting an existing user.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldThrowKeyNotFoundExceptionAndNotDeleteExistingUser_WhenSportConfigurationNotFound()
@@ -495,10 +504,17 @@ public class CreateQuickMatchHandlerTests
         var exception = await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
         Assert.Contains(configId.ToString(), exception.Message);
 
+        // Verify match rollback
         _matchRepositoryMock.Verify(
             m => m.DeleteAsync(createdMatch.Id, It.IsAny<CancellationToken>()),
             Times.Once);
 
+        // Verify access policy rollback
+        _accessRepositoryMock.Verify(
+            a => a.DeleteAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Verify existing user is NOT deleted
         _userRepositoryMock.Verify(
             u => u.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);

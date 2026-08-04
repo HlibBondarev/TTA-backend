@@ -58,6 +58,12 @@ public static class SqlStatements
         /// </summary>
         public const string GetActiveTeamPolicy =
             "SELECT * FROM auth.get_active_team_policy(@UserId, @TeamId)";
+
+        /// <summary>
+        /// SQL statement to delete an access policy by primary key ID via stored function.
+        /// </summary>
+        public const string DeleteAccessPolicy =
+            "SELECT auth.delete_access_policy(@p_id)";
     }
 
     /// <summary>

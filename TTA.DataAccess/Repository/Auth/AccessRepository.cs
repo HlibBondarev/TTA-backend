@@ -82,4 +82,10 @@ public class AccessRepository(IDbConnectionFactory connectionFactory)
 
         return results.FirstOrDefault();
     }
+
+    /// <inheritdoc />
+    public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        return await Delete(id, SqlStatements.ForAccessPolicies.DeleteAccessPolicy, cancellationToken);
+    }
 }

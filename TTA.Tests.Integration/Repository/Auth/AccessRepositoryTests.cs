@@ -293,6 +293,51 @@ public class AccessRepositoryTests : BaseIntegrationTest
 
     #endregion
 
+    #region DeleteAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="AccessRepository.DeleteAsync"/> permanently deletes an existing access policy 
+    /// and returns true.
+    /// </summary>
+    [Fact]
+    public async Task DeleteAsync_WhenPolicyExists_ShouldDeletePolicyAndReturnTrue()
+    {
+        // Arrange
+        var userId = $"auth0|{Guid.NewGuid()}";
+        var policyId = Guid.NewGuid();
+        var targetId = Guid.NewGuid();
+
+        await SeedUserAsync(userId);
+        await SeedAccessPolicyAsync(userId, TargetScope.Team, targetId, AppRole.Editor, id: policyId);
+
+        // Act
+        var result = await _repository.DeleteAsync(policyId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeTrue();
+        var role = await _repository.GetUserRoleForScope(userId, TargetScope.Team, targetId);
+        role.Should().BeNull("because the policy has been permanently deleted");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="AccessRepository.DeleteAsync"/> returns false 
+    /// when attempting to delete a policy that does not exist in the database.
+    /// </summary>
+    [Fact]
+    public async Task DeleteAsync_WhenPolicyDoesNotExist_ShouldReturnFalse()
+    {
+        // Arrange
+        var nonExistentPolicyId = Guid.NewGuid();
+
+        // Act
+        var result = await _repository.DeleteAsync(nonExistentPolicyId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    #endregion
+
     #region Seed Helpers
 
     /// <summary>

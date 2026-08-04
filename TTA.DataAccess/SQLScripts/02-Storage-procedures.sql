@@ -98,6 +98,22 @@ BEGIN
       AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP);
 END;$$ LANGUAGE plpgsql;
 
+/**********************************************************************************
+ * Removes an access policy record from the auth.accesspolicies table by identifier.
+ * Returns TRUE if a record was actually deleted, FALSE otherwise.
+ * Used for compensating transactions and entity cleanups.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION auth.delete_access_policy(
+    p_id UUID
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+    DELETE FROM auth.accesspolicies
+    WHERE id = p_id;
+
+    RETURN FOUND;
+END;$$ LANGUAGE plpgsql;
+
 -- ==========================================
 -- GEOGRAPHY & USERS
 -- ==========================================

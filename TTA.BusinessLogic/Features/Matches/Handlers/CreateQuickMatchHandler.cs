@@ -59,12 +59,13 @@ public class CreateQuickMatchHandler(
 
         var isNewUser = false;
         Match? quickMatch = null;
+        Guid? createdPolicyId = null;
 
         try
         {
             isNewUser = await ProvisionJitUserAsync(command, cancellationToken);
             quickMatch = await CreateQuickMatchEntityAsync(command, cancellationToken);
-            await EnsureTeamEditorPolicyAsync(command.UserId, quickMatch.HomeTeamId, cancellationToken);
+            createdPolicyId = await EnsureTeamEditorPolicyAsync(command.UserId, quickMatch.HomeTeamId, cancellationToken);
             await PopulateStartingLineupsAsync(quickMatch, command, cancellationToken);
 
             _logger.LogInformation("Successfully completed quick match creation for Match {MatchId}.", quickMatch.Id);
@@ -73,7 +74,7 @@ public class CreateQuickMatchHandler(
         }
         catch
         {
-            await RollbackOnFailureAsync(quickMatch?.Id, isNewUser ? command.UserId : null);
+            await RollbackOnFailureAsync(quickMatch?.Id, createdPolicyId, isNewUser ? command.UserId : null);
             throw;
         }
     }
@@ -139,12 +140,13 @@ public class CreateQuickMatchHandler(
     /// <param name="userId">The unique identifier of the user.</param>
     /// <param name="teamId">The unique identifier of the team.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    private async Task EnsureTeamEditorPolicyAsync(string userId, Guid teamId, CancellationToken cancellationToken)
+    /// <returns>The unique identifier of the newly created access policy if one was granted; otherwise, <c>null</c>.</returns>
+    private async Task<Guid?> EnsureTeamEditorPolicyAsync(string userId, Guid teamId, CancellationToken cancellationToken)
     {
         var activePolicy = await _accessRepository.GetActiveTeamPolicyAsync(userId, teamId, cancellationToken);
         if (activePolicy != null)
         {
-            return;
+            return null;
         }
 
         _logger.LogDebug("Granting TeamEditor policy for User {UserId} on HomeTeam {HomeTeamId}.", userId, teamId);
@@ -160,6 +162,7 @@ public class CreateQuickMatchHandler(
         };
 
         await _accessRepository.AddAccessAsync(newPolicy, cancellationToken);
+        return newPolicy.Id;
     }
 
     /// <summary>
@@ -231,20 +234,47 @@ public class CreateQuickMatchHandler(
     }
 
     /// <summary>
-    /// Executes compensating cleanup steps to delete created match and user entities if provisioning fails.
+    /// Executes isolated compensating cleanup steps to delete created match, access policy, and user entities if provisioning fails.
     /// </summary>
     /// <param name="matchId">The optional match identifier to delete.</param>
+    /// <param name="accessPolicyId">The optional access policy identifier to delete if created during this request.</param>
     /// <param name="newUserId">The optional user identifier to delete if provisioned during this request.</param>
-    private async Task RollbackOnFailureAsync(Guid? matchId, string? newUserId)
+    private async Task RollbackOnFailureAsync(Guid? matchId, Guid? accessPolicyId, string? newUserId)
     {
         if (matchId.HasValue)
         {
-            await _matchRepository.DeleteAsync(matchId.Value, CancellationToken.None);
+            try
+            {
+                await _matchRepository.DeleteAsync(matchId.Value, CancellationToken.None);
+            }
+            catch
+            {
+                // Suppress rollback exception to preserve the original business exception
+            }
+        }
+
+        if (accessPolicyId.HasValue)
+        {
+            try
+            {
+                await _accessRepository.DeleteAsync(accessPolicyId.Value, CancellationToken.None);
+            }
+            catch
+            {
+                // Suppress rollback exception
+            }
         }
 
         if (!string.IsNullOrEmpty(newUserId))
         {
-            await _userRepository.DeleteAsync(newUserId, CancellationToken.None);
+            try
+            {
+                await _userRepository.DeleteAsync(newUserId, CancellationToken.None);
+            }
+            catch
+            {
+                // Suppress rollback exception
+            }
         }
     }
 
