@@ -22,6 +22,12 @@ public class TestAuthHandler(
     public static bool IsEnabled { get; set; } = true;
 
     /// <summary>
+    /// Optional custom user ID claim value for testing JIT provisioning.
+    /// Set to null to restore default behavior (<see cref="BaseApiTest.TestUserId"/>).
+    /// </summary>
+    public static string? CustomUserId { get; set; }
+
+    /// <summary>
     /// Optional custom email claim value for testing missing/invalid email claims.
     /// Set to null to restore default behavior, or <see cref="string.Empty"/> to omit the claim.
     /// </summary>
@@ -44,10 +50,12 @@ public class TestAuthHandler(
             return Task.FromResult(AuthenticateResult.Fail("Test authentication is disabled."));
         }
 
+        var userId = CustomUserId ?? BaseApiTest.TestUserId;
+
         var claims = new List<Claim>
         {
-            new(ClaimTypes.NameIdentifier, BaseApiTest.TestUserId),
-            new("sub", BaseApiTest.TestUserId)
+            new(ClaimTypes.NameIdentifier, userId),
+            new("sub", userId)
         };
 
         var email = CustomEmail ?? "test@example.com";

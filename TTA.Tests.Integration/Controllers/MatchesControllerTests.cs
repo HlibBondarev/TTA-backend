@@ -1210,6 +1210,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     public async Task CreateQuickMatch_ShouldReturnCreated_WhenRequestIsValid()
     {
         // Arrange
+        var jitUserId = $"auth0|jit-{Guid.NewGuid():N}";
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"QuickPolo_{Guid.NewGuid():N}");
 
@@ -1260,56 +1261,65 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             SportId = sportId
         };
 
-        // Act
-        var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
-
-        // Assert 1: HTTP Response Status and Location Header
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-        response.Headers.Location.Should().NotBeNull();
-
-        var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
-        result.Should().NotBeNull();
-        result!.Id.Should().NotBeEmpty();
-        result.HomeTeamId.Should().NotBeEmpty();
-        result.GuestTeamId.Should().NotBeEmpty();
-        result.TournamentId.Should().NotBeEmpty();
-
-        // Assert 2: Database State Verification - JIT User Provisioning in public.users
-        using (var checkConn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        try
         {
-            await checkConn.OpenAsync();
+            TestAuthHandler.CustomUserId = jitUserId;
 
-            var jitUser = await checkConn.QueryFirstOrDefaultAsync<User>(
-                "SELECT id, email, displayname FROM public.users WHERE id = @userId",
-                new { userId = TestUserId });
+            // Act
+            var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
 
-            jitUser.Should().NotBeNull("JIT user record must be provisioned in public.users");
+            // Assert 1: HTTP Response Status and Location Header
+            response.StatusCode.Should().Be(HttpStatusCode.Created);
+            response.Headers.Location.Should().NotBeNull();
 
-            // Assert 3: Database State Verification - Tournament Ownership
-            var tournament = await checkConn.QueryFirstOrDefaultAsync<Tournament>(
-                "SELECT id, ownerid FROM public.tournaments WHERE id = @tournamentId",
-                new { tournamentId = result.TournamentId });
+            var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
+            result.Should().NotBeNull();
+            result!.Id.Should().NotBeEmpty();
+            result.HomeTeamId.Should().NotBeEmpty();
+            result.GuestTeamId.Should().NotBeEmpty();
+            result.TournamentId.Should().NotBeEmpty();
 
-            tournament.Should().NotBeNull("Tournament record must be created in public.tournaments");
-            tournament!.OwnerId.Should().Be(TestUserId, "Tournament owner must be set to the creator user ID");
+            // Assert 2: Database State Verification - JIT User Provisioning in public.users
+            using (var checkConn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+            {
+                await checkConn.OpenAsync();
+
+                var jitUser = await checkConn.QueryFirstOrDefaultAsync<User>(
+                    "SELECT id, email, displayname FROM public.users WHERE id = @userId",
+                    new { userId = jitUserId });
+
+                jitUser.Should().NotBeNull("JIT user record must be provisioned in public.users");
+
+                // Assert 3: Database State Verification - Tournament Ownership
+                var tournament = await checkConn.QueryFirstOrDefaultAsync<Tournament>(
+                    "SELECT id, ownerid FROM public.tournaments WHERE id = @tournamentId",
+                    new { tournamentId = result.TournamentId });
+
+                tournament.Should().NotBeNull("Tournament record must be created in public.tournaments");
+                tournament!.OwnerId.Should().Be(jitUserId, "Tournament owner must be set to the creator user ID");
+            }
+
+            // Assert 4: Verify starting lineups were generated for both Home and Guest teams
+            var homeLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.HomeTeamId}/lineup");
+            homeLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var homeLineup = (await homeLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
+            homeLineup.Should().NotBeNull();
+            homeLineup!.Should().HaveCount(3, "home team lineup should contain 3 players based on lineuplimit=3");
+            homeLineup.Should().OnlyContain(l => l.TeamId == result.HomeTeamId, "all home lineup items must belong to HomeTeamId");
+
+            var guestLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.GuestTeamId}/lineup");
+            guestLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var guestLineup = (await guestLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
+            guestLineup.Should().NotBeNull();
+            guestLineup!.Should().HaveCount(3, "guest team lineup should contain 3 players based on lineuplimit=3");
+            guestLineup.Should().OnlyContain(l => l.TeamId == result.GuestTeamId, "all guest lineup items must belong to GuestTeamId");
         }
-
-        // Assert 4: Verify starting lineups were generated for both Home and Guest teams
-        var homeLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.HomeTeamId}/lineup");
-        homeLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var homeLineup = (await homeLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
-        homeLineup.Should().NotBeNull();
-        homeLineup!.Should().HaveCount(3, "home team lineup should contain 3 players based on lineuplimit=3");
-        homeLineup.Should().OnlyContain(l => l.TeamId == result.HomeTeamId, "all home lineup items must belong to HomeTeamId");
-
-        var guestLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.GuestTeamId}/lineup");
-        guestLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-
-        var guestLineup = (await guestLineupResponse.Content.ReadFromJsonAsync<IEnumerable<MatchLineupResponse>>())?.ToList();
-        guestLineup.Should().NotBeNull();
-        guestLineup!.Should().HaveCount(3, "guest team lineup should contain 3 players based on lineuplimit=3");
-        guestLineup.Should().OnlyContain(l => l.TeamId == result.GuestTeamId, "all guest lineup items must belong to GuestTeamId");
+        finally
+        {
+            TestAuthHandler.CustomUserId = null;
+        }
     }
 
     /// <summary>
