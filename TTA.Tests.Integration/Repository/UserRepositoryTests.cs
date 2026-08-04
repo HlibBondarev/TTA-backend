@@ -204,8 +204,8 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
             CreatedAt = DateTime.UtcNow
         };
 
-        using var cts = new CancellationTokenSource();
-        await cts.CancelAsync();
+        // Delay cancellation slightly to allow connection opening and transaction initialization
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(10));
 
         // Act
         var act = () => _repository.UpsertAsync(user, cts.Token);
