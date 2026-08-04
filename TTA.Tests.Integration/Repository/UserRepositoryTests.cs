@@ -162,21 +162,22 @@ public class UserRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
             Id = userId,
             DisplayName = "New Name",
             Email = $"updated_{Guid.NewGuid()}@example.com",
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = initialUser.CreatedAt.AddDays(1)
         };
 
         // Act
-        var (resultUser, isInserted) = await _repository.UpsertAsync(updatedUser, CancellationToken.None);
+        var result = await _repository.UpsertAsync(updatedUser, CancellationToken.None);
 
         // Assert
-        resultUser.Should().NotBeNull();
-        resultUser.DisplayName.Should().Be("New Name");
-        isInserted.Should().BeFalse("because the user record already existed and was updated");
+        result.Should().NotBeNull();
+        result.User.DisplayName.Should().Be("New Name");
 
         var dbUser = await _repository.GetByIdAsync(userId, CancellationToken.None);
         dbUser.Should().NotBeNull();
         dbUser!.DisplayName.Should().Be("New Name");
         dbUser.Email.Should().Be(updatedUser.Email);
+        dbUser.CreatedAt.Should().BeCloseTo(initialUser.CreatedAt, TimeSpan.FromSeconds(1),
+            "the original registration timestamp must survive an upsert");
     }
 
     /// <summary>
