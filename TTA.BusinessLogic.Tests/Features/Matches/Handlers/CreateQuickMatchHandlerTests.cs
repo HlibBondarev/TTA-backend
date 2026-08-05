@@ -11,7 +11,7 @@ using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Auth;
 using Match = TTA.DataAccess.Models.Match;
 
-namespace TTA.UnitTests.Features.Matches.Handlers;
+namespace TTA.BusinessLogic.Tests.Features.Matches.Handlers;
 
 /// <summary>
 /// Unit tests for <see cref="CreateQuickMatchHandler"/>.
