@@ -281,13 +281,13 @@ public class CreateQuickMatchHandler(
     /// </summary>
     /// <param name="quickMatch">The created match entity.</param>
     /// <returns>A populated <see cref="QuickMatchResponse"/> object.</returns>
-    private static QuickMatchResponse MapToResponse(Match quickMatch) => new()
-    {
-        Id = quickMatch.Id,
-        TournamentId = quickMatch.TournamentId,
-        HomeTeamId = quickMatch.HomeTeamId,
-        GuestTeamId = quickMatch.GuestTeamId,
-        ScheduledAt = quickMatch.ScheduledAt,
-        CreatedAt = quickMatch.CreatedAt
-    };
+    private static QuickMatchResponse MapToResponse(Match quickMatch) => new
+    (
+        quickMatch.Id,
+        quickMatch.TournamentId,
+        quickMatch.HomeTeamId,
+        quickMatch.GuestTeamId,
+        quickMatch.ScheduledAt,
+        quickMatch.CreatedAt
+    );
 }

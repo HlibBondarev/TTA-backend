@@ -7,7 +7,6 @@ using TTA.BusinessLogic.Features.EventDefinitions.Queries;
 using TTA.BusinessLogic.Features.GameEvents.Commands;
 using TTA.BusinessLogic.Features.GameEvents.DTOs;
 using TTA.BusinessLogic.Features.GameEvents.Queries;
-using TTA.BusinessLogic.Features.Matches.Commands;
 using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.Matches.Queries;
 using TTA.BusinessLogic.Features.MatchLineups.DTOs;
@@ -313,8 +312,7 @@ public class MatchesController(
             return Unauthorized("Valid user identification claims are required.");
         }
 
-        var command = new CreateQuickMatchCommand(
-            request,
+        var command = request.ToCommand(
             userId,
             userEmail,
             string.IsNullOrWhiteSpace(userName) ? userEmail : userName);

@@ -113,11 +113,11 @@ public class CreateQuickMatchHandlerTests
         // Arrange
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
-        var userId = "auth0|user123";
-        var userEmail = "user123@example.com";
-        var userName = "Test User";
+        const string userId = "auth0|user123";
+        const string userEmail = "user123@example.com";
+        const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
+        var request = new CreateQuickMatchRequest(sportId, configId);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
@@ -232,11 +232,11 @@ public class CreateQuickMatchHandlerTests
         // Arrange
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
-        var userId = "auth0|newuser123";
-        var userEmail = "newuser123@example.com";
-        var userName = "New User";
+        const string userId = "auth0|newuser123";
+        const string userEmail = "newuser123@example.com";
+        const string userName = "New User";
 
-        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
+        var request = new CreateQuickMatchRequest(sportId, configId);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
@@ -294,11 +294,11 @@ public class CreateQuickMatchHandlerTests
         // Arrange
         var sportId = Guid.NewGuid();
         var defaultConfigId = Guid.NewGuid();
-        var userId = "auth0|user123";
-        var userEmail = "user123@example.com";
-        var userName = "Test User";
+        const string userId = "auth0|user123";
+        const string userEmail = "user123@example.com";
+        const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = null };
+        var request = new CreateQuickMatchRequest(sportId, null);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
@@ -315,8 +315,8 @@ public class CreateQuickMatchHandlerTests
         var sportConfig = new SportConfiguration { Id = defaultConfigId, SportId = sportId, LineupLimit = 13 };
 
         _userRepositoryMock
-            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new User { Id = userId, Email = userEmail, DisplayName = userName });
+            .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => (user, false));
 
         _matchRepositoryMock
             .Setup(r => r.CreateQuickMatchAsync(sportId, userId, null, It.IsAny<CancellationToken>()))
@@ -358,16 +358,16 @@ public class CreateQuickMatchHandlerTests
     {
         // Arrange
         var sportId = Guid.NewGuid();
-        var userId = "auth0|user123";
-        var userEmail = "user123@example.com";
-        var userName = "Test User";
+        const string userId = "auth0|user123";
+        const string userEmail = "user123@example.com";
+        const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest { SportId = sportId };
+        var request = new CreateQuickMatchRequest(sportId);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         _userRepositoryMock
-            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new User { Id = userId });
+            .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => (user, false));
 
         _matchRepositoryMock
             .Setup(r => r.CreateQuickMatchAsync(sportId, userId, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
@@ -388,11 +388,11 @@ public class CreateQuickMatchHandlerTests
     {
         // Arrange
         var sportId = Guid.NewGuid();
-        var userId = "auth0|user123";
-        var userEmail = "user123@example.com";
-        var userName = "Test User";
+        const string userId = "auth0|user123";
+        const string userEmail = "user123@example.com";
+        const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = null };
+        var request = new CreateQuickMatchRequest(sportId, null);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
@@ -453,11 +453,11 @@ public class CreateQuickMatchHandlerTests
         // Arrange
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
-        var userId = "auth0|user123";
-        var userEmail = "user123@example.com";
-        var userName = "Test User";
+        const string userId = "auth0|user123";
+        const string userEmail = "user123@example.com";
+        const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest { SportId = sportId, ConfigurationId = configId };
+        var request = new CreateQuickMatchRequest(sportId, configId);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
@@ -470,10 +470,10 @@ public class CreateQuickMatchHandlerTests
             CreatedAt = DateTime.UtcNow
         };
 
-        // User already existed prior to request
+        // User already existed prior to request -> UpsertAsync returns IsInserted = false
         _userRepositoryMock
-            .Setup(u => u.GetByIdAsync(userId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new User { Id = userId, Email = userEmail });
+            .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => (user, false));
 
         _matchRepositoryMock
             .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))

@@ -18,11 +18,7 @@ public class CreateQuickMatchRequestValidatorTests
     public void Should_Have_Error_When_SportId_Is_Empty()
     {
         // Arrange
-        var request = new CreateQuickMatchRequest
-        {
-            SportId = Guid.Empty,
-            ConfigurationId = Guid.NewGuid()
-        };
+        var request = new CreateQuickMatchRequest(Guid.Empty, null);
 
         // Act
         var result = _validator.TestValidate(request);
@@ -39,11 +35,7 @@ public class CreateQuickMatchRequestValidatorTests
     public void Should_Not_Have_Error_When_SportId_Is_Valid_And_ConfigurationId_Is_Null()
     {
         // Arrange
-        var request = new CreateQuickMatchRequest
-        {
-            SportId = Guid.NewGuid(),
-            ConfigurationId = null
-        };
+        var request = new CreateQuickMatchRequest(Guid.NewGuid(), null);
 
         // Act
         var result = _validator.TestValidate(request);
@@ -60,11 +52,7 @@ public class CreateQuickMatchRequestValidatorTests
     public void Should_Not_Have_Error_When_Both_Ids_Are_Valid()
     {
         // Arrange
-        var request = new CreateQuickMatchRequest
-        {
-            SportId = Guid.NewGuid(),
-            ConfigurationId = Guid.NewGuid()
-        };
+        var request = new CreateQuickMatchRequest(Guid.NewGuid(), Guid.NewGuid());
 
         // Act
         var result = _validator.TestValidate(request);
