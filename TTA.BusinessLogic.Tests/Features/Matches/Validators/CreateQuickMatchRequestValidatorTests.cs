@@ -52,7 +52,7 @@ public class CreateQuickMatchRequestValidatorTests
     public void Should_Not_Have_Error_When_Both_Ids_Are_Valid()
     {
         // Arrange
-        var request = new CreateQuickMatchRequest(Guid.NewGuid(), null);
+        var request = new CreateQuickMatchRequest(Guid.NewGuid(), Guid.NewGuid());
 
         // Act
         var result = _validator.TestValidate(request);
