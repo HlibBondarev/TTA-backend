@@ -19,7 +19,7 @@
     *   **Constraints:** User can have only **one** active `IsPrimary` membership across all teams.
 
 ### 3. Sport & Tournament Infrastructure
-*   **Sport:** `Id` (UUID), `Name`, `DefaultConfigId` (FK to configs).
+*   **Sport:** `Id` (UUID), `Name`, `ShortName`, `DefaultConfigId` (FK to configs).
 *   **PlayerPositionDefinition:** `Id`, `SportId`, `Name`, `ShortName`.
 *   **SportConfiguration:** `Id`, `SportId`, `UsesCleanTime` (bool), `PeriodsCount`, `PeriodDurationMinutes`, `FieldSize`, `RosterLimit`, `LineupLimit`.
 *   **Tournament:** `Id`, `SportId`, `ConfigurationId`, `CityId`, `OwnerId` (User FK), `Name`, `StartDate`, `EndDate`, `CreatedAt`.
