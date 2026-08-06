@@ -47,7 +47,7 @@ BEGIN
     -- -------------------------------------------------------------------------
     INSERT INTO sports (id, name, shortname, defaultconfigid) 
     VALUES (wp_sport_id, 'Water Polo', 'WP', wp_config_id)
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     INSERT INTO playerpositiondefinitions (id, sportid, name, shortname) VALUES 
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', wp_sport_id, 'Goalkeeper', 'GK'),
@@ -94,7 +94,7 @@ BEGIN
     -- -------------------------------------------------------------------------
     INSERT INTO sports (id, name, shortname, defaultconfigid) 
     VALUES (fb_sport_id, 'Football', 'FB', fb_config_id)
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     INSERT INTO playerpositiondefinitions (id, sportid, name, shortname) VALUES 
     ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a61', fb_sport_id, 'Goalkeeper', 'GK'),
@@ -121,7 +121,7 @@ BEGIN
     -- -------------------------------------------------------------------------
     INSERT INTO sports (id, name, shortname, defaultconfigid) 
     VALUES (bb_sport_id, 'Basketball', 'BB', bb_config_id)
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     INSERT INTO playerpositiondefinitions (id, sportid, name, shortname) VALUES 
     ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b61', bb_sport_id, 'Point Guard', 'PG'),
