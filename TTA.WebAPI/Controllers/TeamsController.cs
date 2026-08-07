@@ -29,6 +29,27 @@ public class TeamsController(
     private readonly ILogger<TeamsController> _logger = logger;
 
     /// <summary>
+    /// Retrieves details of a specific team by its unique identifier.
+    /// </summary>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <returns>The team details.</returns>
+    /// <response code="200">Returns the team details.</response>
+    /// <response code="404">If the specified team does not exist in the system.</response>
+    [AllowAnonymous]
+    [HttpGet("{teamId:guid}")]
+    [ProducesResponseType(typeof(TeamResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTeamById([FromRoute] Guid teamId)
+    {
+        _logger.LogInformation("Executing GetTeamById action for Team {TeamId}.", teamId);
+
+        var query = new GetTeamByIdQuery(teamId);
+        var result = await _mediator.Send(query);
+
+        return Ok(result);
+    }
+
+    /// <summary>
     /// Adds a new member to a specific team.
     /// </summary>
     /// <param name="teamId">The unique identifier of the team.</param>
