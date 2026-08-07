@@ -239,6 +239,64 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
 
     #endregion
 
+    #region Team
+
+    /// <summary>
+    /// Verifies that any user (including unauthenticated ones) can retrieve details 
+    /// for an existing team by its unique identifier.
+    /// </summary>
+    [Fact]
+    public async Task GetTeamById_ShouldReturnOk_WhenTeamExists()
+    {
+        // Arrange
+        var clubId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+        await SeedFullContextAsync(teamId, clubId);
+
+        var previousAuthState = TestAuthHandler.IsEnabled;
+        try
+        {
+            // Temporarily disable test authentication handler to simulate an anonymous request
+            TestAuthHandler.IsEnabled = false;
+
+            // Act
+            var response = await Client.GetAsync($"/api/teams/{teamId}");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var teamResponse = await response.Content.ReadFromJsonAsync<TeamResponse>();
+            teamResponse.Should().NotBeNull();
+            teamResponse!.Id.Should().Be(teamId);
+            teamResponse.ClubId.Should().Be(clubId);
+            teamResponse.Name.Should().Be("First Team");
+            teamResponse.Gender.Should().Be(0); // Male
+        }
+        finally
+        {
+            // Restore initial authentication state
+            TestAuthHandler.IsEnabled = previousAuthState;
+        }
+    }
+
+    /// <summary>
+    /// Verifies that the endpoint returns 404 Not Found when attempting to retrieve a team that does not exist.
+    /// </summary>
+    [Fact]
+    public async Task GetTeamById_ShouldReturnNotFound_WhenTeamDoesNotExist()
+    {
+        // Arrange
+        var nonExistentTeamId = Guid.NewGuid();
+
+        // Act
+        var response = await Client.GetAsync($"/api/teams/{nonExistentTeamId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    #endregion
+
     #region Seeding Helpers
 
     /// <summary>
