@@ -253,6 +253,7 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         var teamId = Guid.NewGuid();
         await SeedFullContextAsync(teamId, clubId);
 
+        var previousAuthState = TestAuthHandler.IsEnabled;
         try
         {
             // Temporarily disable test authentication handler to simulate an anonymous request
@@ -273,8 +274,8 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         }
         finally
         {
-            // Restore authentication state for subsequent tests
-            TestAuthHandler.IsEnabled = true;
+            // Restore initial authentication state
+            TestAuthHandler.IsEnabled = previousAuthState;
         }
     }
 
