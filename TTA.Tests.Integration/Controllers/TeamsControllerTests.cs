@@ -253,18 +253,29 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         var teamId = Guid.NewGuid();
         await SeedFullContextAsync(teamId, clubId);
 
-        // Act
-        var response = await Client.GetAsync($"/api/teams/{teamId}");
+        try
+        {
+            // Temporarily disable test authentication handler to simulate an anonymous request
+            TestAuthHandler.IsEnabled = false;
 
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+            // Act
+            var response = await Client.GetAsync($"/api/teams/{teamId}");
 
-        var teamResponse = await response.Content.ReadFromJsonAsync<TeamResponse>();
-        teamResponse.Should().NotBeNull();
-        teamResponse!.Id.Should().Be(teamId);
-        teamResponse.ClubId.Should().Be(clubId);
-        teamResponse.Name.Should().Be("First Team");
-        teamResponse.Gender.Should().Be(0); // Male
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var teamResponse = await response.Content.ReadFromJsonAsync<TeamResponse>();
+            teamResponse.Should().NotBeNull();
+            teamResponse!.Id.Should().Be(teamId);
+            teamResponse.ClubId.Should().Be(clubId);
+            teamResponse.Name.Should().Be("First Team");
+            teamResponse.Gender.Should().Be(0); // Male
+        }
+        finally
+        {
+            // Restore authentication state for subsequent tests
+            TestAuthHandler.IsEnabled = true;
+        }
     }
 
     /// <summary>
