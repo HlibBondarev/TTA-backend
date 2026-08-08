@@ -45,8 +45,12 @@ public class CreateTimeAnchorHandler(
         // 2. Logical sequence and idempotency validation
         var existingAnchors = await _timeAnchorRepository.GetMatchAnchorsAsync(request.MatchId, cancellationToken);
         var existingAnchor = existingAnchors.FirstOrDefault(a => a.Id == request.Id);
+        var normalizedModel = request.ToModel();
 
-        if (existingAnchor != null && (existingAnchor.Type != request.Type || existingAnchor.PeriodNumber != request.PeriodNumber))
+        if (existingAnchor != null &&
+            (existingAnchor.Type != request.Type ||
+             existingAnchor.PeriodNumber != request.PeriodNumber ||
+             existingAnchor.Timestamp != normalizedModel.Timestamp))
         {
             throw new ConflictException($"Time anchor with ID {request.Id} already exists with different parameters.");
         }
@@ -59,10 +63,9 @@ public class CreateTimeAnchorHandler(
         ValidateSequence(request, periodAnchors);
 
         // 3. Persistence
-        var model = request.ToModel();
         try
         {
-            var result = await _timeAnchorRepository.UpsertAsync(model, cancellationToken);
+            var result = await _timeAnchorRepository.UpsertAsync(normalizedModel, cancellationToken);
             return result.Id;
         }
         catch (PostgresException ex) when (ex.SqlState == "P0001") // Custom PL/pgSQL exception for business rules
