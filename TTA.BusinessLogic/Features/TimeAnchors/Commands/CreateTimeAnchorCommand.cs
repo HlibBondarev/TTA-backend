@@ -25,7 +25,7 @@ public record CreateTimeAnchorCommand(
 public static class CreateTimeAnchorCommandExtensions
 {
     /// <summary>
-    /// Maps the creation command to a TimeAnchor entity preserving client-supplied Id and Timestamp.
+    /// Maps the creation command to a TimeAnchor entity preserving client-supplied Id and normalizing Timestamp to UTC.
     /// </summary>
     /// <param name="cmd">The command instance.</param>
     /// <returns>A new TimeAnchor entity.</returns>
@@ -35,6 +35,10 @@ public static class CreateTimeAnchorCommandExtensions
         MatchId = cmd.MatchId,
         PeriodNumber = cmd.PeriodNumber,
         Type = cmd.Type,
-        Timestamp = cmd.Timestamp
+        Timestamp = cmd.Timestamp.Kind switch
+        {
+            DateTimeKind.Unspecified => DateTime.SpecifyKind(cmd.Timestamp, DateTimeKind.Utc),
+            _ => cmd.Timestamp.ToUniversalTime()
+        }
     };
 }
