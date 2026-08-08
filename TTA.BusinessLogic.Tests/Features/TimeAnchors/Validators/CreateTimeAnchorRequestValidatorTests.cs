@@ -29,8 +29,10 @@ public class CreateTimeAnchorRequestValidatorTests
     {
         // Arrange
         var request = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
             PeriodNumber: 1,
-            Type: TimeAnchorType.PeriodStart
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: DateTime.UtcNow
         );
 
         // Act
@@ -38,6 +40,28 @@ public class CreateTimeAnchorRequestValidatorTests
 
         // Assert
         result.ShouldNotHaveAnyValidationErrors();
+    }
+
+    /// <summary>
+    /// Verifies that an error is returned when <see cref="CreateTimeAnchorRequest.Id"/> is empty.
+    /// </summary>
+    [Fact]
+    public void Validator_Should_HaveError_When_IdIsEmpty()
+    {
+        // Arrange
+        var request = new CreateTimeAnchorRequest(
+            Id: Guid.Empty,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: DateTime.UtcNow
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldHaveValidationErrorFor(x => x.Id)
+            .WithErrorMessage("Time anchor ID is required.");
     }
 
     /// <summary>
@@ -50,8 +74,10 @@ public class CreateTimeAnchorRequestValidatorTests
     {
         // Arrange
         var request = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
             PeriodNumber: invalidPeriod,
-            Type: TimeAnchorType.PeriodStart
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: DateTime.UtcNow
         );
 
         // Act
@@ -69,10 +95,11 @@ public class CreateTimeAnchorRequestValidatorTests
     public void Validator_Should_HaveError_When_TypeIsInvalid()
     {
         // Arrange
-        // Casting an invalid integer to the enum to simulate a bad API payload
         var request = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
             PeriodNumber: 1,
-            Type: (TimeAnchorType)999
+            Type: (TimeAnchorType)999,
+            Timestamp: DateTime.UtcNow
         );
 
         // Act
@@ -81,5 +108,27 @@ public class CreateTimeAnchorRequestValidatorTests
         // Assert
         result.ShouldHaveValidationErrorFor(x => x.Type)
             .WithErrorMessage("Invalid time anchor type provided.");
+    }
+
+    /// <summary>
+    /// Verifies that an error is returned when <see cref="CreateTimeAnchorRequest.Timestamp"/> is default/empty.
+    /// </summary>
+    [Fact]
+    public void Validator_Should_HaveError_When_TimestampIsDefault()
+    {
+        // Arrange
+        var request = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: default
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldHaveValidationErrorFor(x => x.Timestamp)
+            .WithErrorMessage("Timestamp is required.");
     }
 }

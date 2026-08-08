@@ -1,7 +1,6 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using TTA.BusinessLogic.Features.PlayerPresences.Notifications;
 using TTA.BusinessLogic.Features.TimeAnchors.Commands;
 using TTA.Common.Exceptions;
 using TTA.DataAccess.Enums;
@@ -13,26 +12,21 @@ namespace TTA.BusinessLogic.Features.TimeAnchors.Handlers;
 /// <summary>
 /// Handles the creation of a new time anchor with match validation.
 /// Relies on GlobalExceptionHandler for unhandled exceptions.
-/// Implements a compensating action pattern to rollback persistence if domain event publishing fails.
 /// </summary>
 /// <param name="timeAnchorRepository">The repository for time anchor data operations.</param>
 /// <param name="matchRepository">The repository for validating match existence.</param>
-/// <param name="mediator">The mediator instance used for publishing domain notification events.</param>
 /// <param name="logger">The logger instance for tracking execution flow.</param>
 public class CreateTimeAnchorHandler(
     ITimeAnchorRepository timeAnchorRepository,
     IMatchRepository matchRepository,
-    IMediator mediator,
     ILogger<CreateTimeAnchorHandler> logger) : IRequestHandler<CreateTimeAnchorCommand, Guid>
 {
     private readonly ITimeAnchorRepository _timeAnchorRepository = timeAnchorRepository;
     private readonly IMatchRepository _matchRepository = matchRepository;
-    private readonly IMediator _mediator = mediator;
     private readonly ILogger<CreateTimeAnchorHandler> _logger = logger;
 
     /// <summary>
     /// Validates the match existence and persists the new time anchor record.
-    /// Rolls back the persisted anchor via deletion if downstream period closing notification fails.
     /// </summary>
     /// <param name="request">The command containing anchor details and match context.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
@@ -41,8 +35,8 @@ public class CreateTimeAnchorHandler(
     /// <exception cref="ConflictException">Thrown when a database constraint or business rule is violated.</exception>
     public async Task<Guid> Handle(CreateTimeAnchorCommand request, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Attempting to create TimeAnchor {Type} for Match {MatchId}, Period {Period}.",
-            request.Type, request.MatchId, request.PeriodNumber);
+        _logger.LogInformation("Attempting to create TimeAnchor {Id} ({Type}) for Match {MatchId}, Period {Period}.",
+            request.Id, request.Type, request.MatchId, request.PeriodNumber);
 
         // 1. Basic existence check
         _ = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken)
@@ -62,43 +56,6 @@ public class CreateTimeAnchorHandler(
         try
         {
             var result = await _timeAnchorRepository.UpsertAsync(model, cancellationToken);
-
-            // 4. Domain Trigger: Automatically close active player presence sessions if period finishes
-            if (model.Type == TimeAnchorType.PeriodEnd)
-            {
-                try
-                {
-                    await _mediator.Publish(new PeriodEndedNotification(model.MatchId, model.PeriodNumber, model.Timestamp), cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    // 1. Let cancellation propagate naturally without attempting rollback,
-                    // as the request was intentionally aborted by the client/system.
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    // 2. Use CancellationToken.None to guarantee the rollback executes even if the parent context was cancelled
-                    bool rollbackSuccess = await _timeAnchorRepository.DeleteAsync(result.Id, CancellationToken.None);
-
-                    // 3 & 4. Evaluate rollback success and throw accordingly. 
-                    // No direct logging here to strictly comply with SonarCloud S2139 (double-logging prevention),
-                    // as the GlobalExceptionHandler will log these descriptive exceptions along with the inner exception.
-                    if (rollbackSuccess)
-                    {
-                        throw new InvalidOperationException(
-                            $"Failed to publish PeriodEndedNotification for Match {model.MatchId}, Period {model.PeriodNumber}. Compensating rollback executed successfully for Anchor {result.Id}.",
-                            ex);
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException(
-                            $"Failed to publish PeriodEndedNotification for Match {model.MatchId}, Period {model.PeriodNumber}. WARNING: Compensating rollback FAILED for Anchor {result.Id}. Orphaned record may exist.",
-                            ex);
-                    }
-                }
-            }
-
             return result.Id;
         }
         catch (PostgresException ex) when (ex.SqlState == "P0001") // Custom PL/pgSQL exception for business rules
@@ -137,24 +94,12 @@ public class CreateTimeAnchorHandler(
         }
     }
 
-    /// <summary>
-    /// Enforces validation constraints for a PeriodStart anchor type.
-    /// </summary>
-    /// <param name="periodNumber">The target period identifier number sequence context.</param>
-    /// <param name="hasPeriodStarted">Indicates whether a start anchor already exists for the period layout.</param>
     private static void ValidatePeriodStart(int periodNumber, bool hasPeriodStarted)
     {
         if (hasPeriodStarted)
             throw new ConflictException($"Period {periodNumber} already started.");
     }
 
-    /// <summary>
-    /// Enforces validation constraints for a PeriodEnd anchor type.
-    /// </summary>
-    /// <param name="periodNumber">The target period identifier number sequence context.</param>
-    /// <param name="hasPeriodStarted">Indicates whether a start anchor exists for the period layout.</param>
-    /// <param name="hasPeriodEnded">Indicates whether an end anchor already exists for the period layout.</param>
-    /// <param name="isStoppageActive">Indicates whether a match stoppage section remains unclosed.</param>
     private static void ValidatePeriodEnd(int periodNumber, bool hasPeriodStarted, bool hasPeriodEnded, bool isStoppageActive)
     {
         if (!hasPeriodStarted)
@@ -165,12 +110,6 @@ public class CreateTimeAnchorHandler(
             throw new ConflictException("Cannot end period: a stoppage is currently active.");
     }
 
-    /// <summary>
-    /// Enforces validation constraints for a StoppageStart anchor type.
-    /// </summary>
-    /// <param name="hasPeriodStarted">Indicates whether a start anchor exists for the period layout.</param>
-    /// <param name="hasPeriodEnded">Indicates whether an end anchor exists for the period layout.</param>
-    /// <param name="isStoppageActive">Indicates whether a stoppage block is currently open.</param>
     private static void ValidateStoppageStart(bool hasPeriodStarted, bool hasPeriodEnded, bool isStoppageActive)
     {
         if (!hasPeriodStarted || hasPeriodEnded)
@@ -179,10 +118,6 @@ public class CreateTimeAnchorHandler(
             throw new ConflictException("Match is already stopped.");
     }
 
-    /// <summary>
-    /// Enforces validation constraints for a StoppageEnd anchor type.
-    /// </summary>
-    /// <param name="isStoppageActive">Indicates whether a match stoppage section is open.</param>
     private static void ValidateStoppageEnd(bool isStoppageActive)
     {
         if (!isStoppageActive)

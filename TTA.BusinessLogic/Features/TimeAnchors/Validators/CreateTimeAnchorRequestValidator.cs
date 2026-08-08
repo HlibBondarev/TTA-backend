@@ -13,6 +13,10 @@ public class CreateTimeAnchorRequestValidator : AbstractValidator<CreateTimeAnch
     /// </summary>
     public CreateTimeAnchorRequestValidator()
     {
+        RuleFor(x => x.Id)
+            .NotEmpty()
+            .WithMessage("Time anchor ID is required.");
+
         RuleFor(x => x.PeriodNumber)
             .GreaterThan(0)
             .WithMessage("Period number must be greater than zero.");
@@ -20,5 +24,9 @@ public class CreateTimeAnchorRequestValidator : AbstractValidator<CreateTimeAnch
         RuleFor(x => x.Type)
             .IsInEnum()
             .WithMessage("Invalid time anchor type provided.");
+
+        RuleFor(x => x.Timestamp)
+            .NotEmpty()
+            .WithMessage("Timestamp is required.");
     }
 }
