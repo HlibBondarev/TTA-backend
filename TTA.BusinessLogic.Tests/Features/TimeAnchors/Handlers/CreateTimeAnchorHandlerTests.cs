@@ -624,6 +624,57 @@ public class CreateTimeAnchorHandlerTests
     }
 
     /// <summary>
+    /// Verifies that when multiple anchors share the exact same timestamp, 
+    /// the sequence uses Id as a deterministic secondary sort key during validation.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_SortDeterministically_WhenAnchorsHaveEqualTimestamp()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var sameTimestamp = DateTime.UtcNow;
+
+        var id1 = Guid.Parse("00000000-0000-0000-0000-000000000001");
+        var id2 = Guid.Parse("00000000-0000-0000-0000-000000000002");
+
+        // PeriodStart anchor with smaller Guid
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { Id = id1, MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = sameTimestamp }
+        };
+
+        // StoppageStart candidate with larger Guid arriving with same timestamp
+        var command = new CreateTimeAnchorCommand(
+            Id: id2,
+            MatchId: matchId,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.StoppageStart,
+            Timestamp: sameTimestamp);
+
+        var createdAnchor = command.ToModel();
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdAnchor);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        result.Should().Be(command.Id);
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="CreateTimeAnchorCommand"/> with explicit Id and Timestamp.
     /// </summary>
     /// <param name="type">The type of anchor to create.</param>

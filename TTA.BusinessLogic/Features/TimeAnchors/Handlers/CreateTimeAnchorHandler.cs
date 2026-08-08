@@ -55,11 +55,12 @@ public class CreateTimeAnchorHandler(
             throw new ConflictException($"Time anchor with ID {request.Id} already exists with different parameters.");
         }
 
-        // Include candidate anchor, exclude any existing record with same ID, and order chronologically
+        // Include candidate anchor, exclude any existing record with same ID, and order chronologically with deterministic tie-breaker
         var periodAnchors = existingAnchors
             .Where(a => a.PeriodNumber == request.PeriodNumber && a.Id != request.Id)
             .Append(normalizedModel)
             .OrderBy(a => a.Timestamp)
+            .ThenBy(a => a.Id)
             .ToList();
 
         ValidateSequence(periodAnchors);
