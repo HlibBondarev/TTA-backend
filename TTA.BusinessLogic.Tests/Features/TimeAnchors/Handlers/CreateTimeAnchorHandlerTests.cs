@@ -193,6 +193,45 @@ public class CreateTimeAnchorHandlerTests
     }
 
     /// <summary>
+    /// Verifies that attempting to create an anchor with an existing ID but a different Type or PeriodNumber throws a <see cref="ConflictException"/>.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_ConflictException_When_ExistingAnchorHasDifferentParameters()
+    {
+        // Arrange
+        var anchorId = Guid.NewGuid();
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { Id = anchorId, MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow }
+        };
+
+        var command = new CreateTimeAnchorCommand(
+            Id: anchorId,
+            MatchId: matchId,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodEnd,
+            Timestamp: DateTime.UtcNow.AddMinutes(5));
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage($"Time anchor with ID {anchorId} already exists with different parameters.");
+    }
+
+    /// <summary>
     /// Verifies that the handler throws a <see cref="NotFoundException"/> when the Match cannot be found.
     /// </summary>
     [Fact]

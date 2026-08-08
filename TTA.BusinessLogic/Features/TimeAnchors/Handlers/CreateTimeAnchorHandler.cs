@@ -42,8 +42,15 @@ public class CreateTimeAnchorHandler(
         _ = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken)
             ?? throw new NotFoundException($"Match with ID {request.MatchId} was not found.");
 
-        // 2. Logical sequence validation (exclude the anchor itself if being replayed/updated)
+        // 2. Logical sequence and idempotency validation
         var existingAnchors = await _timeAnchorRepository.GetMatchAnchorsAsync(request.MatchId, cancellationToken);
+        var existingAnchor = existingAnchors.FirstOrDefault(a => a.Id == request.Id);
+
+        if (existingAnchor != null && (existingAnchor.Type != request.Type || existingAnchor.PeriodNumber != request.PeriodNumber))
+        {
+            throw new ConflictException($"Time anchor with ID {request.Id} already exists with different parameters.");
+        }
+
         var periodAnchors = existingAnchors
             .Where(a => a.PeriodNumber == request.PeriodNumber && a.Id != request.Id)
             .OrderBy(a => a.Timestamp)
