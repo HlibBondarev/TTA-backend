@@ -87,6 +87,51 @@ public class CreateTimeAnchorHandlerTests
     }
 
     /// <summary>
+    /// Verifies that handling the same command twice is idempotent and does not trigger sequence conflict errors.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_BeIdempotent_WhenSameCommandIsHandledTwice()
+    {
+        // Arrange
+        var command = CreateCommand(TimeAnchorType.PeriodStart);
+        var match = new Match { Id = command.MatchId };
+        var createdAnchor = new TimeAnchor
+        {
+            Id = command.Id,
+            MatchId = command.MatchId,
+            PeriodNumber = command.PeriodNumber,
+            Type = command.Type,
+            Timestamp = command.Timestamp
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .SetupSequence(r => r.GetMatchAnchorsAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([])
+            .ReturnsAsync([createdAnchor]);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdAnchor);
+
+        // Act
+        var firstResult = await _handler.Handle(command, CancellationToken.None);
+        var secondResult = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        firstResult.Should().Be(command.Id);
+        secondResult.Should().Be(command.Id);
+
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(
+            It.Is<TimeAnchor>(a => a.Id == command.Id),
+            It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    /// <summary>
     /// Verifies that the handler throws a <see cref="NotFoundException"/> when the Match cannot be found.
     /// </summary>
     [Fact]
@@ -119,7 +164,7 @@ public class CreateTimeAnchorHandlerTests
 
         var existingAnchors = new List<TimeAnchor>
         {
-            new() { PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow }
+            new() { Id = Guid.NewGuid(), PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow }
         };
 
         _matchRepositoryMock
@@ -178,8 +223,8 @@ public class CreateTimeAnchorHandlerTests
 
         var existingAnchors = new List<TimeAnchor>
         {
-            new() { PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow.AddMinutes(-10) },
-            new() { PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.StoppageStart, Timestamp = DateTime.UtcNow }
+            new() { Id = Guid.NewGuid(), PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow.AddMinutes(-10) },
+            new() { Id = Guid.NewGuid(), PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.StoppageStart, Timestamp = DateTime.UtcNow }
         };
 
         _matchRepositoryMock

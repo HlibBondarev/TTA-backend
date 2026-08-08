@@ -42,10 +42,10 @@ public class CreateTimeAnchorHandler(
         _ = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken)
             ?? throw new NotFoundException($"Match with ID {request.MatchId} was not found.");
 
-        // 2. Logical sequence validation
+        // 2. Logical sequence validation (exclude the anchor itself if being replayed/updated)
         var existingAnchors = await _timeAnchorRepository.GetMatchAnchorsAsync(request.MatchId, cancellationToken);
         var periodAnchors = existingAnchors
-            .Where(a => a.PeriodNumber == request.PeriodNumber)
+            .Where(a => a.PeriodNumber == request.PeriodNumber && a.Id != request.Id)
             .OrderBy(a => a.Timestamp)
             .ToList();
 
