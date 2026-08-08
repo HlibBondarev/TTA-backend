@@ -83,44 +83,73 @@ public class CreateTimeAnchorHandler(
     /// <param name="anchors">The complete list of period anchors including candidate anchor, ordered by timestamp.</param>
     private static void ValidateSequence(List<TimeAnchor> anchors)
     {
-        bool isPeriodStarted = false;
-        bool isPeriodEnded = false;
-        bool isStoppageActive = false;
-
+        var state = new PeriodState();
         foreach (var anchor in anchors)
+        {
+            state.ApplyTransition(anchor);
+        }
+    }
+
+    /// <summary>
+    /// Encapsulates the period state and validates transitions for incoming time anchors.
+    /// </summary>
+    private sealed class PeriodState
+    {
+        public bool IsStarted { get; private set; }
+        public bool IsEnded { get; private set; }
+        public bool IsStoppageActive { get; private set; }
+
+        public void ApplyTransition(TimeAnchor anchor)
         {
             switch (anchor.Type)
             {
                 case TimeAnchorType.PeriodStart:
-                    if (isPeriodStarted)
-                        throw new ConflictException($"Period {anchor.PeriodNumber} already started.");
-                    isPeriodStarted = true;
+                    ApplyPeriodStart(anchor.PeriodNumber);
                     break;
-
                 case TimeAnchorType.PeriodEnd:
-                    if (!isPeriodStarted)
-                        throw new ConflictException($"Cannot end period {anchor.PeriodNumber} before it starts.");
-                    if (isPeriodEnded)
-                        throw new ConflictException($"Period {anchor.PeriodNumber} is already finished.");
-                    if (isStoppageActive)
-                        throw new ConflictException("Cannot end period: a stoppage is currently active.");
-                    isPeriodEnded = true;
+                    ApplyPeriodEnd(anchor.PeriodNumber);
                     break;
-
                 case TimeAnchorType.StoppageStart:
-                    if (!isPeriodStarted || isPeriodEnded)
-                        throw new ConflictException("Stoppage can only occur during an active period.");
-                    if (isStoppageActive)
-                        throw new ConflictException("Match is already stopped.");
-                    isStoppageActive = true;
+                    ApplyStoppageStart();
                     break;
-
                 case TimeAnchorType.StoppageEnd:
-                    if (!isStoppageActive)
-                        throw new ConflictException("Cannot end stoppage: Match was not stopped.");
-                    isStoppageActive = false;
+                    ApplyStoppageEnd();
                     break;
             }
+        }
+
+        private void ApplyPeriodStart(int periodNumber)
+        {
+            if (IsStarted)
+                throw new ConflictException($"Period {periodNumber} already started.");
+            IsStarted = true;
+        }
+
+        private void ApplyPeriodEnd(int periodNumber)
+        {
+            if (!IsStarted)
+                throw new ConflictException($"Cannot end period {periodNumber} before it starts.");
+            if (IsEnded)
+                throw new ConflictException($"Period {periodNumber} is already finished.");
+            if (IsStoppageActive)
+                throw new ConflictException("Cannot end period: a stoppage is currently active.");
+            IsEnded = true;
+        }
+
+        private void ApplyStoppageStart()
+        {
+            if (!IsStarted || IsEnded)
+                throw new ConflictException("Stoppage can only occur during an active period.");
+            if (IsStoppageActive)
+                throw new ConflictException("Match is already stopped.");
+            IsStoppageActive = true;
+        }
+
+        private void ApplyStoppageEnd()
+        {
+            if (!IsStoppageActive)
+                throw new ConflictException("Cannot end stoppage: Match was not stopped.");
+            IsStoppageActive = false;
         }
     }
 }
