@@ -27,6 +27,8 @@ public class CreateTimeAnchorRequestValidator : AbstractValidator<CreateTimeAnch
 
         RuleFor(x => x.Timestamp)
             .NotEmpty()
-            .WithMessage("Timestamp is required.");
+            .WithMessage("Timestamp is required.")
+            .LessThanOrEqualTo(_ => DateTime.UtcNow.AddMinutes(5))
+            .WithMessage("Timestamp cannot be in the future.");
     }
 }

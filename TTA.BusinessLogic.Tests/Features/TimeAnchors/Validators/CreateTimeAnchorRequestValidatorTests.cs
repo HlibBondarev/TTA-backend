@@ -22,7 +22,7 @@ public class CreateTimeAnchorRequestValidatorTests
     }
 
     /// <summary>
-    /// Verifies that the validator does not return any errors for a valid request.
+    /// Verifies that the validator does not return any errors for a valid request with current or past timestamp (offline sync).
     /// </summary>
     [Fact]
     public void Validator_Should_NotHaveErrors_When_RequestIsValid()
@@ -32,7 +32,7 @@ public class CreateTimeAnchorRequestValidatorTests
             Id: Guid.NewGuid(),
             PeriodNumber: 1,
             Type: TimeAnchorType.PeriodStart,
-            Timestamp: DateTime.UtcNow
+            Timestamp: DateTime.UtcNow.AddHours(-2) // Past timestamp simulating offline sync
         );
 
         // Act
@@ -130,5 +130,27 @@ public class CreateTimeAnchorRequestValidatorTests
         // Assert
         result.ShouldHaveValidationErrorFor(x => x.Timestamp)
             .WithErrorMessage("Timestamp is required.");
+    }
+
+    /// <summary>
+    /// Verifies that an error is returned when <see cref="CreateTimeAnchorRequest.Timestamp"/> is set too far in the future.
+    /// </summary>
+    [Fact]
+    public void Validator_Should_HaveError_When_TimestampIsInFuture()
+    {
+        // Arrange
+        var request = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: DateTime.UtcNow.AddMinutes(10)
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldHaveValidationErrorFor(x => x.Timestamp)
+            .WithErrorMessage("Timestamp cannot be in the future.");
     }
 }
