@@ -55,12 +55,14 @@ public class CreateTimeAnchorHandler(
             throw new ConflictException($"Time anchor with ID {request.Id} already exists with different parameters.");
         }
 
+        // Include candidate anchor, exclude any existing record with same ID, and order chronologically
         var periodAnchors = existingAnchors
             .Where(a => a.PeriodNumber == request.PeriodNumber && a.Id != request.Id)
+            .Append(normalizedModel)
             .OrderBy(a => a.Timestamp)
             .ToList();
 
-        ValidateSequence(request, periodAnchors);
+        ValidateSequence(periodAnchors);
 
         // 3. Persistence
         try
@@ -76,61 +78,49 @@ public class CreateTimeAnchorHandler(
     }
 
     /// <summary>
-    /// Validates that the new anchor follows the logical rules of the match state.
-    /// Routes the validation to specific helper methods based on the anchor type.
+    /// Validates that the full chronological sequence of anchors within the period follows state machine transition rules.
     /// </summary>
-    /// <param name="request">The command containing anchor payload data details.</param>
-    /// <param name="existing">The list dataset of existing anchors within the same period scope.</param>
-    private static void ValidateSequence(CreateTimeAnchorCommand request, List<TimeAnchor> existing)
+    /// <param name="anchors">The complete list of period anchors including candidate anchor, ordered by timestamp.</param>
+    private static void ValidateSequence(List<TimeAnchor> anchors)
     {
-        bool hasPeriodStarted = existing.Any(a => a.Type == TimeAnchorType.PeriodStart);
-        bool hasPeriodEnded = existing.Any(a => a.Type == TimeAnchorType.PeriodEnd);
-        bool isStoppageActive = existing.LastOrDefault()?.Type == TimeAnchorType.StoppageStart;
+        bool isPeriodStarted = false;
+        bool isPeriodEnded = false;
+        bool isStoppageActive = false;
 
-        switch (request.Type)
+        foreach (var anchor in anchors)
         {
-            case TimeAnchorType.PeriodStart:
-                ValidatePeriodStart(request.PeriodNumber, hasPeriodStarted);
-                break;
-            case TimeAnchorType.PeriodEnd:
-                ValidatePeriodEnd(request.PeriodNumber, hasPeriodStarted, hasPeriodEnded, isStoppageActive);
-                break;
-            case TimeAnchorType.StoppageStart:
-                ValidateStoppageStart(hasPeriodStarted, hasPeriodEnded, isStoppageActive);
-                break;
-            case TimeAnchorType.StoppageEnd:
-                ValidateStoppageEnd(isStoppageActive);
-                break;
+            switch (anchor.Type)
+            {
+                case TimeAnchorType.PeriodStart:
+                    if (isPeriodStarted)
+                        throw new ConflictException($"Period {anchor.PeriodNumber} already started.");
+                    isPeriodStarted = true;
+                    break;
+
+                case TimeAnchorType.PeriodEnd:
+                    if (!isPeriodStarted)
+                        throw new ConflictException($"Cannot end period {anchor.PeriodNumber} before it starts.");
+                    if (isPeriodEnded)
+                        throw new ConflictException($"Period {anchor.PeriodNumber} is already finished.");
+                    if (isStoppageActive)
+                        throw new ConflictException("Cannot end period: a stoppage is currently active.");
+                    isPeriodEnded = true;
+                    break;
+
+                case TimeAnchorType.StoppageStart:
+                    if (!isPeriodStarted || isPeriodEnded)
+                        throw new ConflictException("Stoppage can only occur during an active period.");
+                    if (isStoppageActive)
+                        throw new ConflictException("Match is already stopped.");
+                    isStoppageActive = true;
+                    break;
+
+                case TimeAnchorType.StoppageEnd:
+                    if (!isStoppageActive)
+                        throw new ConflictException("Cannot end stoppage: Match was not stopped.");
+                    isStoppageActive = false;
+                    break;
+            }
         }
-    }
-
-    private static void ValidatePeriodStart(int periodNumber, bool hasPeriodStarted)
-    {
-        if (hasPeriodStarted)
-            throw new ConflictException($"Period {periodNumber} already started.");
-    }
-
-    private static void ValidatePeriodEnd(int periodNumber, bool hasPeriodStarted, bool hasPeriodEnded, bool isStoppageActive)
-    {
-        if (!hasPeriodStarted)
-            throw new ConflictException($"Cannot end period {periodNumber} before it starts.");
-        if (hasPeriodEnded)
-            throw new ConflictException($"Period {periodNumber} is already finished.");
-        if (isStoppageActive)
-            throw new ConflictException("Cannot end period: a stoppage is currently active.");
-    }
-
-    private static void ValidateStoppageStart(bool hasPeriodStarted, bool hasPeriodEnded, bool isStoppageActive)
-    {
-        if (!hasPeriodStarted || hasPeriodEnded)
-            throw new ConflictException("Stoppage can only occur during an active period.");
-        if (isStoppageActive)
-            throw new ConflictException("Match is already stopped.");
-    }
-
-    private static void ValidateStoppageEnd(bool isStoppageActive)
-    {
-        if (!isStoppageActive)
-            throw new ConflictException("Cannot end stoppage: Match was not stopped.");
     }
 }

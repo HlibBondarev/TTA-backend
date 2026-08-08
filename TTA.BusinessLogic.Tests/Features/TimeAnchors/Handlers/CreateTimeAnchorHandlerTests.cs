@@ -416,6 +416,95 @@ public class CreateTimeAnchorHandlerTests
     }
 
     /// <summary>
+    /// Verifies that a valid late-arriving anchor (e.g. StoppageEnd synced after StoppageStart) is accepted
+    /// when inserted into its correct chronological position in the sequence.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_AcceptValidLateArrivingAnchor_WhenChronologicalSequenceIsValid()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime },
+            new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.StoppageStart, Timestamp = baseTime.AddMinutes(5) }
+        };
+
+        // Candidate anchor: StoppageEnd arriving late with timestamp between StoppageStart and potential PeriodEnd
+        var command = new CreateTimeAnchorCommand(
+            Id: Guid.NewGuid(),
+            MatchId: matchId,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.StoppageEnd,
+            Timestamp: baseTime.AddMinutes(7));
+
+        var createdAnchor = command.ToModel();
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdAnchor);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        result.Should().Be(command.Id);
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that a backdated invalid anchor (e.g. StoppageStart with timestamp prior to PeriodStart)
+    /// is rejected with a ConflictException when chronological sequence rules are evaluated.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_RejectBackdatedInvalidAnchor_WhenSequenceIsViolated()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime }
+        };
+
+        // Candidate anchor: StoppageStart with backdated timestamp earlier than PeriodStart
+        var command = new CreateTimeAnchorCommand(
+            Id: Guid.NewGuid(),
+            MatchId: matchId,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.StoppageStart,
+            Timestamp: baseTime.AddMinutes(-5));
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("Stoppage can only occur during an active period.");
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="CreateTimeAnchorCommand"/> with explicit Id and Timestamp.
     /// </summary>
     /// <param name="type">The type of anchor to create.</param>
