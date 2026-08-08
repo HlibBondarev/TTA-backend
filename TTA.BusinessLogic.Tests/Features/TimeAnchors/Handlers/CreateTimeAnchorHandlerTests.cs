@@ -505,6 +505,125 @@ public class CreateTimeAnchorHandlerTests
     }
 
     /// <summary>
+    /// Verifies that a <see cref="ConflictException"/> is thrown when attempting to end a period that is already finished.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_ConflictException_When_PeriodAlreadyFinished()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime },
+            new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodEnd, Timestamp = baseTime.AddMinutes(10) }
+        };
+
+        var command = new CreateTimeAnchorCommand(
+            Id: Guid.NewGuid(),
+            MatchId: matchId,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodEnd,
+            Timestamp: baseTime.AddMinutes(12));
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage($"Period {command.PeriodNumber} is already finished.");
+    }
+
+    /// <summary>
+    /// Verifies that a <see cref="ConflictException"/> is thrown when attempting to end a period while a stoppage is currently active.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_ConflictException_When_EndingPeriodWhileStoppageIsActive()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime },
+            new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.StoppageStart, Timestamp = baseTime.AddMinutes(5) }
+        };
+
+        var command = new CreateTimeAnchorCommand(
+            Id: Guid.NewGuid(),
+            MatchId: matchId,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodEnd,
+            Timestamp: baseTime.AddMinutes(10));
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("Cannot end period: a stoppage is currently active.");
+    }
+
+    /// <summary>
+    /// Verifies that a <see cref="ConflictException"/> is thrown when attempting to end a stoppage when no stoppage is active.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_ConflictException_When_EndingStoppageWithoutActiveStoppage()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime }
+        };
+
+        var command = new CreateTimeAnchorCommand(
+            Id: Guid.NewGuid(),
+            MatchId: matchId,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.StoppageEnd,
+            Timestamp: baseTime.AddMinutes(5));
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("Cannot end stoppage: Match was not stopped.");
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="CreateTimeAnchorCommand"/> with explicit Id and Timestamp.
     /// </summary>
     /// <param name="type">The type of anchor to create.</param>
