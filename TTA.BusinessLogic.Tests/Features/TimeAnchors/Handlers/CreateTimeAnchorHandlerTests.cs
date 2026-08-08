@@ -87,6 +87,67 @@ public class CreateTimeAnchorHandlerTests
     }
 
     /// <summary>
+    /// Verifies that timestamps with different <see cref="DateTimeKind"/> values (Unspecified, Local, Utc) 
+    /// are correctly normalized to UTC when mapped to the domain model during anchor creation.
+    /// </summary>
+    [Theory]
+    [InlineData(DateTimeKind.Unspecified)]
+    [InlineData(DateTimeKind.Local)]
+    [InlineData(DateTimeKind.Utc)]
+    public async Task Handle_Should_NormalizeTimestampToUtc_ForAnyDateTimeKind(DateTimeKind kind)
+    {
+        // Arrange
+        var rawTimestamp = new DateTime(2026, 8, 8, 12, 0, 0, kind);
+        var command = new CreateTimeAnchorCommand(
+            Id: Guid.NewGuid(),
+            MatchId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: rawTimestamp);
+
+        var match = new Match { Id = command.MatchId };
+        var expectedUtcTimestamp = kind switch
+        {
+            DateTimeKind.Unspecified => DateTime.SpecifyKind(rawTimestamp, DateTimeKind.Utc),
+            _ => rawTimestamp.ToUniversalTime()
+        };
+
+        var createdAnchor = new TimeAnchor
+        {
+            Id = command.Id,
+            MatchId = command.MatchId,
+            PeriodNumber = command.PeriodNumber,
+            Type = command.Type,
+            Timestamp = expectedUtcTimestamp
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(command.MatchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdAnchor);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        result.Should().Be(command.Id);
+
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(
+            It.Is<TimeAnchor>(a =>
+                a.Timestamp.Kind == DateTimeKind.Utc &&
+                a.Timestamp == expectedUtcTimestamp),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
     /// Verifies that handling the same command twice is idempotent and does not trigger sequence conflict errors.
     /// </summary>
     [Fact]
