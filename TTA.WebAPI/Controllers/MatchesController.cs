@@ -163,13 +163,14 @@ public class MatchesController(
     public async Task<IActionResult> CopyFromRoster(
         [FromRoute] Guid matchId,
         [FromRoute] Guid teamId,
-        [FromBody] CopyTeamRosterToMatchLineupRequest request)
+        [FromBody] CopyTeamRosterToMatchLineupRequest request,
+        CancellationToken cancellationToken)
     {
         _logger.LogInformation("Requested bulk copy of {Count} selected players for Team {TeamId} into Match {MatchId}.",
             request.PlayerRosterIds.Count(), teamId, matchId);
 
         // Verify that the team is actually a participant in this specific match
-        var participationError = await ValidateTeamParticipation(matchId, teamId);
+        var participationError = await ValidateTeamParticipation(matchId, teamId, cancellationToken);
         if (participationError != null) return participationError;
 
         // Validate tournament ownership before proceeding with the operation
@@ -180,7 +181,7 @@ public class MatchesController(
         var command = request.ToCommand(matchId, teamId);
 
         // Execute the command via Mediator
-        var result = await _mediator.Send(command);
+        var result = await _mediator.Send(command, cancellationToken);
 
         return Ok(result);
     }
@@ -208,17 +209,21 @@ public class MatchesController(
     public async Task<IActionResult> CopyFromRosterByTeam(
         [FromRoute] Guid matchId,
         [FromRoute] Guid teamId,
-        [FromBody] CopyTeamRosterToMatchLineupRequest request)
+        [FromBody] CopyTeamRosterToMatchLineupRequest request,
+        CancellationToken cancellationToken)
     {
         _logger.LogInformation("Team Editor requested copy of {Count} players for Team {TeamId} in Match {MatchId}.",
             request.PlayerRosterIds.Count(), teamId, matchId);
 
         // Verify that the team is actually a participant in this specific match
-        var participationError = await ValidateTeamParticipation(matchId, teamId);
+        var participationError = await ValidateTeamParticipation(matchId, teamId, cancellationToken);
         if (participationError != null) return participationError;
 
+        // Map the request DTO to the business logic command
         var command = request.ToCommand(matchId, teamId);
-        var result = await _mediator.Send(command);
+
+        // Execute the command via Mediator
+        var result = await _mediator.Send(command, cancellationToken);
 
         return Ok(result);
     }
@@ -1206,9 +1211,9 @@ public class MatchesController(
     /// <summary>
     /// Validates whether the specified team is a participant in the match.
     /// </summary>
-    private async Task<IActionResult?> ValidateTeamParticipation(Guid matchId, Guid teamId)
+    private async Task<IActionResult?> ValidateTeamParticipation(Guid matchId, Guid teamId, CancellationToken cancellationToken = default)
     {
-        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId));
+        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId), cancellationToken);
         if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
         {
             _logger.LogWarning("Access denied: Team {TeamId} is not part of Match {MatchId}.", teamId, matchId);
