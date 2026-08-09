@@ -759,7 +759,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var matchId = Guid.NewGuid();
         await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "TA-03");
 
-        var request = new CreateTimeAnchorRequest(1, TimeAnchorType.PeriodStart);
+        var anchorId = Guid.NewGuid();
+        var request = new CreateTimeAnchorRequest(anchorId, 1, TimeAnchorType.PeriodStart, DateTime.UtcNow);
 
         // Act
         var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/anchors", request);
@@ -768,7 +769,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
         var returnedId = await response.Content.ReadFromJsonAsync<Guid>();
-        returnedId.Should().NotBeEmpty();
+        returnedId.Should().Be(anchorId);
     }
 
     /// <summary>

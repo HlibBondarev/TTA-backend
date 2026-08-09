@@ -1,7 +1,6 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using TTA.BusinessLogic.Features.PlayerPresences.Notifications;
 using TTA.BusinessLogic.Features.TimeAnchors.Commands;
 using TTA.Common.Exceptions;
 using TTA.DataAccess.Enums;
@@ -13,26 +12,21 @@ namespace TTA.BusinessLogic.Features.TimeAnchors.Handlers;
 /// <summary>
 /// Handles the creation of a new time anchor with match validation.
 /// Relies on GlobalExceptionHandler for unhandled exceptions.
-/// Implements a compensating action pattern to rollback persistence if domain event publishing fails.
 /// </summary>
 /// <param name="timeAnchorRepository">The repository for time anchor data operations.</param>
 /// <param name="matchRepository">The repository for validating match existence.</param>
-/// <param name="mediator">The mediator instance used for publishing domain notification events.</param>
 /// <param name="logger">The logger instance for tracking execution flow.</param>
 public class CreateTimeAnchorHandler(
     ITimeAnchorRepository timeAnchorRepository,
     IMatchRepository matchRepository,
-    IMediator mediator,
     ILogger<CreateTimeAnchorHandler> logger) : IRequestHandler<CreateTimeAnchorCommand, Guid>
 {
     private readonly ITimeAnchorRepository _timeAnchorRepository = timeAnchorRepository;
     private readonly IMatchRepository _matchRepository = matchRepository;
-    private readonly IMediator _mediator = mediator;
     private readonly ILogger<CreateTimeAnchorHandler> _logger = logger;
 
     /// <summary>
     /// Validates the match existence and persists the new time anchor record.
-    /// Rolls back the persisted anchor via deletion if downstream period closing notification fails.
     /// </summary>
     /// <param name="request">The command containing anchor details and match context.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
@@ -41,64 +35,40 @@ public class CreateTimeAnchorHandler(
     /// <exception cref="ConflictException">Thrown when a database constraint or business rule is violated.</exception>
     public async Task<Guid> Handle(CreateTimeAnchorCommand request, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Attempting to create TimeAnchor {Type} for Match {MatchId}, Period {Period}.",
-            request.Type, request.MatchId, request.PeriodNumber);
+        _logger.LogInformation("Attempting to create TimeAnchor {Id} ({Type}) for Match {MatchId}, Period {Period}.",
+            request.Id, request.Type, request.MatchId, request.PeriodNumber);
 
         // 1. Basic existence check
         _ = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken)
             ?? throw new NotFoundException($"Match with ID {request.MatchId} was not found.");
 
-        // 2. Logical sequence validation
+        // 2. Logical sequence and idempotency validation
         var existingAnchors = await _timeAnchorRepository.GetMatchAnchorsAsync(request.MatchId, cancellationToken);
+        var existingAnchor = existingAnchors.FirstOrDefault(a => a.Id == request.Id);
+        var normalizedModel = request.ToModel();
+
+        if (existingAnchor != null &&
+            (existingAnchor.Type != request.Type ||
+             existingAnchor.PeriodNumber != request.PeriodNumber ||
+             existingAnchor.Timestamp != normalizedModel.Timestamp))
+        {
+            throw new ConflictException($"Time anchor with ID {request.Id} already exists with different parameters.");
+        }
+
+        // Include candidate anchor, exclude any existing record with same ID, and order chronologically with deterministic tie-breaker
         var periodAnchors = existingAnchors
-            .Where(a => a.PeriodNumber == request.PeriodNumber)
+            .Where(a => a.PeriodNumber == request.PeriodNumber && a.Id != request.Id)
+            .Append(normalizedModel)
             .OrderBy(a => a.Timestamp)
+            .ThenBy(a => a.Id)
             .ToList();
 
-        ValidateSequence(request, periodAnchors);
+        ValidateSequence(periodAnchors);
 
         // 3. Persistence
-        var model = request.ToModel();
         try
         {
-            var result = await _timeAnchorRepository.UpsertAsync(model, cancellationToken);
-
-            // 4. Domain Trigger: Automatically close active player presence sessions if period finishes
-            if (model.Type == TimeAnchorType.PeriodEnd)
-            {
-                try
-                {
-                    await _mediator.Publish(new PeriodEndedNotification(model.MatchId, model.PeriodNumber, model.Timestamp), cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    // 1. Let cancellation propagate naturally without attempting rollback,
-                    // as the request was intentionally aborted by the client/system.
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    // 2. Use CancellationToken.None to guarantee the rollback executes even if the parent context was cancelled
-                    bool rollbackSuccess = await _timeAnchorRepository.DeleteAsync(result.Id, CancellationToken.None);
-
-                    // 3 & 4. Evaluate rollback success and throw accordingly. 
-                    // No direct logging here to strictly comply with SonarCloud S2139 (double-logging prevention),
-                    // as the GlobalExceptionHandler will log these descriptive exceptions along with the inner exception.
-                    if (rollbackSuccess)
-                    {
-                        throw new InvalidOperationException(
-                            $"Failed to publish PeriodEndedNotification for Match {model.MatchId}, Period {model.PeriodNumber}. Compensating rollback executed successfully for Anchor {result.Id}.",
-                            ex);
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException(
-                            $"Failed to publish PeriodEndedNotification for Match {model.MatchId}, Period {model.PeriodNumber}. WARNING: Compensating rollback FAILED for Anchor {result.Id}. Orphaned record may exist.",
-                            ex);
-                    }
-                }
-            }
-
+            var result = await _timeAnchorRepository.UpsertAsync(normalizedModel, cancellationToken);
             return result.Id;
         }
         catch (PostgresException ex) when (ex.SqlState == "P0001") // Custom PL/pgSQL exception for business rules
@@ -109,83 +79,78 @@ public class CreateTimeAnchorHandler(
     }
 
     /// <summary>
-    /// Validates that the new anchor follows the logical rules of the match state.
-    /// Routes the validation to specific helper methods based on the anchor type.
+    /// Validates that the full chronological sequence of anchors within the period follows state machine transition rules.
     /// </summary>
-    /// <param name="request">The command containing anchor payload data details.</param>
-    /// <param name="existing">The list dataset of existing anchors within the same period scope.</param>
-    private static void ValidateSequence(CreateTimeAnchorCommand request, List<TimeAnchor> existing)
+    /// <param name="anchors">The complete list of period anchors including candidate anchor, ordered by timestamp.</param>
+    private static void ValidateSequence(List<TimeAnchor> anchors)
     {
-        bool hasPeriodStarted = existing.Any(a => a.Type == TimeAnchorType.PeriodStart);
-        bool hasPeriodEnded = existing.Any(a => a.Type == TimeAnchorType.PeriodEnd);
-        bool isStoppageActive = existing.LastOrDefault()?.Type == TimeAnchorType.StoppageStart;
-
-        switch (request.Type)
+        var state = new PeriodState();
+        foreach (var anchor in anchors)
         {
-            case TimeAnchorType.PeriodStart:
-                ValidatePeriodStart(request.PeriodNumber, hasPeriodStarted);
-                break;
-            case TimeAnchorType.PeriodEnd:
-                ValidatePeriodEnd(request.PeriodNumber, hasPeriodStarted, hasPeriodEnded, isStoppageActive);
-                break;
-            case TimeAnchorType.StoppageStart:
-                ValidateStoppageStart(hasPeriodStarted, hasPeriodEnded, isStoppageActive);
-                break;
-            case TimeAnchorType.StoppageEnd:
-                ValidateStoppageEnd(isStoppageActive);
-                break;
+            state.ApplyTransition(anchor);
         }
     }
 
     /// <summary>
-    /// Enforces validation constraints for a PeriodStart anchor type.
+    /// Encapsulates the period state and validates transitions for incoming time anchors.
     /// </summary>
-    /// <param name="periodNumber">The target period identifier number sequence context.</param>
-    /// <param name="hasPeriodStarted">Indicates whether a start anchor already exists for the period layout.</param>
-    private static void ValidatePeriodStart(int periodNumber, bool hasPeriodStarted)
+    private sealed class PeriodState
     {
-        if (hasPeriodStarted)
-            throw new ConflictException($"Period {periodNumber} already started.");
-    }
+        public bool IsStarted { get; private set; }
+        public bool IsEnded { get; private set; }
+        public bool IsStoppageActive { get; private set; }
 
-    /// <summary>
-    /// Enforces validation constraints for a PeriodEnd anchor type.
-    /// </summary>
-    /// <param name="periodNumber">The target period identifier number sequence context.</param>
-    /// <param name="hasPeriodStarted">Indicates whether a start anchor exists for the period layout.</param>
-    /// <param name="hasPeriodEnded">Indicates whether an end anchor already exists for the period layout.</param>
-    /// <param name="isStoppageActive">Indicates whether a match stoppage section remains unclosed.</param>
-    private static void ValidatePeriodEnd(int periodNumber, bool hasPeriodStarted, bool hasPeriodEnded, bool isStoppageActive)
-    {
-        if (!hasPeriodStarted)
-            throw new ConflictException($"Cannot end period {periodNumber} before it starts.");
-        if (hasPeriodEnded)
-            throw new ConflictException($"Period {periodNumber} is already finished.");
-        if (isStoppageActive)
-            throw new ConflictException("Cannot end period: a stoppage is currently active.");
-    }
+        public void ApplyTransition(TimeAnchor anchor)
+        {
+            switch (anchor.Type)
+            {
+                case TimeAnchorType.PeriodStart:
+                    ApplyPeriodStart(anchor.PeriodNumber);
+                    break;
+                case TimeAnchorType.PeriodEnd:
+                    ApplyPeriodEnd(anchor.PeriodNumber);
+                    break;
+                case TimeAnchorType.StoppageStart:
+                    ApplyStoppageStart();
+                    break;
+                case TimeAnchorType.StoppageEnd:
+                    ApplyStoppageEnd();
+                    break;
+            }
+        }
 
-    /// <summary>
-    /// Enforces validation constraints for a StoppageStart anchor type.
-    /// </summary>
-    /// <param name="hasPeriodStarted">Indicates whether a start anchor exists for the period layout.</param>
-    /// <param name="hasPeriodEnded">Indicates whether an end anchor exists for the period layout.</param>
-    /// <param name="isStoppageActive">Indicates whether a stoppage block is currently open.</param>
-    private static void ValidateStoppageStart(bool hasPeriodStarted, bool hasPeriodEnded, bool isStoppageActive)
-    {
-        if (!hasPeriodStarted || hasPeriodEnded)
-            throw new ConflictException("Stoppage can only occur during an active period.");
-        if (isStoppageActive)
-            throw new ConflictException("Match is already stopped.");
-    }
+        private void ApplyPeriodStart(int periodNumber)
+        {
+            if (IsStarted)
+                throw new ConflictException($"Period {periodNumber} already started.");
+            IsStarted = true;
+        }
 
-    /// <summary>
-    /// Enforces validation constraints for a StoppageEnd anchor type.
-    /// </summary>
-    /// <param name="isStoppageActive">Indicates whether a match stoppage section is open.</param>
-    private static void ValidateStoppageEnd(bool isStoppageActive)
-    {
-        if (!isStoppageActive)
-            throw new ConflictException("Cannot end stoppage: Match was not stopped.");
+        private void ApplyPeriodEnd(int periodNumber)
+        {
+            if (!IsStarted)
+                throw new ConflictException($"Cannot end period {periodNumber} before it starts.");
+            if (IsEnded)
+                throw new ConflictException($"Period {periodNumber} is already finished.");
+            if (IsStoppageActive)
+                throw new ConflictException("Cannot end period: a stoppage is currently active.");
+            IsEnded = true;
+        }
+
+        private void ApplyStoppageStart()
+        {
+            if (!IsStarted || IsEnded)
+                throw new ConflictException("Stoppage can only occur during an active period.");
+            if (IsStoppageActive)
+                throw new ConflictException("Match is already stopped.");
+            IsStoppageActive = true;
+        }
+
+        private void ApplyStoppageEnd()
+        {
+            if (!IsStoppageActive)
+                throw new ConflictException("Cannot end stoppage: Match was not stopped.");
+            IsStoppageActive = false;
+        }
     }
 }
