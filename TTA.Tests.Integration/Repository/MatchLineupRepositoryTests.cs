@@ -87,7 +87,6 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
 
     #region Retrieval Tests
 
-
     /// <summary>
     /// Verifies that <see cref="MatchLineupRepository.GetTeamMatchLineupAsync"/> retrieves lineup projections
     /// belonging exclusively to the requested team, properly filtering out lineup entries of other teams in the match.
@@ -209,6 +208,33 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
         // Assert
         result.Should().NotBeNull();
         result!.Id.Should().Be(id);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchLineupRepository.GetMatchLineupsAsync"/> retrieves 
+    /// all lineup entries across all teams for the specified match.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchLineupsAsync_ShouldReturnAllLineups_ForMatch()
+    {
+        // Arrange
+        var (matchId, playerRosterId, positionId) = await SeedMatchLineupRequirementsAsync();
+
+        await _repository.UpsertLineupItemAsync(new MatchLineup
+        {
+            Id = Guid.NewGuid(),
+            MatchId = matchId,
+            PlayerRosterId = playerRosterId,
+            Number = 10,
+            PositionId = positionId
+        });
+
+        // Act
+        var lineups = (await _repository.GetMatchLineupsAsync(matchId)).ToList();
+
+        // Assert
+        lineups.Should().NotBeEmpty();
+        lineups.Should().OnlyContain(l => l.MatchId == matchId);
     }
 
     #endregion

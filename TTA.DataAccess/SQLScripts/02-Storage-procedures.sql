@@ -1288,6 +1288,37 @@ BEGIN
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
+ * Retrieves the full match lineup protocol for all teams in a match with player details.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_lineups(
+    p_match_id UUID
+)
+RETURNS TABLE (
+    id UUID,
+    matchid UUID,
+    teamid UUID,
+    playerrosterid UUID,
+    firstname VARCHAR,
+    lastname VARCHAR,
+    number INT,
+    positionid UUID,
+    positionname VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        ml.id, ml.matchid, pr.teamid, ml.playerrosterid,
+        p.firstname, p.lastname, ml.number,
+        ml.positionid, ppd.name
+    FROM public.matchlineups ml
+    JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    JOIN public.players p ON pr.playerid = p.id
+    JOIN public.playerpositiondefinitions ppd ON ml.positionid = ppd.id
+    WHERE ml.matchid = p_match_id
+    ORDER BY ml.number;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
  * Retrieves the match lineup for a specific team with player and position details.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_team_match_lineup(

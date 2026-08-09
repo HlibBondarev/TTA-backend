@@ -317,6 +317,12 @@ public static class SqlStatements
             );";
 
         /// <summary>
+        /// Retrieves the complete protocol (lineups for all teams) in a match.
+        /// </summary>
+        public const string GetMatchLineups =
+            "SELECT * FROM public.get_match_lineups(@p_match_id);";
+
+        /// <summary>
         /// Retrieves the protocol (lineup) for a specific team in a match.
         /// </summary>
         public const string GetTeamMatchLineup =
