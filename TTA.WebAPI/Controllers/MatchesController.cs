@@ -971,12 +971,14 @@ public class MatchesController(
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user lacks edit rights for the match.</response>
     /// <response code="404">If the match was not found.</response>
+    /// <response code="409">If a business rule is violated (e.g., TimeOut is earlier than active session TimeIn).</response>
     [HttpPut("{matchId}/presence/terminate")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> TerminatePeriodPresence(
         [FromRoute] Guid matchId,
         [FromBody] TerminatePresenceRequest request,

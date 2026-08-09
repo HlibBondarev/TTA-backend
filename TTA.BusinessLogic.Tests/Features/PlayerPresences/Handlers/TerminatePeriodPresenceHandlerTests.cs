@@ -1,6 +1,7 @@
 ﻿using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
+using Npgsql;
 using TTA.BusinessLogic.Features.PlayerPresences.Commands;
 using TTA.BusinessLogic.Features.PlayerPresences.Handlers;
 using TTA.Common.Exceptions;
@@ -135,5 +136,45 @@ public class TerminatePeriodPresenceHandlerTests
         _playerPresenceRepositoryMock.Verify(r => r.CloseActivePresencesAsync(
             It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task Handle_Should_ThrowConflictException_On_Postgres_BusinessRule_Violation()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var lineupId = Guid.NewGuid();
+        var command = new TerminatePeriodPresenceCommand(
+            MatchId: matchId,
+            PeriodNumber: 1,
+            PlayerLineupIds: new[] { lineupId },
+            TimeOut: DateTime.UtcNow);
+
+        var match = new Match { Id = matchId };
+        var validLineups = new List<MatchLineupProjection>
+        {
+            new(lineupId, matchId, Guid.NewGuid(), Guid.NewGuid(), "John", "Doe", 1, Guid.NewGuid(), "CF")
+        };
+
+        var pgException = new PostgresException("Custom DB validation error", "ERROR", "ERROR", "P0001");
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _matchLineupRepositoryMock
+            .Setup(r => r.GetMatchLineupsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(validLineups);
+
+        _playerPresenceRepositoryMock
+            .Setup(r => r.CloseActivePresencesAsync(
+                command.MatchId, command.PeriodNumber, command.TimeOut, command.PlayerLineupIds, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(pgException);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>();
     }
 }

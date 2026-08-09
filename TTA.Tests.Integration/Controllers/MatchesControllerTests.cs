@@ -1040,6 +1040,38 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
+    /// Verifies that <see cref="MatchesController.TerminatePeriodPresence"/> returns HTTP 409 Conflict
+    /// when the provided TimeOut timestamp is earlier than the active presence session's TimeIn timestamp.
+    /// </summary>
+    [Fact]
+    public async Task TerminatePeriodPresence_ShouldReturnConflict_WhenTimeOutIsBeforeTimeIn()
+    {
+        // Arrange
+        var context = await SetupPresenceMatchContextAsync(TestUserId);
+        var exactTimeIn = DateTime.UtcNow;
+        var invalidTimeOut = exactTimeIn.AddMinutes(-10); // TimeOut earlier than TimeIn
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein) VALUES (@id, @lineupId, 1, @timeIn)",
+                new { id = Guid.NewGuid(), lineupId = context.LineupId1, timeIn = exactTimeIn });
+        }
+
+        var request = new TerminatePresenceRequest(
+            PeriodNumber: 1,
+            PlayerLineupIds: new[] { context.LineupId1 },
+            TimeOut: invalidTimeOut
+        );
+
+        // Act
+        var response = await Client.PutAsJsonAsync($"{BaseUrl}/{context.MatchId}/presence/terminate", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    /// <summary>
     /// Verifies that <see cref="MatchesController.GetMatchPresence"/> returns HTTP 200 OK along with timeline history.
     /// </summary>
     [Fact]

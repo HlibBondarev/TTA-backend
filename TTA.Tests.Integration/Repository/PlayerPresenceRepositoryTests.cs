@@ -372,6 +372,36 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.CloseActivePresencesAsync"/> throws a <see cref="PostgresException"/>
+    /// with SQLSTATE P0001 when TimeOut is earlier than the TimeIn timestamp of any selected active presence.
+    /// </summary>
+    [Fact]
+    public async Task CloseActivePresencesAsync_ShouldThrowPostgresException_WhenTimeOutIsBeforeTimeIn()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var exactTimeIn = DateTime.UtcNow;
+        var invalidTimeOut = exactTimeIn.AddMinutes(-5); // TimeOut earlier than TimeIn
+        var presences = new List<(Guid Id, Guid LineupId)>
+        {
+            (Guid.NewGuid(), context.LineupId1)
+        };
+
+        await _repository.InitializePeriodPresenceAsync(1, exactTimeIn, presences);
+
+        // Act
+        var act = async () => await _repository.CloseActivePresencesAsync(
+            context.MatchId,
+            periodNumber: 1,
+            timeOut: invalidTimeOut,
+            playerLineupIds: new[] { context.LineupId1 });
+
+        // Assert
+        var exception = await act.Should().ThrowAsync<PostgresException>();
+        exception.Which.SqlState.Should().Be("P0001");
+    }
+
+    /// <summary>
     /// Verifies that <see cref="PlayerPresenceRepository.GetPlayersDirtyTimeByPeriodAsync"/> returns an empty collection
     /// when no player presence tracking records exist for the given match and team context.
     /// </summary>

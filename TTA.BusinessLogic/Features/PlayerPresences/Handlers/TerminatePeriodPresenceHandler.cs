@@ -1,5 +1,6 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using TTA.BusinessLogic.Features.PlayerPresences.Commands;
 using TTA.Common.Exceptions;
 using TTA.DataAccess.Repository.Api;
@@ -30,6 +31,7 @@ public class TerminatePeriodPresenceHandler(
     /// <param name="request">The command containing match, period, lineup scope, and time parameters.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <exception cref="NotFoundException">Thrown when the specified match or any player lineup ID does not exist for the match.</exception>
+    /// <exception cref="ConflictException">Thrown when a database constraint or business rule is violated.</exception>
     public async Task Handle(TerminatePeriodPresenceCommand request, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Attempting to terminate active player presences for Match {MatchId}, Period {Period}, Lineups count: {Count}.",
@@ -52,12 +54,20 @@ public class TerminatePeriodPresenceHandler(
         }
 
         // 3. Execute bulk update to set TimeOut for active presences matching target lineups
-        await _playerPresenceRepository.CloseActivePresencesAsync(
-            request.MatchId,
-            request.PeriodNumber,
-            request.TimeOut,
-            request.PlayerLineupIds,
-            cancellationToken);
+        try
+        {
+            await _playerPresenceRepository.CloseActivePresencesAsync(
+                request.MatchId,
+                request.PeriodNumber,
+                request.TimeOut,
+                request.PlayerLineupIds,
+                cancellationToken);
+        }
+        catch (PostgresException ex) when (ex.SqlState == "P0001") // Custom PL/pgSQL exception for business rules
+        {
+            _logger.LogWarning(ex, "Period presence termination failed due to database business rule: {Message}", ex.MessageText);
+            throw new ConflictException(ex.MessageText, ex);
+        }
 
         _logger.LogInformation("Successfully terminated active player presences for Match {MatchId}, Period {Period}.",
             request.MatchId, request.PeriodNumber);
