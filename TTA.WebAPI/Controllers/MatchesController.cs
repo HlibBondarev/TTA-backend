@@ -169,19 +169,12 @@ public class MatchesController(
             request.PlayerRosterIds.Count(), teamId, matchId);
 
         // Verify that the team is actually a participant in this specific match
-        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId));
-        if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
-        {
-            _logger.LogWarning("Access denied: Team {TeamId} is not part of Match {MatchId}.", teamId, matchId);
-            return BadRequest("The specified team is not a participant in this match.");
-        }
+        var participationError = await ValidateTeamParticipation(matchId, teamId);
+        if (participationError != null) return participationError;
 
         // Validate tournament ownership before proceeding with the operation
         var validationResult = await ValidateTournamentOwnership(matchId);
-        if (validationResult != null)
-        {
-            return validationResult;
-        }
+        if (validationResult != null) return validationResult;
 
         // Map the request DTO to the business logic command
         var command = request.ToCommand(matchId, teamId);
@@ -221,12 +214,8 @@ public class MatchesController(
             request.PlayerRosterIds.Count(), teamId, matchId);
 
         // Verify that the team is actually a participant in this specific match
-        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId));
-        if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
-        {
-            _logger.LogWarning("Access denied: Team {TeamId} is not part of Match {MatchId}.", teamId, matchId);
-            return BadRequest("The specified team is not a participant in this match.");
-        }
+        var participationError = await ValidateTeamParticipation(matchId, teamId);
+        if (participationError != null) return participationError;
 
         var command = request.ToCommand(matchId, teamId);
         var result = await _mediator.Send(command);
@@ -1212,6 +1201,21 @@ public class MatchesController(
         // If none of the conditions above are met -> Access Denied
         _logger.LogWarning("User {UserId} is not authorized to modify match {MatchId}.", userId, matchId);
         return Forbid();
+    }
+
+    /// <summary>
+    /// Validates whether the specified team is a participant in the match.
+    /// </summary>
+    private async Task<IActionResult?> ValidateTeamParticipation(Guid matchId, Guid teamId)
+    {
+        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId));
+        if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
+        {
+            _logger.LogWarning("Access denied: Team {TeamId} is not part of Match {MatchId}.", teamId, matchId);
+            return BadRequest("The specified team is not a participant in this match.");
+        }
+
+        return null;
     }
 
     #endregion
