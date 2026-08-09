@@ -1000,6 +1000,46 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
+    /// Verifies that <see cref="MatchesController.TerminatePeriodPresence"/> returns HTTP 204 No Content
+    /// and sets TimeOut on specified active player presences for the period.
+    /// </summary>
+    [Fact]
+    public async Task TerminatePeriodPresence_ShouldReturnNoContent_WhenRequestIsValidAndUserHasAccess()
+    {
+        // Arrange
+        var context = await SetupPresenceMatchContextAsync(TestUserId);
+        var timeOut = DateTime.UtcNow;
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein) VALUES (@id, @lineupId, 1, NOW() - INTERVAL '5 minutes')",
+                new { id = Guid.NewGuid(), lineupId = context.LineupId1 });
+        }
+
+        var request = new TerminatePresenceRequest(
+            PeriodNumber: 1,
+            PlayerLineupIds: new[] { context.LineupId1 },
+            TimeOut: timeOut
+        );
+
+        // Act
+        var response = await Client.PutAsJsonAsync($"{BaseUrl}/{context.MatchId}/presence/terminate", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var checkConn = Fixture.ConnectionFactory.CreateConnection();
+        var matchPresences = (await checkConn.QueryAsync<PlayerPresence>(
+            "SELECT id, matchlineupid, periodnumber, timein, timeout FROM public.playerpresences WHERE matchlineupid = @id1",
+            new { id1 = context.LineupId1 })).ToList();
+
+        matchPresences.Should().HaveCount(1);
+        matchPresences.First().TimeOut.Should().NotBeNull();
+        matchPresences.First().TimeOut!.Value.Should().BeCloseTo(timeOut, TimeSpan.FromMilliseconds(500));
+    }
+
+    /// <summary>
     /// Verifies that <see cref="MatchesController.GetMatchPresence"/> returns HTTP 200 OK along with timeline history.
     /// </summary>
     [Fact]

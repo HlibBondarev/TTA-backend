@@ -50,15 +50,6 @@ public interface IPlayerPresenceRepository : IEntityRepositoryBase<Guid, PlayerP
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Updates the timeout column for all active presence records within the specified match and period scope.
-    /// </summary>
-    /// <param name="matchId">The unique database reference key for the target match.</param>
-    /// <param name="periodNumber">The specific match period number that has just concluded.</param>
-    /// <param name="timeOut">The exact UTC timestamp marking when the period ended, used to close open player sessions.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests during the asynchronous operation.</param>
-    Task CloseActivePresencesAsync(Guid matchId, int periodNumber, DateTime timeOut, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Retrieves the raw linear ("dirty") time spent in the water per player lineup row, grouped by match periods.
     /// </summary>
     /// <param name="matchId">The unique database reference key for the target match.</param>
@@ -66,4 +57,19 @@ public interface IPlayerPresenceRepository : IEntityRepositoryBase<Guid, PlayerP
     /// <param name="cancellationToken">A token to monitor for cancellation requests during the asynchronous operation.</param>
     /// <returns>A collection of typed projections containing lineup reference, period index, and total dirty seconds.</returns>
     Task<IEnumerable<PlayersDirtyTimeByPeriodProjection>> GetPlayersDirtyTimeByPeriodAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Updates the timeout column for active presence records within the specified match, period, and lineup scope.
+    /// </summary>
+    /// <param name="matchId">The unique database reference key for the target match.</param>
+    /// <param name="periodNumber">The specific match period number that has just concluded.</param>
+    /// <param name="timeOut">The exact UTC timestamp marking when the period ended, used to close open player sessions.</param>
+    /// <param name="playerLineupIds">Optional collection of explicit match lineup IDs to filter targeted presence records.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests during the asynchronous operation.</param>
+    Task CloseActivePresencesAsync(
+        Guid matchId,
+        int periodNumber,
+        DateTime timeOut,
+        IEnumerable<Guid>? playerLineupIds = null,
+        CancellationToken cancellationToken = default);
 }

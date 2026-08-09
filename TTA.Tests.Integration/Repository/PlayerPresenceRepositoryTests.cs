@@ -334,6 +334,44 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.CloseActivePresencesAsync"/> sets timeout ONLY for active presences
+    /// belonging to the specified lineup IDs collection.
+    /// </summary>
+    [Fact]
+    public async Task CloseActivePresencesAsync_ShouldSetTimeout_OnlyForSpecifiedLineupIds()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var exactTimeIn = DateTime.UtcNow;
+        var exactTimeOut = exactTimeIn.AddMinutes(15);
+        var presences = new List<(Guid Id, Guid LineupId)>
+        {
+            (Guid.NewGuid(), context.LineupId1),
+            (Guid.NewGuid(), context.LineupId2)
+        };
+
+        // Bulk insert open sessions for Player 1 and Player 2
+        await _repository.InitializePeriodPresenceAsync(1, exactTimeIn, presences);
+
+        // Act - Terminate presence ONLY for Lineup 1
+        await _repository.CloseActivePresencesAsync(
+            context.MatchId,
+            periodNumber: 1,
+            timeOut: exactTimeOut,
+            playerLineupIds: new[] { context.LineupId1 });
+
+        // Assert
+        var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
+
+        var player1Presence = matchPresences.First(p => p.MatchLineupId == context.LineupId1);
+        player1Presence.TimeOut.Should().NotBeNull();
+        player1Presence.TimeOut!.Value.ToString("yyyy-MM-dd HH:mm:ss").Should().Be(exactTimeOut.ToString("yyyy-MM-dd HH:mm:ss"));
+
+        var player2Presence = matchPresences.First(p => p.MatchLineupId == context.LineupId2);
+        player2Presence.TimeOut.Should().BeNull(); // Preserved active session
+    }
+
+    /// <summary>
     /// Verifies that <see cref="PlayerPresenceRepository.GetPlayersDirtyTimeByPeriodAsync"/> returns an empty collection
     /// when no player presence tracking records exist for the given match and team context.
     /// </summary>

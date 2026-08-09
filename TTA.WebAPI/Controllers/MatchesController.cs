@@ -959,6 +959,55 @@ public class MatchesController(
     }
 
     /// <summary>
+    /// Explicitly closes active player presence sessions for a specified selection of lineup items in a completed period.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the target match extracted from the route.</param>
+    /// <param name="request">The incoming data transfer object payload containing period number, target lineup IDs, and timeout timestamp.</param>
+    /// <param name="validator">The fluent validator instance injected for request structural integrity checks.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>An HTTP 204 No Content success response on completion.</returns>
+    /// <response code="204">If active presences were successfully terminated.</response>
+    /// <response code="400">If the request payload is invalid.</response>
+    /// <response code="401">If the user is not authenticated.</response>
+    /// <response code="403">If the user lacks edit rights for the match.</response>
+    /// <response code="404">If the match was not found.</response>
+    [HttpPut("{matchId}/presence/terminate")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> TerminatePeriodPresence(
+        [FromRoute] Guid matchId,
+        [FromBody] TerminatePresenceRequest request,
+        [FromServices] IValidator<TerminatePresenceRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Received request to terminate period presence for Match {MatchId}, Period {Period}.", matchId, request.PeriodNumber);
+
+        // 1. Validate request payload
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation failed for TerminatePresenceRequest in Match {MatchId}.", matchId);
+            return BadRequest(validationResult.Errors);
+        }
+
+        // 2. Validate edit access permissions
+        var authResult = await ValidateMatchEditAccess(matchId, cancellationToken);
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        // 3. Map to command and send via Mediator
+        var command = request.ToCommand(matchId);
+        await _mediator.Send(command, cancellationToken);
+
+        return NoContent();
+    }
+
+    /// <summary>
     /// Retrieves the complete chronological historical tracking sequence list data structure of all player presences and substitutions log entries logged against a match.
     /// </summary>
     /// <param name="matchId">The unique identity reference key of the target match extracted from the route path context.</param>

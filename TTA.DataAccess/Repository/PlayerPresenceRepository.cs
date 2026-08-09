@@ -96,21 +96,6 @@ public class PlayerPresenceRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
-    public async Task CloseActivePresencesAsync(Guid matchId, int periodNumber, DateTime timeOut, CancellationToken cancellationToken = default)
-    {
-        var parameters = new DynamicParameters();
-        parameters.Add("p_match_id", matchId);
-        parameters.Add("p_period_number", periodNumber);
-        parameters.Add("p_time_out", timeOut);
-
-        using var connection = await OpenConnectionAsync(cancellationToken);
-        await connection.ExecuteAsync(new CommandDefinition(
-            SqlStatements.ForPlayerPresence.CloseActivePresences,
-            parameters,
-            cancellationToken: cancellationToken));
-    }
-
-    /// <inheritdoc />
     public async Task<IEnumerable<PlayersDirtyTimeByPeriodProjection>> GetPlayersDirtyTimeByPeriodAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
@@ -120,6 +105,27 @@ public class PlayerPresenceRepository(IDbConnectionFactory connectionFactory)
         using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.QueryAsync<PlayersDirtyTimeByPeriodProjection>(new CommandDefinition(
             SqlStatements.ForPlayerPresence.CalculatePlayersDirtyTimeByPeriod,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async Task CloseActivePresencesAsync(
+        Guid matchId,
+        int periodNumber,
+        DateTime timeOut,
+        IEnumerable<Guid>? playerLineupIds = null,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_match_id", matchId);
+        parameters.Add("p_period_number", periodNumber);
+        parameters.Add("p_time_out", timeOut);
+        parameters.Add("p_lineup_ids", playerLineupIds?.ToArray());
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        await connection.ExecuteAsync(new CommandDefinition(
+            SqlStatements.ForPlayerPresence.CloseActivePresences,
             parameters,
             cancellationToken: cancellationToken));
     }

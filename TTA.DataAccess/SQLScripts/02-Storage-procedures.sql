@@ -2022,7 +2022,8 @@ END;$$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION public.close_active_presences(
     p_match_id UUID,
     p_period_number INT,
-    p_time_out TIMESTAMPTZ
+    p_time_out TIMESTAMPTZ,
+    p_lineup_ids UUID[] DEFAULT NULL
 )
 RETURNS VOID AS $$
 BEGIN
@@ -2032,7 +2033,8 @@ BEGIN
     WHERE pp.matchlineupid = ml.id
       AND ml.matchid = p_match_id
       AND pp.periodnumber = p_period_number
-      AND pp.timeout IS NULL;
+      AND pp.timeout IS NULL
+      AND (p_lineup_ids IS NULL OR CARDINALITY(p_lineup_ids) = 0 OR pp.matchlineupid = ANY(p_lineup_ids));
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
