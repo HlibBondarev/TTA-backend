@@ -36,19 +36,19 @@ public class CreateGameEventsHandler(
         _logger.LogInformation("Attempting to create batch of {Count} game events for Match {MatchId}.",
             eventsList.Count, request.MatchId);
 
-        foreach (var evt in eventsList)
+        foreach (var lineupId in eventsList.Select(evt => evt.MatchLineupId))
         {
-            var lineupEntry = await _matchLineupRepository.GetByIdAsync(evt.MatchLineupId, cancellationToken);
+            var lineupEntry = await _matchLineupRepository.GetByIdAsync(lineupId, cancellationToken);
             if (lineupEntry == null)
             {
-                _logger.LogWarning("Game event creation failed: MatchLineup {MatchLineupId} not found.", evt.MatchLineupId);
-                throw new NotFoundException($"The specified player protocol entry {evt.MatchLineupId} was not found.");
+                _logger.LogWarning("Game event creation failed: MatchLineup {MatchLineupId} not found.", lineupId);
+                throw new NotFoundException($"The specified player protocol entry {lineupId} was not found.");
             }
 
             if (lineupEntry.MatchId != request.MatchId)
             {
                 _logger.LogWarning("Game event creation failed: Player {MatchLineupId} does not belong to Match {MatchId}.",
-                    evt.MatchLineupId, request.MatchId);
+                    lineupId, request.MatchId);
                 throw new ConflictException("The specified player is not registered in this match's protocol.");
             }
         }

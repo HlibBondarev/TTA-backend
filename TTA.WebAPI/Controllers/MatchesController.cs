@@ -472,13 +472,13 @@ public class MatchesController(
         if (accessError != null) return accessError;
 
         // 3. Verify lineup entry existence
-        foreach (var req in requestList)
+        foreach (var lineupId in requestList.Select(req => req.MatchLineupId))
         {
-            var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(req.MatchLineupId));
+            var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(lineupId));
             if (lineup == null)
             {
-                _logger.LogWarning("Record event failed: MatchLineup {LineupId} not found.", req.MatchLineupId);
-                return NotFound($"The specified lineup entry {req.MatchLineupId} was not found.");
+                _logger.LogWarning("Record event failed: MatchLineup {LineupId} not found.", lineupId);
+                return NotFound($"The specified lineup entry {lineupId} was not found.");
             }
         }
 
