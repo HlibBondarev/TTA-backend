@@ -317,6 +317,12 @@ public static class SqlStatements
             );";
 
         /// <summary>
+        /// Retrieves the complete protocol (lineups for all teams) in a match.
+        /// </summary>
+        public const string GetMatchLineups =
+            "SELECT * FROM public.get_match_lineups(@p_match_id);";
+
+        /// <summary>
         /// Retrieves the protocol (lineup) for a specific team in a match.
         /// </summary>
         public const string GetTeamMatchLineup =
@@ -500,10 +506,10 @@ public static class SqlStatements
             "SELECT public.init_period_presence(@p_period_number, @p_time_in, @p_ids, @p_lineup_ids);";
 
         /// <summary>
-        /// Invokes the storage function to automatically set the timeout for all active players when a period finishes.
+        /// Invokes the storage function to automatically set the timeout for active players when a period finishes.
         /// </summary>
         public const string CloseActivePresences =
-            "SELECT public.close_active_presences(@p_match_id, @p_period_number, @p_time_out);";
+            "SELECT public.close_active_presences(@p_match_id, @p_period_number, @p_time_out, @p_lineup_ids);";
 
         /// <summary>
         /// Invokes the storage function to calculate raw dirty play time by period for a specific team in a match.

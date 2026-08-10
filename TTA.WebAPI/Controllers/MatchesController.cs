@@ -163,31 +163,25 @@ public class MatchesController(
     public async Task<IActionResult> CopyFromRoster(
         [FromRoute] Guid matchId,
         [FromRoute] Guid teamId,
-        [FromBody] CopyTeamRosterToMatchLineupRequest request)
+        [FromBody] CopyTeamRosterToMatchLineupRequest request,
+        CancellationToken cancellationToken)
     {
         _logger.LogInformation("Requested bulk copy of {Count} selected players for Team {TeamId} into Match {MatchId}.",
             request.PlayerRosterIds.Count(), teamId, matchId);
 
         // Verify that the team is actually a participant in this specific match
-        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId));
-        if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
-        {
-            _logger.LogWarning("Access denied: Team {TeamId} is not part of Match {MatchId}.", teamId, matchId);
-            return BadRequest("The specified team is not a participant in this match.");
-        }
+        var participationError = await ValidateTeamParticipation(matchId, teamId, cancellationToken);
+        if (participationError != null) return participationError;
 
         // Validate tournament ownership before proceeding with the operation
         var validationResult = await ValidateTournamentOwnership(matchId);
-        if (validationResult != null)
-        {
-            return validationResult;
-        }
+        if (validationResult != null) return validationResult;
 
         // Map the request DTO to the business logic command
         var command = request.ToCommand(matchId, teamId);
 
         // Execute the command via Mediator
-        var result = await _mediator.Send(command);
+        var result = await _mediator.Send(command, cancellationToken);
 
         return Ok(result);
     }
@@ -215,21 +209,21 @@ public class MatchesController(
     public async Task<IActionResult> CopyFromRosterByTeam(
         [FromRoute] Guid matchId,
         [FromRoute] Guid teamId,
-        [FromBody] CopyTeamRosterToMatchLineupRequest request)
+        [FromBody] CopyTeamRosterToMatchLineupRequest request,
+        CancellationToken cancellationToken)
     {
         _logger.LogInformation("Team Editor requested copy of {Count} players for Team {TeamId} in Match {MatchId}.",
             request.PlayerRosterIds.Count(), teamId, matchId);
 
         // Verify that the team is actually a participant in this specific match
-        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId));
-        if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
-        {
-            _logger.LogWarning("Access denied: Team {TeamId} is not part of Match {MatchId}.", teamId, matchId);
-            return BadRequest("The specified team is not a participant in this match.");
-        }
+        var participationError = await ValidateTeamParticipation(matchId, teamId, cancellationToken);
+        if (participationError != null) return participationError;
 
+        // Map the request DTO to the business logic command
         var command = request.ToCommand(matchId, teamId);
-        var result = await _mediator.Send(command);
+
+        // Execute the command via Mediator
+        var result = await _mediator.Send(command, cancellationToken);
 
         return Ok(result);
     }
@@ -959,6 +953,57 @@ public class MatchesController(
     }
 
     /// <summary>
+    /// Explicitly closes active player presence sessions for a specified selection of lineup items in a completed period.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the target match extracted from the route.</param>
+    /// <param name="request">The incoming data transfer object payload containing period number, target lineup IDs, and timeout timestamp.</param>
+    /// <param name="validator">The fluent validator instance injected for request structural integrity checks.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>An HTTP 204 No Content success response on completion.</returns>
+    /// <response code="204">If active presences were successfully terminated.</response>
+    /// <response code="400">If the request payload is invalid.</response>
+    /// <response code="401">If the user is not authenticated.</response>
+    /// <response code="403">If the user lacks edit rights for the match.</response>
+    /// <response code="404">If the match was not found.</response>
+    /// <response code="409">If a business rule is violated (e.g., TimeOut is earlier than active session TimeIn).</response>
+    [HttpPut("{matchId}/presence/terminate")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> TerminatePeriodPresence(
+        [FromRoute] Guid matchId,
+        [FromBody] TerminatePresenceRequest request,
+        [FromServices] IValidator<TerminatePresenceRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Received request to terminate period presence for Match {MatchId}, Period {Period}.", matchId, request.PeriodNumber);
+
+        // 1. Validate request payload
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation failed for TerminatePresenceRequest in Match {MatchId}.", matchId);
+            return BadRequest(validationResult.Errors);
+        }
+
+        // 2. Validate edit access permissions
+        var authResult = await ValidateMatchEditAccess(matchId, cancellationToken);
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        // 3. Map to command and send via Mediator
+        var command = request.ToCommand(matchId);
+        await _mediator.Send(command, cancellationToken);
+
+        return NoContent();
+    }
+
+    /// <summary>
     /// Retrieves the complete chronological historical tracking sequence list data structure of all player presences and substitutions log entries logged against a match.
     /// </summary>
     /// <param name="matchId">The unique identity reference key of the target match extracted from the route path context.</param>
@@ -1161,6 +1206,21 @@ public class MatchesController(
         // If none of the conditions above are met -> Access Denied
         _logger.LogWarning("User {UserId} is not authorized to modify match {MatchId}.", userId, matchId);
         return Forbid();
+    }
+
+    /// <summary>
+    /// Validates whether the specified team is a participant in the match.
+    /// </summary>
+    private async Task<IActionResult?> ValidateTeamParticipation(Guid matchId, Guid teamId, CancellationToken cancellationToken = default)
+    {
+        var match = await _mediator.Send(new GetMatchByIdWithDetailsQuery(matchId), cancellationToken);
+        if (match.HomeTeamId != teamId && match.GuestTeamId != teamId)
+        {
+            _logger.LogWarning("Access denied: Team {TeamId} is not part of Match {MatchId}.", teamId, matchId);
+            return BadRequest("The specified team is not a participant in this match.");
+        }
+
+        return null;
     }
 
     #endregion

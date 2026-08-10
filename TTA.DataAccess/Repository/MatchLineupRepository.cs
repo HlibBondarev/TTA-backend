@@ -23,6 +23,21 @@ public class MatchLineupRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
+    public async Task<IEnumerable<MatchLineupProjection>> GetMatchLineupsAsync(
+        Guid matchId,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_match_id", matchId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.QueryAsync<MatchLineupProjection>(new CommandDefinition(
+            SqlStatements.ForMatchLineups.GetMatchLineups,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
+
+    /// <inheritdoc />
     public async Task<IEnumerable<MatchLineupProjection>> GetTeamMatchLineupAsync(
         Guid matchId,
         Guid teamId,

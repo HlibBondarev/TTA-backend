@@ -1000,6 +1000,94 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
+    /// Verifies that <see cref="MatchesController.TerminatePeriodPresence"/> returns HTTP 204 No Content
+    /// and sets TimeOut on specified active player presences for the period while leaving unselected active presences open.
+    /// </summary>
+    [Fact]
+    public async Task TerminatePeriodPresence_ShouldReturnNoContent_WhenRequestIsValidAndUserHasAccess()
+    {
+        // Arrange
+        var context = await SetupPresenceMatchContextAsync(TestUserId);
+        var timeOut = DateTime.UtcNow;
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein) 
+                VALUES 
+                    (@id1, @lineupId1, 1, NOW() - INTERVAL '5 minutes'),
+                    (@id2, @lineupId2, 1, NOW() - INTERVAL '5 minutes')",
+                new
+                {
+                    id1 = Guid.NewGuid(),
+                    lineupId1 = context.LineupId1,
+                    id2 = Guid.NewGuid(),
+                    lineupId2 = context.LineupId2
+                });
+        }
+
+        var request = new TerminatePresenceRequest(
+            PeriodNumber: 1,
+            PlayerLineupIds: [context.LineupId1],
+            TimeOut: timeOut
+        );
+
+        // Act
+        var response = await Client.PutAsJsonAsync($"{BaseUrl}/{context.MatchId}/presence/terminate", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var checkConn = Fixture.ConnectionFactory.CreateConnection();
+        var matchPresences = (await checkConn.QueryAsync<PlayerPresence>(
+            "SELECT id, matchlineupid, periodnumber, timein, timeout FROM public.playerpresences WHERE matchlineupid IN (@id1, @id2)",
+            new { id1 = context.LineupId1, id2 = context.LineupId2 })).ToList();
+
+        matchPresences.Should().HaveCount(2);
+
+        var presence1 = matchPresences.FirstOrDefault(x => x.MatchLineupId == context.LineupId1);
+        presence1.Should().NotBeNull();
+        presence1!.TimeOut.Should().NotBeNull();
+        presence1.TimeOut!.Value.Should().BeCloseTo(timeOut, TimeSpan.FromMilliseconds(500));
+
+        var presence2 = matchPresences.FirstOrDefault(x => x.MatchLineupId == context.LineupId2);
+        presence2.Should().NotBeNull();
+        presence2!.TimeOut.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.TerminatePeriodPresence"/> returns HTTP 409 Conflict
+    /// when the provided TimeOut timestamp is earlier than the active presence session's TimeIn timestamp.
+    /// </summary>
+    [Fact]
+    public async Task TerminatePeriodPresence_ShouldReturnConflict_WhenTimeOutIsBeforeTimeIn()
+    {
+        // Arrange
+        var context = await SetupPresenceMatchContextAsync(TestUserId);
+        var exactTimeIn = DateTime.UtcNow;
+        var invalidTimeOut = exactTimeIn.AddMinutes(-10); // TimeOut earlier than TimeIn
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein) VALUES (@id, @lineupId, 1, @timeIn)",
+                new { id = Guid.NewGuid(), lineupId = context.LineupId1, timeIn = exactTimeIn });
+        }
+
+        var request = new TerminatePresenceRequest(
+            PeriodNumber: 1,
+            PlayerLineupIds: new[] { context.LineupId1 },
+            TimeOut: invalidTimeOut
+        );
+
+        // Act
+        var response = await Client.PutAsJsonAsync($"{BaseUrl}/{context.MatchId}/presence/terminate", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    /// <summary>
     /// Verifies that <see cref="MatchesController.GetMatchPresence"/> returns HTTP 200 OK along with timeline history.
     /// </summary>
     [Fact]

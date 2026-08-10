@@ -1288,6 +1288,37 @@ BEGIN
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
+ * Retrieves the full match lineup protocol for all teams in a match with player details.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_lineups(
+    p_match_id UUID
+)
+RETURNS TABLE (
+    id UUID,
+    matchid UUID,
+    teamid UUID,
+    playerrosterid UUID,
+    firstname VARCHAR,
+    lastname VARCHAR,
+    number INT,
+    positionid UUID,
+    positionname VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        ml.id, ml.matchid, pr.teamid, ml.playerrosterid,
+        p.firstname, p.lastname, ml.number,
+        ml.positionid, ppd.name
+    FROM public.matchlineups ml
+    JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    JOIN public.players p ON pr.playerid = p.id
+    JOIN public.playerpositiondefinitions ppd ON ml.positionid = ppd.id
+    WHERE ml.matchid = p_match_id
+    ORDER BY ml.number;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
  * Retrieves the match lineup for a specific team with player and position details.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_team_match_lineup(
@@ -2018,21 +2049,41 @@ END;$$ LANGUAGE plpgsql;
 /**********************************************************************************
  * Automatically updates the timeout for all currently active players in a match period
  * when that specific period ends.
+ * Validates that p_time_out is not earlier than timein for any selected active presence.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.close_active_presences(
     p_match_id UUID,
     p_period_number INT,
-    p_time_out TIMESTAMPTZ
+    p_time_out TIMESTAMPTZ,
+    p_lineup_ids UUID[] DEFAULT NULL
 )
 RETURNS VOID AS $$
 BEGIN
+    -- 1. Validation: Ensure p_time_out is not earlier than timein for active presences in scope
+    IF EXISTS (
+        SELECT 1 
+        FROM public.playerpresences pp
+        JOIN public.matchlineups ml ON pp.matchlineupid = ml.id
+        WHERE ml.matchid = p_match_id
+          AND pp.periodnumber = p_period_number
+          AND pp.timeout IS NULL
+          AND (p_lineup_ids IS NULL OR CARDINALITY(p_lineup_ids) = 0 OR pp.matchlineupid = ANY(p_lineup_ids))
+          AND pp.timein > p_time_out
+    ) THEN
+        RAISE EXCEPTION 'TimeOut (%) cannot be earlier than TimeIn for active player presences in period %.', 
+            p_time_out, p_period_number 
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 2. Execution: Bulk update active presences
     UPDATE public.playerpresences pp
     SET timeout = p_time_out
     FROM public.matchlineups ml
     WHERE pp.matchlineupid = ml.id
       AND ml.matchid = p_match_id
       AND pp.periodnumber = p_period_number
-      AND pp.timeout IS NULL;
+      AND pp.timeout IS NULL
+      AND (p_lineup_ids IS NULL OR CARDINALITY(p_lineup_ids) = 0 OR pp.matchlineupid = ANY(p_lineup_ids));
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************

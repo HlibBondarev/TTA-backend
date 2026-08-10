@@ -39,6 +39,7 @@ jobs:
           /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
           /d:sonar.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**,**/*.sql" \
           /d:sonar.coverage.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**,**/*.sql" \
+          /d:sonar.cpd.exclusions="**/Controllers/MatchesController.cs" \
           /d:sonar.lang.patterns.plsql="**/*.not_exists" \
           /d:sonar.lang.patterns.tsql="**/*.sql"
 

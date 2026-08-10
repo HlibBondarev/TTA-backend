@@ -18,6 +18,17 @@ public interface IMatchLineupRepository : IEntityRepositoryBase<Guid, MatchLineu
     Task<MatchLineup> UpsertLineupItemAsync(MatchLineup lineup, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Retrieves the complete lineup protocol for all teams participating in a match.
+    /// Returns strongly typed projections with joined metadata.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A collection of lineup projections for the entire match context.</returns>
+    Task<IEnumerable<MatchLineupProjection>> GetMatchLineupsAsync(
+        Guid matchId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Retrieves the lineup protocol for a specific team in a match.
     /// Returns strongly typed projections with joined metadata.
     /// </summary>
