@@ -10,12 +10,12 @@ namespace TTA.DataAccess.Repository.Api;
 public interface IGameEventRepository : IEntityRepositoryBase<Guid, GameEvent>
 {
     /// <summary>
-    /// Persists a game event to the database using an upsert operation.
+    /// Persists a batch of game events to the database using a JSONB upsert operation.
     /// </summary>
-    /// <param name="entity">The game event entity to save.</param>
+    /// <param name="entities">The collection of game event entities to save.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>The persisted game event entity.</returns>
-    Task<GameEvent> UpsertAsync(GameEvent entity, CancellationToken cancellationToken = default);
+    /// <returns>The collection of persisted game event entities.</returns>
+    Task<IEnumerable<GameEvent>> UpsertAsync(IEnumerable<GameEvent> entities, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves a single game event by its unique identifier.
@@ -30,7 +30,7 @@ public interface IGameEventRepository : IEntityRepositoryBase<Guid, GameEvent>
     /// </summary>
     /// <param name="id">The unique identifier of the game event.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A dynamic object containing the raw record details if found.</returns>
+    /// <returns>A projection object containing the raw record details if found.</returns>
     Task<GameEventProjection?> GetByIdWithDetailsAsync(Guid id, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -38,7 +38,7 @@ public interface IGameEventRepository : IEntityRepositoryBase<Guid, GameEvent>
     /// </summary>
     /// <param name="matchId">The unique identifier of the match.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A collection of dynamic objects representing the match timeline.</returns>
+    /// <returns>A collection of projection objects representing the match timeline.</returns>
     Task<IEnumerable<GameEventProjection>> GetMatchEventsAsync(Guid matchId, CancellationToken cancellationToken = default);
 
     /// <summary>

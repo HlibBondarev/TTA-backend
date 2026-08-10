@@ -562,10 +562,17 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Yellow Card", false);
         var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
 
-        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, false);
+        var request = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false
+        );
 
         // Act
-        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", request);
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", new[] { request });
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -589,10 +596,17 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Timeout", true);
         var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
 
-        var request = new CreateGameEventRequest(lineupId, eventDefId, 1, false);
+        var request = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false
+        );
 
         // Act
-        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events", request);
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events", new[] { request });
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -762,14 +776,16 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var anchorId = Guid.NewGuid();
         var request = new CreateTimeAnchorRequest(anchorId, 1, TimeAnchorType.PeriodStart, DateTime.UtcNow);
 
-        // Act
-        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/anchors", request);
+        // Act - Wrap the single request in an array to match IEnumerable<CreateTimeAnchorRequest>
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/anchors", new[] { request });
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        var returnedId = await response.Content.ReadFromJsonAsync<Guid>();
-        returnedId.Should().Be(anchorId);
+        // Read response content as a collection of Guids
+        var returnedIds = await response.Content.ReadFromJsonAsync<IEnumerable<Guid>>();
+        returnedIds.Should().NotBeNull();
+        returnedIds.Should().Contain(anchorId);
     }
 
     /// <summary>

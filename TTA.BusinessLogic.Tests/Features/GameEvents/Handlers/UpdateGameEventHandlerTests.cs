@@ -57,15 +57,15 @@ public class UpdateGameEventHandlerTests
             .ReturnsAsync(matchLineup);
 
         _gameEventRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<GameEvent>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingEvent);
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([existingEvent]);
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
 
         // Assert
         result.Should().Be(command.Id);
-        _gameEventRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<GameEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+        _gameEventRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -141,7 +141,7 @@ public class UpdateGameEventHandlerTests
             .ReturnsAsync(matchLineup);
 
         _gameEventRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<GameEvent>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(pgException);
 
         // Act
@@ -174,7 +174,7 @@ public class UpdateGameEventHandlerTests
             .ReturnsAsync(matchLineup);
 
         _gameEventRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<GameEvent>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(pgException);
 
         // Act

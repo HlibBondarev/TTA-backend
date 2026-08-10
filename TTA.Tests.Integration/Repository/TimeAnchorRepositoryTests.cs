@@ -10,7 +10,7 @@ namespace TTA.Tests.Integration.Repository;
 
 /// <summary>
 /// Integration tests for the <see cref="TimeAnchorRepository"/>.
-/// Validates data access logic and PostgreSQL storage function integration for match timelines.
+/// Validates data access logic and PostgreSQL storage function integration for match timelines and batch anchor operations.
 /// </summary>
 public class TimeAnchorRepositoryTests : BaseIntegrationTest
 {
@@ -19,7 +19,7 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
     /// <summary>
     /// Initializes a new instance of the <see cref="TimeAnchorRepositoryTests"/> class.
     /// </summary>
-    /// <param name="fixture">The shared database fixture.</param>
+    /// <param name="fixture">The shared database fixture instance.</param>
     public TimeAnchorRepositoryTests(DatabaseFixture fixture) : base(fixture)
     {
         _repository = new TimeAnchorRepository(fixture.ConnectionFactory);
@@ -28,7 +28,7 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
     #region Integration Tests
 
     /// <summary>
-    /// Verifies that <see cref="TimeAnchorRepository.UpsertAsync"/> correctly persists a new time anchor.
+    /// Verifies that <see cref="TimeAnchorRepository.UpsertAsync"/> correctly persists a batch of time anchors.
     /// </summary>
     [Fact]
     public async Task UpsertAsync_ShouldPersistNewAnchor_WhenDataIsValid()
@@ -38,12 +38,13 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
         var timeAnchor = CreateAnchorModel(matchId, 1, (TimeAnchorType)0); // 0 = PeriodStart
 
         // Act
-        var result = await _repository.UpsertAsync(timeAnchor);
+        var result = await _repository.UpsertAsync([timeAnchor]);
 
         // Assert
         result.Should().NotBeNull();
-        result.Id.Should().Be(timeAnchor.Id);
-        result.MatchId.Should().Be(matchId);
+        var savedAnchor = result.Should().ContainSingle().Subject;
+        savedAnchor.Id.Should().Be(timeAnchor.Id);
+        savedAnchor.MatchId.Should().Be(matchId);
 
         var persisted = await _repository.GetByIdAsync(timeAnchor.Id);
         persisted.Should().NotBeNull();
@@ -59,7 +60,7 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
         // Arrange
         var matchId = await SeedTimeAnchorEnvironmentAsync();
         var timeAnchor = CreateAnchorModel(matchId, 1, (TimeAnchorType)0);
-        await _repository.UpsertAsync(timeAnchor);
+        await _repository.UpsertAsync([timeAnchor]);
 
         // Act
         var result = await _repository.GetByIdAsync(timeAnchor.Id);
@@ -85,8 +86,7 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
         // Ensure chronological difference
         anchor2.Timestamp = anchor1.Timestamp.AddMinutes(45);
 
-        await _repository.UpsertAsync(anchor1);
-        await _repository.UpsertAsync(anchor2);
+        await _repository.UpsertAsync([anchor1, anchor2]);
 
         // Act
         var timeline = await _repository.GetMatchAnchorsAsync(matchId);
@@ -111,7 +111,7 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
         var newAnchor = CreateAnchorModel(matchId, 1, (TimeAnchorType)0);
 
         // Ensure record exists before deletion
-        await _repository.UpsertAsync(newAnchor);
+        await _repository.UpsertAsync([newAnchor]);
 
         // Act
         var isDeleted = await _repository.DeleteAsync(newAnchor.Id);
@@ -252,7 +252,6 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
             MatchId = matchId,
             PeriodNumber = periodNumber,
             Type = type,
-            // Uses UTC as strictly requested by project rules
             Timestamp = DateTime.UtcNow
         };
     }

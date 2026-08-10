@@ -13,15 +13,21 @@ public class CreateGameEventRequestValidator : AbstractValidator<CreateGameEvent
     /// </summary>
     public CreateGameEventRequestValidator()
     {
+        RuleFor(x => x.Id)
+            .NotEmpty().WithMessage("Game event ID is required.");
+
         RuleFor(x => x.EventDefinitionId)
             .NotEmpty().WithMessage("Event definition is required.");
 
         RuleFor(x => x.PeriodNumber)
             .GreaterThan(0).WithMessage("Period number must be greater than zero.");
 
-        // Optional: If MatchLineupId is provided, it should not be an empty Guid
         RuleFor(x => x.MatchLineupId)
-            .NotEqual(Guid.Empty)
-            .WithMessage("MatchLineupId cannot be an empty GUID.");
+            .NotEmpty().WithMessage("MatchLineupId cannot be an empty GUID.");
+
+        RuleFor(x => x.EventTimestamp)
+            .NotEmpty().WithMessage("EventTimestamp is required.")
+            .LessThanOrEqualTo(_ => DateTime.UtcNow.AddMinutes(5))
+            .WithMessage("EventTimestamp cannot be in the future.");
     }
 }

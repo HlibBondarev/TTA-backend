@@ -60,10 +60,10 @@ public class UpdateGameEventHandler(
 
         try
         {
-            var result = await _gameEventRepository.UpsertAsync(model, cancellationToken);
+            var result = await _gameEventRepository.UpsertAsync([model], cancellationToken);
 
-            _logger.LogInformation("Game event {Id} successfully updated for Match {MatchId}.", result.Id, request.MatchId);
-            return result.Id;
+            _logger.LogInformation("Game event {Id} successfully updated for Match {MatchId}.", result.ToList()[0].Id, request.MatchId);
+            return result.ToList()[0].Id;
         }
         catch (PostgresException ex) when (ex.SqlState == "23503")
         {

@@ -9,7 +9,7 @@ namespace TTA.Tests.Integration.Repository;
 
 /// <summary>
 /// Integration tests for the <see cref="GameEventRepository"/>.
-/// Validates data access logic and PostgreSQL storage function integration.
+/// Validates data access logic and PostgreSQL storage function integration for batch operations.
 /// </summary>
 public class GameEventRepositoryTests : BaseIntegrationTest
 {
@@ -18,7 +18,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
     /// <summary>
     /// Initializes a new instance of the <see cref="GameEventRepositoryTests"/> class.
     /// </summary>
-    /// <param name="fixture">The shared database fixture.</param>
+    /// <param name="fixture">The shared database fixture instance.</param>
     public GameEventRepositoryTests(DatabaseFixture fixture) : base(fixture)
     {
         _repository = new GameEventRepository(fixture.ConnectionFactory);
@@ -27,7 +27,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
     #region Integration Tests
 
     /// <summary>
-    /// Verifies that <see cref="GameEventRepository.UpsertAsync"/> correctly persists a new game event.
+    /// Verifies that <see cref="GameEventRepository.UpsertAsync"/> correctly persists a batch of new game events.
     /// </summary>
     [Fact]
     public async Task UpsertAsync_ShouldPersistNewEvent_WhenDataIsValid()
@@ -37,11 +37,12 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         var gameEvent = CreateEventModel(context.LineupId, context.DefinitionId);
 
         // Act
-        var result = await _repository.UpsertAsync(gameEvent);
+        var result = await _repository.UpsertAsync([gameEvent]);
 
         // Assert
         result.Should().NotBeNull();
-        result.Id.Should().Be(gameEvent.Id);
+        var savedEvent = result.Should().ContainSingle().Subject;
+        savedEvent.Id.Should().Be(gameEvent.Id);
 
         var persisted = await _repository.GetByIdAsync(gameEvent.Id);
         persisted.Should().NotBeNull();
@@ -56,7 +57,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         // Arrange
         var context = await SeedEventEnvironmentAsync();
         var gameEvent = CreateEventModel(context.LineupId, context.DefinitionId);
-        await _repository.UpsertAsync(gameEvent);
+        await _repository.UpsertAsync([gameEvent]);
 
         // Act
         var result = await _repository.GetByIdAsync(gameEvent.Id);
@@ -77,7 +78,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         var newEvent = CreateEventModel(context.LineupId, context.DefinitionId);
 
         // Act
-        await _repository.UpsertAsync(newEvent);
+        await _repository.UpsertAsync([newEvent]);
         var result = await _repository.GetByIdWithDetailsAsync(newEvent.Id);
 
         // Assert
@@ -95,8 +96,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         var event1 = CreateEventModel(context.LineupId, context.DefinitionId);
         var event2 = CreateEventModel(context.LineupId, context.DefinitionId);
 
-        await _repository.UpsertAsync(event1);
-        await _repository.UpsertAsync(event2);
+        await _repository.UpsertAsync([event1, event2]);
 
         // Act
         var timeline = await _repository.GetMatchEventsAsync(context.MatchId);
@@ -117,7 +117,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         var newEvent = CreateEventModel(context.LineupId, context.DefinitionId);
 
         // Ensure record exists before deletion
-        await _repository.UpsertAsync(newEvent);
+        await _repository.UpsertAsync([newEvent]);
 
         // Act
         var isDeleted = await _repository.DeleteAsync(newEvent.Id);
@@ -143,7 +143,11 @@ public class GameEventRepositoryTests : BaseIntegrationTest
     {
         // Arrange
         var context = await SeedEventEnvironmentAsync();
-        var baseTime = DateTime.UtcNow;
+
+        // Truncate sub-second ticks from DateTime.UtcNow to avoid microsecond rounding noise in PostgreSQL calculations
+        var now = DateTime.UtcNow;
+        var baseTime = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, now.Second, DateTimeKind.Utc);
+
         var configId = Guid.Empty;
         var originalDuration = 0;
 
@@ -192,7 +196,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
             gameEvent.EventTimestamp = baseTime.AddSeconds(300);
             gameEvent.NormalizedMatchTime = TimeSpan.Zero; // Reset to verify the database operation updates this explicitly
 
-            await _repository.UpsertAsync(gameEvent);
+            await _repository.UpsertAsync([gameEvent]);
 
             // Fetch team ID associated with this match context boundary
             Guid teamId;
@@ -215,7 +219,8 @@ public class GameEventRepositoryTests : BaseIntegrationTest
             // K = (8 * 60) / 600 = 0.8
             // Event elapsed seconds = 300. Normalized time = 300 * 0.8 = 240 seconds.
             var expectedNormalizedTime = TimeSpan.FromSeconds(240);
-            updatedEvent!.NormalizedMatchTime.Should().Be(expectedNormalizedTime);
+            updatedEvent!.NormalizedMatchTime.Should().NotBeNull();
+            updatedEvent.NormalizedMatchTime!.Value.Should().BeCloseTo(expectedNormalizedTime, TimeSpan.FromMilliseconds(500));
         }
         finally
         {

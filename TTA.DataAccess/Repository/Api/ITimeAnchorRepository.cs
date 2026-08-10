@@ -9,12 +9,12 @@ namespace TTA.DataAccess.Repository.Api;
 public interface ITimeAnchorRepository : IEntityRepositoryBase<Guid, TimeAnchor>
 {
     /// <summary>
-    /// Persists a time anchor to the database using an upsert operation.
+    /// Persists a batch of time anchors to the database using a JSONB upsert operation.
     /// </summary>
-    /// <param name="entity">The time anchor entity to save.</param>
+    /// <param name="entities">The collection of time anchor entities to save.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>The persisted time anchor entity.</returns>
-    Task<TimeAnchor> UpsertAsync(TimeAnchor entity, CancellationToken cancellationToken = default);
+    /// <returns>The collection of persisted time anchor entities.</returns>
+    Task<IEnumerable<TimeAnchor>> UpsertAsync(IEnumerable<TimeAnchor> entities, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves a single time anchor by its unique identifier.
@@ -26,7 +26,6 @@ public interface ITimeAnchorRepository : IEntityRepositoryBase<Guid, TimeAnchor>
 
     /// <summary>
     /// Retrieves all time anchors associated with a specific match.
-    /// Results are returned in chronological order as defined by the storage function.
     /// </summary>
     /// <param name="matchId">The unique identifier of the match.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
@@ -38,7 +37,7 @@ public interface ITimeAnchorRepository : IEntityRepositoryBase<Guid, TimeAnchor>
     /// </summary>
     /// <param name="id">The unique identifier of the anchor to delete.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A task representing the asynchronous operation. Returns true if the operation was successful.</returns>
+    /// <returns>A task representing the asynchronous operation. Returns true if successful.</returns>
     Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
 
     /// <summary>

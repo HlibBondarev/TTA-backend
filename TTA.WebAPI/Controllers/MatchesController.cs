@@ -365,22 +365,22 @@ public class MatchesController(
     }
 
     /// <summary>
-    /// Records a new game event for a match in the context of a specific team.
+    /// Records a batch of game events for a match in the context of a specific team.
     /// Access is restricted to team editors via policy.
     /// </summary>
     /// <param name="matchId">The unique identifier of the match.</param>
     /// <param name="teamId">The unique identifier of the team.</param>
-    /// <param name="request">The request containing details of the game event to be recorded.</param>
+    /// <param name="requests">The collection of game event requests to be recorded.</param>
     /// <param name="validator">The validator for the create game event request.</param>
-    /// <returns>A <see cref="Guid"/> representing the newly created game event.</returns>
-    /// <response code="201">If the game event was successfully created.</response>
-    /// <response code="400">If the request is invalid.</response>
-    /// <response code="403">If the user is not authorized to create the game event.</response>
-    /// <response code="404">If the match or team is not found.</response>
+    /// <returns>A collection of <see cref="Guid"/> representing the newly created game events.</returns>
+    /// <response code="201">If the game events were successfully created.</response>
+    /// <response code="400">If the request payload is empty or invalid.</response>
+    /// <response code="403">If the user is not authorized to create game events for this team/match.</response>
+    /// <response code="404">If the match, team, or lineup is not found.</response>
     /// <response code="409">If there is a conflict with the current state of the resource.</response>
     [HttpPost("{matchId:guid}/teams/{teamId:guid}/events")]
     [Authorize(Policy = "TeamEditor")]
-    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(IEnumerable<Guid>), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -388,84 +388,102 @@ public class MatchesController(
     public async Task<IActionResult> RecordMatchEventByTeam(
         [FromRoute] Guid matchId,
         [FromRoute] Guid teamId,
-        [FromBody] CreateGameEventRequest request,
+        [FromBody] IEnumerable<CreateGameEventRequest> requests,
         [FromServices] IValidator<CreateGameEventRequest> validator)
     {
-        _logger.LogInformation("Team {TeamId} is recording a new event for match {MatchId}.", teamId, matchId);
-
-        // 1. Validate the request DTO
-        var validationResult = await validator.ValidateAsync(request);
-
-        if (!validationResult.IsValid)
+        var requestList = requests.ToList();
+        if (requestList.Count == 0)
         {
-            _logger.LogWarning("Validation failed for CreateGameEventRequest for match with {Id}: {Errors}.", matchId, validationResult.Errors);
-            return BadRequest(validationResult.Errors);
+            return BadRequest("At least one game event request is required.");
         }
 
-        // 2. Verify that the team is actually a participant in this specific match
-        var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(request.MatchLineupId));
+        _logger.LogInformation("Team {TeamId} is recording {Count} new events for match {MatchId}.", teamId, requestList.Count, matchId);
 
-        if (lineup == null)
-            return NotFound("The specified lineup entry was not found.");
+        // 1. Validate each request DTO
+        foreach (var req in requestList)
+        {
+            var validationResult = await validator.ValidateAsync(req);
+            if (!validationResult.IsValid)
+            {
+                _logger.LogWarning("Validation failed for CreateGameEventRequest for match {Id}: {Errors}.", matchId, validationResult.Errors);
+                return BadRequest(validationResult.Errors);
+            }
 
-        if (lineup.MatchId != matchId || lineup.TeamId != teamId)
-            return Forbid();
+            // 2. Verify lineup belonging to match and team
+            var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(req.MatchLineupId));
+            if (lineup == null)
+                return NotFound($"The specified lineup entry {req.MatchLineupId} was not found.");
 
-        // 3. Map request to command and execute
-        var command = request.ToCommand(matchId);
+            if (lineup.MatchId != matchId || lineup.TeamId != teamId)
+                return Forbid();
+        }
+
+        // 3. Map to command and execute
+        var command = requestList.ToCommand(matchId);
         var result = await _mediator.Send(command);
 
         return StatusCode(StatusCodes.Status201Created, result);
     }
 
     /// <summary>
-    /// Records a new game event for a match as a tournament organizer.
+    /// Records a batch of game events for a match as a tournament organizer.
     /// </summary>
     /// <param name="matchId">The unique identifier of the match.</param>
-    /// <param name="request">The request containing details of the game event to be recorded.</param>
+    /// <param name="requests">The collection of game event requests to be recorded.</param>
     /// <param name="validator">The validator for the create game event request.</param>
-    /// <returns>A <see cref="Guid"/> representing the newly created game event.</returns>
-    /// <response code="201">If the game event was successfully created.</response>
-    /// <response code="400">If the request is invalid.</response>
+    /// <returns>A collection of <see cref="Guid"/> representing the newly created game events.</returns>
+    /// <response code="201">If the game events were successfully created.</response>
+    /// <response code="400">If the request payload is empty or invalid.</response>
     /// <response code="403">If the user is not the owner of the tournament.</response>
-    /// <response code="404">If the match is not found.</response>
+    /// <response code="404">If the match or lineup is not found.</response>
     /// <response code="409">If there is a conflict with the current state of the resource.</response>
     [HttpPost("{matchId:guid}/events")]
-    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(IEnumerable<Guid>), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> RecordMatchEvent(
         [FromRoute] Guid matchId,
-        [FromBody] CreateGameEventRequest request,
+        [FromBody] IEnumerable<CreateGameEventRequest> requests,
         [FromServices] IValidator<CreateGameEventRequest> validator)
     {
-        _logger.LogInformation("Recording a new event for match {MatchId} by tournament organizer.", matchId);
-
-        // 1. Validate the request DTO
-        var validationResult = await validator.ValidateAsync(request);
-        if (!validationResult.IsValid)
+        var requestList = requests.ToList();
+        if (requestList.Count == 0)
         {
-            _logger.LogWarning("Validation failed for CreateGameEventRequest for match with {Id}: {Errors}.", matchId, validationResult.Errors);
-            return BadRequest(validationResult.Errors);
+            return BadRequest("At least one game event request is required.");
         }
 
-        // 2. Authorization: Validate that the current user is the owner of the tournament associated with this match
+        _logger.LogInformation("Recording {Count} new events for match {MatchId} by tournament organizer.", requestList.Count, matchId);
+
+        // 1. Validate request DTOs
+        foreach (var req in requestList)
+        {
+            var validationResult = await validator.ValidateAsync(req);
+            if (!validationResult.IsValid)
+            {
+                _logger.LogWarning("Validation failed for CreateGameEventRequest for match {Id}: {Errors}.", matchId, validationResult.Errors);
+                return BadRequest(validationResult.Errors);
+            }
+        }
+
+        // 2. Authorization check
         var accessError = await ValidateTournamentOwnership(matchId);
         if (accessError != null) return accessError;
 
-        // 3. Verify that the lineup entry exists and belongs to the correct match (additional integrity check)
-        var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(request.MatchLineupId));
-
-        if (lineup == null)
+        // 3. Verify lineup entry existence
+        foreach (var req in requestList)
         {
-            _logger.LogWarning("Record event failed: MatchLineup {LineupId} not found.", request.MatchLineupId);
-            return NotFound($"The specified lineup entry {request.MatchLineupId} was not found.");
+            var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(req.MatchLineupId));
+            if (lineup == null)
+            {
+                _logger.LogWarning("Record event failed: MatchLineup {LineupId} not found.", req.MatchLineupId);
+                return NotFound($"The specified lineup entry {req.MatchLineupId} was not found.");
+            }
         }
 
         // 4. Map request to command and execute
-        var command = request.ToCommand(matchId);
+        var command = requestList.ToCommand(matchId);
         var result = await _mediator.Send(command);
 
         return StatusCode(StatusCodes.Status201Created, result);
@@ -779,44 +797,53 @@ public class MatchesController(
     }
 
     /// <summary>
-    /// Records a new time anchor for a match timeline.
+    /// Records a batch of time anchors for a match timeline.
     /// </summary>
     /// <param name="matchId">The unique identifier of the match from the route.</param>
-    /// <param name="request">The data transfer object containing anchor specifications.</param>
+    /// <param name="requests">The collection of time anchor requests to be recorded.</param>
     /// <param name="validator">The request validator injected from DI container.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The unique identifier of the newly created time anchor record.</returns>
-    /// <response code="201">Returns the unique identifier of the newly created time anchor.</response>
-    /// <response code="400">If the request is invalid.</response>
+    /// <returns>A collection of identifiers for the newly created time anchor records.</returns>
+    /// <response code="201">Returns the collection of identifiers for created time anchors.</response>
+    /// <response code="400">If the request is empty or invalid.</response>
     /// <response code="401">If the user is not authenticated.</response>
     /// <response code="403">If the user is not authorized to perform this action.</response>
     /// <response code="404">If the match or associated entities were not found.</response>
     [HttpPost("{matchId}/anchors")]
-    [ProducesResponseType(typeof(Guid), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(IEnumerable<Guid>), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> RecordTimeAnchor(
         Guid matchId,
-        [FromBody] CreateTimeAnchorRequest request,
+        [FromBody] IEnumerable<CreateTimeAnchorRequest> requests,
         [FromServices] IValidator<CreateTimeAnchorRequest> validator,
         CancellationToken cancellationToken)
     {
-        // 1) Execute FluentValidation rules against the incoming request model
-        var validationResult = await validator.ValidateAsync(request, cancellationToken);
-        if (!validationResult.IsValid)
+        var requestList = requests.ToList();
+        if (requestList.Count == 0)
         {
-            _logger.LogWarning("Validation failed for CreateTimeAnchorRequest in match {MatchId}.", matchId);
-            return BadRequest(validationResult.Errors);
+            return BadRequest("At least one time anchor request is required.");
         }
 
-        // 2) Verify user authorization rules (Tournament Owner or competing Team Editors)
+        // 1. Validate each request DTO
+        foreach (var req in requestList)
+        {
+            var validationResult = await validator.ValidateAsync(req, cancellationToken);
+            if (!validationResult.IsValid)
+            {
+                _logger.LogWarning("Validation failed for CreateTimeAnchorRequest in match {MatchId}.", matchId);
+                return BadRequest(validationResult.Errors);
+            }
+        }
+
+        // 2. Access control check
         var authResult = await ValidateMatchEditAccess(matchId, cancellationToken);
         if (authResult != null) return authResult;
 
-        // 3) Map the validated request DTO to the corresponding command and execute it
-        var command = request.ToCommand(matchId);
+        // 3. Map to command and execute
+        var command = requestList.ToCommand(matchId);
         var result = await _mediator.Send(command, cancellationToken);
 
         return StatusCode(StatusCodes.Status201Created, result);
