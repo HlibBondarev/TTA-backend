@@ -35,8 +35,9 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
     {
         // Arrange
         var matchId = await SeedTimeAnchorEnvironmentAsync();
-        var anchor1 = CreateAnchorModel(matchId, 1, (TimeAnchorType)0); // 0 = PeriodStart
-        var anchor2 = CreateAnchorModel(matchId, 1, (TimeAnchorType)1); // 1 = PeriodEnd
+        var anchor1 = CreateAnchorModel(matchId, 1, TimeAnchorType.PeriodStart);
+        var anchor2 = CreateAnchorModel(matchId, 1, TimeAnchorType.PeriodEnd);
+        anchor2.Timestamp = anchor1.Timestamp.AddMinutes(45);
 
         // Act
         var result = (await _repository.UpsertAsync([anchor1, anchor2])).ToList();
@@ -76,7 +77,7 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
     {
         // Arrange
         var matchId = await SeedTimeAnchorEnvironmentAsync();
-        var timeAnchor = CreateAnchorModel(matchId, 1, (TimeAnchorType)0);
+        var timeAnchor = CreateAnchorModel(matchId, 1, TimeAnchorType.PeriodStart);
         await _repository.UpsertAsync([timeAnchor]);
 
         // Act
@@ -98,8 +99,8 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
         // Arrange
         var matchId = await SeedTimeAnchorEnvironmentAsync();
 
-        var anchor1 = CreateAnchorModel(matchId, 1, (TimeAnchorType)0); // PeriodStart
-        var anchor2 = CreateAnchorModel(matchId, 1, (TimeAnchorType)1); // PeriodEnd
+        var anchor1 = CreateAnchorModel(matchId, 1, TimeAnchorType.PeriodStart);
+        var anchor2 = CreateAnchorModel(matchId, 1, TimeAnchorType.PeriodEnd);
         // Ensure chronological difference
         anchor2.Timestamp = anchor1.Timestamp.AddMinutes(45);
 
@@ -125,7 +126,7 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
     {
         // Arrange
         var matchId = await SeedTimeAnchorEnvironmentAsync();
-        var newAnchor = CreateAnchorModel(matchId, 1, (TimeAnchorType)0);
+        var newAnchor = CreateAnchorModel(matchId, 1, TimeAnchorType.PeriodStart);
 
         // Ensure record exists before deletion
         await _repository.UpsertAsync([newAnchor]);
