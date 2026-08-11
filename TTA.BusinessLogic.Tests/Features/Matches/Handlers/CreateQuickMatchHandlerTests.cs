@@ -467,7 +467,7 @@ public class CreateQuickMatchHandlerTests
     /// <summary>
     /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when fallback sport resolution fails,
     /// and that a compensating rollback deletion is dispatched to purge the provisioned match entity, 
-    /// both newly created access policies, and the newly provisioned user.
+    /// both newly created access policies (verified per captured ID), and the newly provisioned user.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldThrowKeyNotFoundExceptionAndRollbackNewUserAndBothPolicies_WhenSportNotFoundForDefaultConfig()
@@ -491,6 +491,8 @@ public class CreateQuickMatchHandlerTests
             CreatedAt = DateTime.UtcNow
         };
 
+        var createdPolicyIds = new List<Guid>();
+
         // User is newly provisioned -> UpsertAsync returns IsInserted = true
         _userRepositoryMock
             .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
@@ -505,6 +507,10 @@ public class CreateQuickMatchHandlerTests
             .Setup(a => a.GetActiveTeamPolicyAsync(userId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((AccessPolicy?)null);
 
+        _accessRepositoryMock
+            .Setup(a => a.AddAccessAsync(It.IsAny<AccessPolicy>(), It.IsAny<CancellationToken>()))
+            .Callback<AccessPolicy, CancellationToken>((policy, _) => createdPolicyIds.Add(policy.Id));
+
         _sportRepositoryMock
             .Setup(s => s.GetByIdAsync(sportId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((Sport?)null);
@@ -518,10 +524,14 @@ public class CreateQuickMatchHandlerTests
             m => m.DeleteAsync(createdMatch.Id, It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // Verify access policy rollback for both created policies (Home & Guest teams)
+        // Verify access policy rollback for both created policies (Home & Guest teams) by captured ID
+        Assert.Equal(2, createdPolicyIds.Count);
         _accessRepositoryMock.Verify(
-            a => a.DeleteAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
+            a => a.DeleteAsync(createdPolicyIds[0], It.IsAny<CancellationToken>()),
+            Times.Once);
+        _accessRepositoryMock.Verify(
+            a => a.DeleteAsync(createdPolicyIds[1], It.IsAny<CancellationToken>()),
+            Times.Once);
 
         // Verify JIT user rollback
         _userRepositoryMock.Verify(
@@ -531,7 +541,7 @@ public class CreateQuickMatchHandlerTests
 
     /// <summary>
     /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when the target sport configuration entity is missing,
-    /// and that compensating rollback triggers deletion of the created match entity and both created access policies, without deleting an existing user.
+    /// and that compensating rollback triggers deletion of the created match entity and both created access policies (verified per captured ID), without deleting an existing user.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldThrowKeyNotFoundExceptionAndNotDeleteExistingUser_WhenSportConfigurationNotFound()
@@ -556,6 +566,8 @@ public class CreateQuickMatchHandlerTests
             CreatedAt = DateTime.UtcNow
         };
 
+        var createdPolicyIds = new List<Guid>();
+
         // User already existed prior to request -> UpsertAsync returns IsInserted = false
         _userRepositoryMock
             .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
@@ -568,6 +580,10 @@ public class CreateQuickMatchHandlerTests
         _accessRepositoryMock
             .Setup(a => a.GetActiveTeamPolicyAsync(userId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((AccessPolicy?)null);
+
+        _accessRepositoryMock
+            .Setup(a => a.AddAccessAsync(It.IsAny<AccessPolicy>(), It.IsAny<CancellationToken>()))
+            .Callback<AccessPolicy, CancellationToken>((policy, _) => createdPolicyIds.Add(policy.Id));
 
         _sportConfigurationRepositoryMock
             .Setup(c => c.GetByIdAsync(configId, It.IsAny<CancellationToken>()))
@@ -582,10 +598,14 @@ public class CreateQuickMatchHandlerTests
             m => m.DeleteAsync(createdMatch.Id, It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // Verify access policy rollback for both Home and Guest team policies
+        // Verify access policy rollback for both Home and Guest team policies by captured ID
+        Assert.Equal(2, createdPolicyIds.Count);
         _accessRepositoryMock.Verify(
-            a => a.DeleteAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
+            a => a.DeleteAsync(createdPolicyIds[0], It.IsAny<CancellationToken>()),
+            Times.Once);
+        _accessRepositoryMock.Verify(
+            a => a.DeleteAsync(createdPolicyIds[1], It.IsAny<CancellationToken>()),
+            Times.Once);
 
         // Verify existing user is NOT deleted
         _userRepositoryMock.Verify(
