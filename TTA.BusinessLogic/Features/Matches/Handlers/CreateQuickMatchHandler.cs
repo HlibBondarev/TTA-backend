@@ -145,7 +145,8 @@ public class CreateQuickMatchHandler(
     }
 
     /// <summary>
-    /// Ensures the requesting user possesses an active TeamEditor policy for the specified team.
+    /// Ensures the requesting user possesses an active TeamEditor (or higher) policy for the specified team.
+    /// If an active policy exists but is Viewer-only, a new TeamEditor policy is granted.
     /// </summary>
     /// <param name="userId">The unique identifier of the user.</param>
     /// <param name="teamId">The unique identifier of the team.</param>
@@ -154,7 +155,7 @@ public class CreateQuickMatchHandler(
     private async Task<Guid?> EnsureTeamEditorPolicyAsync(string userId, Guid teamId, CancellationToken cancellationToken)
     {
         var activePolicy = await _accessRepository.GetActiveTeamPolicyAsync(userId, teamId, cancellationToken);
-        if (activePolicy != null)
+        if (activePolicy != null && IsEditorOrHigher(activePolicy.Role))
         {
             return null;
         }
@@ -174,6 +175,13 @@ public class CreateQuickMatchHandler(
         await _accessRepository.AddAccessAsync(newPolicy, cancellationToken);
         return newPolicy.Id;
     }
+
+    /// <summary>
+    /// Determines whether the specified role provides Editor-level or higher access.
+    /// </summary>
+    /// <param name="role">The access role to evaluate.</param>
+    /// <returns><c>true</c> if the role is Editor or FullControl; otherwise, <c>false</c>.</returns>
+    private static bool IsEditorOrHigher(AppRole role) => role == AppRole.Editor || role == AppRole.FullControl;
 
     /// <summary>
     /// Resolves sport configuration rules and coordinates starting lineup population for both Home and Guest teams.

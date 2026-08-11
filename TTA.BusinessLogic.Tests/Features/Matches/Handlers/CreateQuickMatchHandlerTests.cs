@@ -235,7 +235,7 @@ public class CreateQuickMatchHandlerTests
     }
 
     /// <summary>
-    /// Verifies that policy grant is skipped for a team when an active policy already exists for that team,
+    /// Verifies that policy grant is skipped for a team when an active Editor policy already exists for that team,
     /// but granted for the team that lacks an active policy.
     /// </summary>
     [Fact]
@@ -271,7 +271,7 @@ public class CreateQuickMatchHandlerTests
             .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdMatch);
 
-        // User already has active policy for Home Team
+        // User already has active Editor policy for Home Team
         _accessRepositoryMock
             .Setup(a => a.GetActiveTeamPolicyAsync(userId, createdMatch.HomeTeamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AccessPolicy { UserId = userId, TargetId = createdMatch.HomeTeamId, Role = AppRole.Editor });
@@ -307,6 +307,80 @@ public class CreateQuickMatchHandlerTests
                 It.Is<AccessPolicy>(p => p.TargetId == createdMatch.HomeTeamId),
                 It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that a new TeamEditor policy is granted when the user only holds a Viewer-level policy for a team.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldGrantEditorPolicy_WhenUserHasOnlyViewerPolicy()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        const string userId = "auth0|user123";
+        const string userEmail = "user123@example.com";
+        const string userName = "Test User";
+
+        var request = new CreateQuickMatchRequest(sportId, configId);
+        var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
+
+        var createdMatch = new Match
+        {
+            Id = Guid.NewGuid(),
+            TournamentId = Guid.NewGuid(),
+            HomeTeamId = Guid.NewGuid(),
+            GuestTeamId = Guid.NewGuid(),
+            ScheduledAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var sportConfig = new SportConfiguration { Id = configId, SportId = sportId, LineupLimit = 7 };
+
+        _userRepositoryMock
+            .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => (user, false));
+
+        _matchRepositoryMock
+            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdMatch);
+
+        // User holds only Viewer policy for Home Team
+        _accessRepositoryMock
+            .Setup(a => a.GetActiveTeamPolicyAsync(userId, createdMatch.HomeTeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AccessPolicy { UserId = userId, TargetId = createdMatch.HomeTeamId, Role = AppRole.Viewer });
+
+        _accessRepositoryMock
+            .Setup(a => a.GetActiveTeamPolicyAsync(userId, createdMatch.GuestTeamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AccessPolicy?)null);
+
+        _sportConfigurationRepositoryMock
+            .Setup(c => c.GetByIdAsync(configId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(sportConfig);
+
+        _rosterRepositoryMock
+            .Setup(r => r.GetTeamRosterAsync(createdMatch.TournamentId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<dynamic>());
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result);
+
+        // Verify AddAccessAsync is invoked for Home Team with Editor role despite having Viewer policy
+        _accessRepositoryMock.Verify(
+            a => a.AddAccessAsync(
+                It.Is<AccessPolicy>(p => p.UserId == userId && p.TargetId == createdMatch.HomeTeamId && p.Role == AppRole.Editor),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Verify AddAccessAsync is also invoked for Guest Team with Editor role
+        _accessRepositoryMock.Verify(
+            a => a.AddAccessAsync(
+                It.Is<AccessPolicy>(p => p.UserId == userId && p.TargetId == createdMatch.GuestTeamId && p.Role == AppRole.Editor),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     /// <summary>
@@ -347,7 +421,7 @@ public class CreateQuickMatchHandlerTests
 
         _accessRepositoryMock
             .Setup(a => a.GetActiveTeamPolicyAsync(userId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AccessPolicy());
+            .ReturnsAsync(new AccessPolicy { Role = AppRole.Editor });
 
         _sportConfigurationRepositoryMock
             .Setup(c => c.GetByIdAsync(configId, It.IsAny<CancellationToken>()))
@@ -410,7 +484,7 @@ public class CreateQuickMatchHandlerTests
 
         _accessRepositoryMock
             .Setup(a => a.GetActiveTeamPolicyAsync(userId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new AccessPolicy());
+            .ReturnsAsync(new AccessPolicy { Role = AppRole.Editor });
 
         _sportRepositoryMock
             .Setup(s => s.GetByIdAsync(sportId, It.IsAny<CancellationToken>()))
