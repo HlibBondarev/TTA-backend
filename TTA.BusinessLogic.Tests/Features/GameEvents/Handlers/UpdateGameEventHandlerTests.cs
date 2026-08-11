@@ -185,6 +185,37 @@ public class UpdateGameEventHandlerTests
     }
 
     /// <summary>
+    /// Verifies that a <see cref="NotFoundException"/> is thrown when UpsertAsync returns an empty result set.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_NotFoundException_When_UpsertAsyncReturnsEmpty()
+    {
+        // Arrange
+        var command = CreateCommand();
+        var existingEvent = new GameEvent { Id = command.Id };
+        var matchLineup = new MatchLineup { Id = command.MatchLineupId, MatchId = command.MatchId };
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingEvent);
+
+        _matchLineupRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchLineupId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(matchLineup);
+
+        _gameEventRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage($"Game event with ID {command.Id} was not found.");
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="UpdateGameEventCommand"/> for testing.
     /// </summary>
     /// <returns>A populated command instance.</returns>
