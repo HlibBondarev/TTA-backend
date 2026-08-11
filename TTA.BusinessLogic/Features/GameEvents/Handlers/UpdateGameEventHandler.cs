@@ -60,10 +60,11 @@ public class UpdateGameEventHandler(
 
         try
         {
-            var result = await _gameEventRepository.UpsertAsync(model, cancellationToken);
+            var updated = (await _gameEventRepository.UpsertAsync([model], cancellationToken)).FirstOrDefault()
+                ?? throw new NotFoundException($"Game event with ID {request.Id} was not found.");
 
-            _logger.LogInformation("Game event {Id} successfully updated for Match {MatchId}.", result.Id, request.MatchId);
-            return result.Id;
+            _logger.LogInformation("Game event {Id} successfully updated for Match {MatchId}.", updated.Id, request.MatchId);
+            return updated.Id;
         }
         catch (PostgresException ex) when (ex.SqlState == "23503")
         {

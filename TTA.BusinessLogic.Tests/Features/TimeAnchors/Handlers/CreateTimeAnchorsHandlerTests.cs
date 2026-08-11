@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using Npgsql;
 using TTA.BusinessLogic.Features.TimeAnchors.Commands;
+using TTA.BusinessLogic.Features.TimeAnchors.DTOs;
 using TTA.BusinessLogic.Features.TimeAnchors.Handlers;
 using TTA.Common.Exceptions;
 using TTA.DataAccess.Enums;
@@ -13,49 +14,42 @@ using Match = TTA.DataAccess.Models.Match;
 namespace TTA.BusinessLogic.Tests.Features.TimeAnchors.Handlers;
 
 /// <summary>
-/// Unit tests for the <see cref="CreateTimeAnchorHandler"/> class.
-/// Ensures validation logic, state machine sequence rules, repository interaction, and exception mapping are correct.
+/// Unit tests for the <see cref="CreateTimeAnchorsHandler"/> class.
+/// Ensures batch validation logic, state machine sequence rules, repository interaction, and exception mapping are correct.
 /// </summary>
-public class CreateTimeAnchorHandlerTests
+public class CreateTimeAnchorsHandlerTests
 {
     private readonly Mock<ITimeAnchorRepository> _timeAnchorRepositoryMock;
     private readonly Mock<IMatchRepository> _matchRepositoryMock;
-    private readonly Mock<ILogger<CreateTimeAnchorHandler>> _loggerMock;
-    private readonly CreateTimeAnchorHandler _handler;
+    private readonly Mock<ILogger<CreateTimeAnchorsHandler>> _loggerMock;
+    private readonly CreateTimeAnchorsHandler _handler;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CreateTimeAnchorHandlerTests"/> class.
+    /// Initializes a new instance of the <see cref="CreateTimeAnchorsHandlerTests"/> class.
     /// Sets up mocks and the handler under test.
     /// </summary>
-    public CreateTimeAnchorHandlerTests()
+    public CreateTimeAnchorsHandlerTests()
     {
         _timeAnchorRepositoryMock = new Mock<ITimeAnchorRepository>();
         _matchRepositoryMock = new Mock<IMatchRepository>();
-        _loggerMock = new Mock<ILogger<CreateTimeAnchorHandler>>();
+        _loggerMock = new Mock<ILogger<CreateTimeAnchorsHandler>>();
 
-        _handler = new CreateTimeAnchorHandler(
+        _handler = new CreateTimeAnchorsHandler(
             _timeAnchorRepositoryMock.Object,
             _matchRepositoryMock.Object,
             _loggerMock.Object);
     }
 
     /// <summary>
-    /// Verifies that the handler successfully creates a time anchor using the client-supplied ID and Timestamp when the sequence is valid.
+    /// Verifies that the handler successfully creates time anchors using client-supplied IDs and Timestamps when the sequence is valid.
     /// </summary>
     [Fact]
     public async Task Handle_Should_CreateAnchor_When_SequenceIsValid()
     {
         // Arrange
-        var command = CreateCommand(TimeAnchorType.PeriodStart);
+        var (command, request) = CreateCommand(TimeAnchorType.PeriodStart);
         var match = new Match { Id = command.MatchId };
-        var createdAnchor = new TimeAnchor
-        {
-            Id = command.Id,
-            MatchId = command.MatchId,
-            PeriodNumber = command.PeriodNumber,
-            Type = command.Type,
-            Timestamp = command.Timestamp
-        };
+        var createdAnchor = request.ToModel(command.MatchId);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
@@ -66,22 +60,22 @@ public class CreateTimeAnchorHandlerTests
             .ReturnsAsync([]);
 
         _timeAnchorRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(createdAnchor);
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([createdAnchor]);
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
 
         // Assert
-        result.Should().Be(command.Id);
+        result.Should().ContainSingle().Which.Should().Be(request.Id);
 
         _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(
-            It.Is<TimeAnchor>(a =>
-                a.Id == command.Id &&
-                a.MatchId == command.MatchId &&
-                a.PeriodNumber == command.PeriodNumber &&
-                a.Type == command.Type &&
-                a.Timestamp == command.Timestamp),
+            It.Is<IEnumerable<TimeAnchor>>(anchors =>
+                anchors.Single().Id == request.Id &&
+                anchors.Single().MatchId == command.MatchId &&
+                anchors.Single().PeriodNumber == request.PeriodNumber &&
+                anchors.Single().Type == request.Type &&
+                anchors.Single().Timestamp == request.Timestamp.ToUniversalTime()),
             It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -90,6 +84,7 @@ public class CreateTimeAnchorHandlerTests
     /// Verifies that timestamps with different <see cref="DateTimeKind"/> values (Unspecified, Local, Utc) 
     /// are correctly normalized to UTC when mapped to the domain model during anchor creation.
     /// </summary>
+    /// <param name="kind">The DateTimeKind value to test.</param>
     [Theory]
     [InlineData(DateTimeKind.Unspecified)]
     [InlineData(DateTimeKind.Local)]
@@ -98,14 +93,15 @@ public class CreateTimeAnchorHandlerTests
     {
         // Arrange
         var rawTimestamp = new DateTime(2026, 8, 8, 12, 0, 0, kind);
-        var command = new CreateTimeAnchorCommand(
+        var request = new CreateTimeAnchorRequest(
             Id: Guid.NewGuid(),
-            MatchId: Guid.NewGuid(),
             PeriodNumber: 1,
             Type: TimeAnchorType.PeriodStart,
             Timestamp: rawTimestamp);
 
+        var command = new CreateTimeAnchorsCommand(Guid.NewGuid(), [request]);
         var match = new Match { Id = command.MatchId };
+
         var expectedUtcTimestamp = kind switch
         {
             DateTimeKind.Unspecified => DateTime.SpecifyKind(rawTimestamp, DateTimeKind.Utc),
@@ -114,10 +110,10 @@ public class CreateTimeAnchorHandlerTests
 
         var createdAnchor = new TimeAnchor
         {
-            Id = command.Id,
+            Id = request.Id,
             MatchId = command.MatchId,
-            PeriodNumber = command.PeriodNumber,
-            Type = command.Type,
+            PeriodNumber = request.PeriodNumber,
+            Type = request.Type,
             Timestamp = expectedUtcTimestamp
         };
 
@@ -130,19 +126,19 @@ public class CreateTimeAnchorHandlerTests
             .ReturnsAsync([]);
 
         _timeAnchorRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(createdAnchor);
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([createdAnchor]);
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
 
         // Assert
-        result.Should().Be(command.Id);
+        result.Should().ContainSingle().Which.Should().Be(request.Id);
 
         _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(
-            It.Is<TimeAnchor>(a =>
-                a.Timestamp.Kind == DateTimeKind.Utc &&
-                a.Timestamp == expectedUtcTimestamp),
+            It.Is<IEnumerable<TimeAnchor>>(anchors =>
+                anchors.Single().Timestamp.Kind == DateTimeKind.Utc &&
+                anchors.Single().Timestamp == expectedUtcTimestamp),
             It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -154,16 +150,9 @@ public class CreateTimeAnchorHandlerTests
     public async Task Handle_Should_BeIdempotent_WhenSameCommandIsHandledTwice()
     {
         // Arrange
-        var command = CreateCommand(TimeAnchorType.PeriodStart);
+        var (command, request) = CreateCommand(TimeAnchorType.PeriodStart);
         var match = new Match { Id = command.MatchId };
-        var createdAnchor = new TimeAnchor
-        {
-            Id = command.Id,
-            MatchId = command.MatchId,
-            PeriodNumber = command.PeriodNumber,
-            Type = command.Type,
-            Timestamp = command.Timestamp
-        };
+        var createdAnchor = request.ToModel(command.MatchId);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
@@ -175,19 +164,19 @@ public class CreateTimeAnchorHandlerTests
             .ReturnsAsync([createdAnchor]);
 
         _timeAnchorRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(createdAnchor);
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([createdAnchor]);
 
         // Act
         var firstResult = await _handler.Handle(command, CancellationToken.None);
         var secondResult = await _handler.Handle(command, CancellationToken.None);
 
         // Assert
-        firstResult.Should().Be(command.Id);
-        secondResult.Should().Be(command.Id);
+        firstResult.Should().ContainSingle().Which.Should().Be(request.Id);
+        secondResult.Should().ContainSingle().Which.Should().Be(request.Id);
 
         _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(
-            It.Is<TimeAnchor>(a => a.Id == command.Id),
+            It.Is<IEnumerable<TimeAnchor>>(anchors => anchors.Single().Id == request.Id),
             It.IsAny<CancellationToken>()),
             Times.Exactly(2));
     }
@@ -208,12 +197,13 @@ public class CreateTimeAnchorHandlerTests
             new() { Id = anchorId, MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow }
         };
 
-        var command = new CreateTimeAnchorCommand(
+        var request = new CreateTimeAnchorRequest(
             Id: anchorId,
-            MatchId: matchId,
             PeriodNumber: 1,
             Type: TimeAnchorType.PeriodEnd,
             Timestamp: DateTime.UtcNow.AddMinutes(5));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
@@ -248,12 +238,13 @@ public class CreateTimeAnchorHandlerTests
             new() { Id = anchorId, MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime }
         };
 
-        var command = new CreateTimeAnchorCommand(
+        var request = new CreateTimeAnchorRequest(
             Id: anchorId,
-            MatchId: matchId,
             PeriodNumber: 1,
             Type: TimeAnchorType.PeriodStart,
-            Timestamp: baseTime.AddMinutes(1)); // Altered timestamp
+            Timestamp: baseTime.AddMinutes(1));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
@@ -278,7 +269,7 @@ public class CreateTimeAnchorHandlerTests
     public async Task Handle_Should_Throw_NotFoundException_When_MatchNotFound()
     {
         // Arrange
-        var command = CreateCommand(TimeAnchorType.PeriodStart);
+        var (command, _) = CreateCommand(TimeAnchorType.PeriodStart);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
@@ -299,12 +290,12 @@ public class CreateTimeAnchorHandlerTests
     public async Task Handle_Should_Throw_ConflictException_When_PeriodAlreadyStarted()
     {
         // Arrange
-        var command = CreateCommand(TimeAnchorType.PeriodStart);
+        var (command, request) = CreateCommand(TimeAnchorType.PeriodStart);
         var match = new Match { Id = command.MatchId };
 
         var existingAnchors = new List<TimeAnchor>
         {
-            new() { Id = Guid.NewGuid(), PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow }
+            new() { Id = Guid.NewGuid(), PeriodNumber = request.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow }
         };
 
         _matchRepositoryMock
@@ -320,7 +311,7 @@ public class CreateTimeAnchorHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ConflictException>()
-            .WithMessage($"Period {command.PeriodNumber} already started.");
+            .WithMessage($"Period {request.PeriodNumber} already started.");
     }
 
     /// <summary>
@@ -330,10 +321,8 @@ public class CreateTimeAnchorHandlerTests
     public async Task Handle_Should_Throw_ConflictException_When_EndingUnstartedPeriod()
     {
         // Arrange
-        var command = CreateCommand(TimeAnchorType.PeriodEnd);
+        var (command, request) = CreateCommand(TimeAnchorType.PeriodEnd);
         var match = new Match { Id = command.MatchId };
-
-        var existingAnchors = new List<TimeAnchor>();
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(command.MatchId, It.IsAny<CancellationToken>()))
@@ -341,14 +330,14 @@ public class CreateTimeAnchorHandlerTests
 
         _timeAnchorRepositoryMock
             .Setup(r => r.GetMatchAnchorsAsync(command.MatchId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingAnchors);
+            .ReturnsAsync([]);
 
         // Act
         var act = async () => await _handler.Handle(command, CancellationToken.None);
 
         // Assert
         await act.Should().ThrowAsync<ConflictException>()
-            .WithMessage($"Cannot end period {command.PeriodNumber} before it starts.");
+            .WithMessage($"Cannot end period {request.PeriodNumber} before it starts.");
     }
 
     /// <summary>
@@ -358,13 +347,13 @@ public class CreateTimeAnchorHandlerTests
     public async Task Handle_Should_Throw_ConflictException_When_MatchAlreadyStopped()
     {
         // Arrange
-        var command = CreateCommand(TimeAnchorType.StoppageStart);
+        var (command, request) = CreateCommand(TimeAnchorType.StoppageStart);
         var match = new Match { Id = command.MatchId };
 
         var existingAnchors = new List<TimeAnchor>
         {
-            new() { Id = Guid.NewGuid(), PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow.AddMinutes(-10) },
-            new() { Id = Guid.NewGuid(), PeriodNumber = command.PeriodNumber, Type = TimeAnchorType.StoppageStart, Timestamp = DateTime.UtcNow }
+            new() { Id = Guid.NewGuid(), PeriodNumber = request.PeriodNumber, Type = TimeAnchorType.PeriodStart, Timestamp = DateTime.UtcNow.AddMinutes(-10) },
+            new() { Id = Guid.NewGuid(), PeriodNumber = request.PeriodNumber, Type = TimeAnchorType.StoppageStart, Timestamp = DateTime.UtcNow }
         };
 
         _matchRepositoryMock
@@ -390,7 +379,7 @@ public class CreateTimeAnchorHandlerTests
     public async Task Handle_Should_Throw_ConflictException_On_Postgres_BusinessRule_Violation()
     {
         // Arrange
-        var command = CreateCommand(TimeAnchorType.PeriodStart);
+        var (command, _) = CreateCommand(TimeAnchorType.PeriodStart);
         var match = new Match { Id = command.MatchId };
         const string dbErrorMessage = "Custom DB validation error";
 
@@ -405,7 +394,7 @@ public class CreateTimeAnchorHandlerTests
             .ReturnsAsync([]);
 
         _timeAnchorRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(pgException);
 
         // Act
@@ -432,13 +421,13 @@ public class CreateTimeAnchorHandlerTests
             new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime }
         };
 
-        // Candidate anchor: StoppageStart with backdated timestamp earlier than PeriodStart
-        var command = new CreateTimeAnchorCommand(
+        var request = new CreateTimeAnchorRequest(
             Id: Guid.NewGuid(),
-            MatchId: matchId,
             PeriodNumber: 1,
             Type: TimeAnchorType.StoppageStart,
             Timestamp: baseTime.AddMinutes(-5));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
@@ -473,12 +462,13 @@ public class CreateTimeAnchorHandlerTests
             new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodEnd, Timestamp = baseTime.AddMinutes(10) }
         };
 
-        var command = new CreateTimeAnchorCommand(
+        var request = new CreateTimeAnchorRequest(
             Id: Guid.NewGuid(),
-            MatchId: matchId,
             PeriodNumber: 1,
             Type: TimeAnchorType.PeriodEnd,
             Timestamp: baseTime.AddMinutes(12));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
@@ -493,7 +483,7 @@ public class CreateTimeAnchorHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ConflictException>()
-            .WithMessage($"Period {command.PeriodNumber} is already finished.");
+            .WithMessage($"Period {request.PeriodNumber} is already finished.");
     }
 
     /// <summary>
@@ -513,12 +503,13 @@ public class CreateTimeAnchorHandlerTests
             new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.StoppageStart, Timestamp = baseTime.AddMinutes(5) }
         };
 
-        var command = new CreateTimeAnchorCommand(
+        var request = new CreateTimeAnchorRequest(
             Id: Guid.NewGuid(),
-            MatchId: matchId,
             PeriodNumber: 1,
             Type: TimeAnchorType.PeriodEnd,
             Timestamp: baseTime.AddMinutes(10));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
@@ -552,12 +543,13 @@ public class CreateTimeAnchorHandlerTests
             new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime }
         };
 
-        var command = new CreateTimeAnchorCommand(
+        var request = new CreateTimeAnchorRequest(
             Id: Guid.NewGuid(),
-            MatchId: matchId,
             PeriodNumber: 1,
             Type: TimeAnchorType.StoppageEnd,
             Timestamp: baseTime.AddMinutes(5));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
@@ -590,21 +582,19 @@ public class CreateTimeAnchorHandlerTests
         var id1 = Guid.Parse("00000000-0000-0000-0000-000000000001");
         var id2 = Guid.Parse("00000000-0000-0000-0000-000000000002");
 
-        // PeriodStart anchor with smaller Guid
         var existingAnchors = new List<TimeAnchor>
         {
             new() { Id = id1, MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = sameTimestamp }
         };
 
-        // StoppageStart candidate with larger Guid arriving with same timestamp
-        var command = new CreateTimeAnchorCommand(
+        var request = new CreateTimeAnchorRequest(
             Id: id2,
-            MatchId: matchId,
             PeriodNumber: 1,
             Type: TimeAnchorType.StoppageStart,
             Timestamp: sameTimestamp);
 
-        var createdAnchor = command.ToModel();
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
+        var createdAnchor = request.ToModel(matchId);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
@@ -615,15 +605,15 @@ public class CreateTimeAnchorHandlerTests
             .ReturnsAsync(existingAnchors);
 
         _timeAnchorRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(createdAnchor);
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([createdAnchor]);
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
 
         // Assert
-        result.Should().Be(command.Id);
-        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.Should().ContainSingle().Which.Should().Be(request.Id);
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -645,15 +635,14 @@ public class CreateTimeAnchorHandlerTests
             new() { Id = Guid.NewGuid(), MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.StoppageStart, Timestamp = baseTime.AddMinutes(8) }
         };
 
-        // Candidate anchor: late StoppageEnd (minute 7) that must be inserted chronologically between StoppageStart (minute 5) and StoppageStart (minute 8)
-        var command = new CreateTimeAnchorCommand(
+        var request = new CreateTimeAnchorRequest(
             Id: Guid.NewGuid(),
-            MatchId: matchId,
             PeriodNumber: 1,
             Type: TimeAnchorType.StoppageEnd,
             Timestamp: baseTime.AddMinutes(7));
 
-        var createdAnchor = command.ToModel();
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
+        var createdAnchor = request.ToModel(matchId);
 
         _matchRepositoryMock
             .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
@@ -664,29 +653,180 @@ public class CreateTimeAnchorHandlerTests
             .ReturnsAsync(existingAnchors);
 
         _timeAnchorRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(createdAnchor);
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([createdAnchor]);
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
 
         // Assert
-        result.Should().Be(command.Id);
-        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<TimeAnchor>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.Should().ContainSingle().Which.Should().Be(request.Id);
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
-    /// Helper method to create a valid <see cref="CreateTimeAnchorCommand"/> with explicit Id and Timestamp.
+    /// Verifies that a valid multi-anchor batch command is processed atomically and passed to UpsertAsync in a single call.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_CreateMultipleAnchors_When_MultiAnchorSequenceIsValid()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        var request1 = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: baseTime);
+
+        var request2 = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodEnd,
+            Timestamp: baseTime.AddMinutes(8));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request1, request2]);
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var createdAnchors = new List<TimeAnchor> { request1.ToModel(matchId), request2.ToModel(matchId) };
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdAnchors);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        var resultList = result.ToList();
+        resultList.Should().HaveCount(2);
+        resultList.Should().Contain([request1.Id, request2.Id]);
+
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(
+            It.Is<IEnumerable<TimeAnchor>>(anchors => anchors.Count() == 2),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that an invalid multi-candidate sequence within the batch payload fails sequence validation and prevents UpsertAsync execution.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Not_Call_UpsertAsync_When_MultiAnchorSequenceIsInvalid()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        // Sequence error: PeriodEnd occurs before PeriodStart in the same incoming batch sequence
+        var requestEnd = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodEnd,
+            Timestamp: baseTime);
+
+        var requestStart = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: baseTime.AddMinutes(10));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [requestEnd, requestStart]);
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("Cannot end period 1 before it starts.");
+
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(
+            It.IsAny<IEnumerable<TimeAnchor>>(),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that sub-millisecond timestamp drift (such as database truncation) between an existing anchor 
+    /// and a re-submitted request does not trigger a false positive <see cref="ConflictException"/>.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_IgnoreSubMillisecondTimestampDrift_WhenParametersMatch()
+    {
+        // Arrange
+        var anchorId = Guid.NewGuid();
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { Id = anchorId, MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime }
+        };
+
+        // Timestamp differs by 500 microseconds (0.5 ms), simulating DB precision truncation
+        var request = new CreateTimeAnchorRequest(
+            Id: anchorId,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: baseTime.AddTicks(5000));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
+        var createdAnchor = request.ToModel(matchId);
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([createdAnchor]);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        result.Should().ContainSingle().Which.Should().Be(anchorId);
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Helper method to create a valid <see cref="CreateTimeAnchorsCommand"/> and its underlying request DTO.
     /// </summary>
     /// <param name="type">The type of anchor to create.</param>
-    /// <returns>A populated command instance.</returns>
-    private static CreateTimeAnchorCommand CreateCommand(TimeAnchorType type)
+    /// <returns>A tuple containing the command and the single request item.</returns>
+    private static (CreateTimeAnchorsCommand Command, CreateTimeAnchorRequest Request) CreateCommand(TimeAnchorType type)
     {
-        return new CreateTimeAnchorCommand(
+        var matchId = Guid.NewGuid();
+        var request = new CreateTimeAnchorRequest(
             Id: Guid.NewGuid(),
-            MatchId: Guid.NewGuid(),
             PeriodNumber: 1,
             Type: type,
             Timestamp: DateTime.UtcNow);
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
+        return (command, request);
     }
 }

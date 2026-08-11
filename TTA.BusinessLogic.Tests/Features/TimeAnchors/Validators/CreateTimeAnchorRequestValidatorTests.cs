@@ -32,7 +32,7 @@ public class CreateTimeAnchorRequestValidatorTests
             Id: Guid.NewGuid(),
             PeriodNumber: 1,
             Type: TimeAnchorType.PeriodStart,
-            Timestamp: DateTime.UtcNow.AddHours(-2) // Past timestamp simulating offline sync
+            Timestamp: DateTime.UtcNow.AddHours(-2)
         );
 
         // Act
@@ -67,6 +67,7 @@ public class CreateTimeAnchorRequestValidatorTests
     /// <summary>
     /// Verifies that an error is returned when <see cref="CreateTimeAnchorRequest.PeriodNumber"/> is zero or negative.
     /// </summary>
+    /// <param name="invalidPeriod">The invalid period number value to test.</param>
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]

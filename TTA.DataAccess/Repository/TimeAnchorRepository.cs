@@ -1,4 +1,5 @@
 ﻿using Dapper;
+using System.Text.Json;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
@@ -6,33 +7,42 @@ using TTA.DataAccess.Repository.Base;
 namespace TTA.DataAccess.Repository;
 
 /// <summary>
-/// Implements data access operations for time anchors using PostgreSQL storage functions.
-/// Supports piecewise-linear time normalization logic.
+/// Implements data access operations for time anchors using PostgreSQL storage functions and JSONB.
 /// </summary>
 /// <param name="connectionFactory">The factory used to create database connections.</param>
 public class TimeAnchorRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, TimeAnchor>(connectionFactory), ITimeAnchorRepository
 {
     /// <inheritdoc />
-    public async Task<TimeAnchor> UpsertAsync(TimeAnchor entity, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<TimeAnchor>> UpsertAsync(IEnumerable<TimeAnchor> entities, CancellationToken cancellationToken = default)
     {
-        // Executes the upsert function via base CreateOrUpdate.
-        // Parameters are mapped automatically from the entity properties to @Property names.
-        return await CreateOrUpdate(
-            entity,
+        var list = entities.ToList();
+        if (list.Count == 0) return [];
+
+        var jsonPayload = JsonSerializer.Serialize(list.Select(e => new
+        {
+            id = e.Id,
+            matchid = e.MatchId,
+            periodnumber = e.PeriodNumber,
+            type = (int)e.Type,
+            timestamp = e.Timestamp
+        }));
+
+        var parameters = new DynamicParameters();
+        parameters.Add("p_anchors", jsonPayload);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+
+        return await connection.QueryAsync<TimeAnchor>(new CommandDefinition(
             SqlStatements.ForTimeAnchors.UpsertTimeAnchor,
-            null,
-            cancellationToken);
+            parameters,
+            cancellationToken: cancellationToken));
     }
 
     /// <inheritdoc />
     public async Task<TimeAnchor?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        // Utilizing base GetById with the specific SQL constant for time anchors.
-        return await GetById(
-            id,
-            SqlStatements.ForTimeAnchors.GetById,
-            cancellationToken);
+        return await GetById(id, SqlStatements.ForTimeAnchors.GetById, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -43,7 +53,6 @@ public class TimeAnchorRepository(IDbConnectionFactory connectionFactory)
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
-        // Retrieves all anchors for a match to build the time normalization timeline.
         return await connection.QueryAsync<TimeAnchor>(new CommandDefinition(
             SqlStatements.ForTimeAnchors.GetMatchAnchors,
             parameters,
@@ -53,11 +62,7 @@ public class TimeAnchorRepository(IDbConnectionFactory connectionFactory)
     /// <inheritdoc />
     public async Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        // Utilizing base Delete method which handles the transaction and calls the storage function.
-        return await Delete(
-            id,
-            SqlStatements.ForTimeAnchors.DeleteAnchor,
-            cancellationToken);
+        return await Delete(id, SqlStatements.ForTimeAnchors.DeleteAnchor, cancellationToken);
     }
 
     /// <inheritdoc />
@@ -66,7 +71,6 @@ public class TimeAnchorRepository(IDbConnectionFactory connectionFactory)
         var parameters = new DynamicParameters();
         parameters.Add("p_match_id", matchId);
 
-        // Executes the scalar query within a transaction context using the specialized BaseRepository method.
         return await ExecuteQueryInTransaction<int>(
             SqlStatements.ForTimeAnchors.GetMatchPeriodDuration,
             parameters,

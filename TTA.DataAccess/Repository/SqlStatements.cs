@@ -381,21 +381,10 @@ public static class SqlStatements
     public static class ForGameEvents
     {
         /// <summary>
-        /// Invokes the storage function to create or update a game event.
-        /// Uses 'SELECT * FROM' to ensure PostgreSQL returns columns that Dapper can map to the entity.
-        /// Parameters match the property names of the GameEvent class for automatic mapping.
+        /// Invokes the JSONB storage function to batch create or update game events.
         /// </summary>
-        public const string UpsertEvent = @"
-            SELECT * FROM public.upsert_game_event(
-                @Id, 
-                @MatchLineupId, 
-                @EventDefinitionId, 
-                @PeriodNumber, 
-                @EventTimestamp, 
-                @NormalizedMatchTime, 
-                @IsLeadToGoal, 
-                @CreatedAt
-            );";
+        public const string UpsertEvent =
+            "SELECT * FROM public.upsert_game_event(@p_events::jsonb);";
 
         /// <summary>
         /// Invokes the storage function to retrieve a raw game event record by its unique identifier.
@@ -432,22 +421,14 @@ public static class SqlStatements
 
     /// <summary>
     /// SQL constants for Time Anchor related database operations.
-    /// Used for piecewise-linear time normalization in match timelines.
     /// </summary>
     public static class ForTimeAnchors
     {
         /// <summary>
-        /// Invokes the storage function to insert or update a time anchor.
-        /// Returns the full record from the public.timeanchors table.
+        /// Invokes the JSONB storage function to batch insert or update time anchors.
         /// </summary>
         public const string UpsertTimeAnchor =
-            @"SELECT * FROM public.upsert_time_anchor(
-                @Id, 
-                @MatchId, 
-                @PeriodNumber, 
-                @Type, 
-                @Timestamp
-            );";
+            "SELECT * FROM public.upsert_time_anchor(@p_anchors::jsonb);";
 
         /// <summary>
         /// Invokes the storage function to retrieve a specific time anchor by its unique identifier.
@@ -457,7 +438,6 @@ public static class SqlStatements
 
         /// <summary>
         /// Invokes the storage function to retrieve all time anchors for a specific match.
-        /// Results are ordered chronologically by the database function.
         /// </summary>
         public const string GetMatchAnchors =
             "SELECT * FROM public.get_match_anchors(@p_match_id);";

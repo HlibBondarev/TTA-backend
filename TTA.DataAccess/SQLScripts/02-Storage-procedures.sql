@@ -1537,21 +1537,25 @@ END;$$ LANGUAGE plpgsql;
 -- =============================================================
 
 /**********************************************************************************
- * Upserts a game event record and returns the resulting row.
- * Consistent with the project's repository pattern for entity mapping.
+ * Ingests a JSONB array of game events and performs set-based upsert operations.
+ * Maps JSON properties directly to public.gameevents table columns.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_game_event(
-    p_id UUID,
-    p_matchlineupid UUID,
-    p_eventdefinitionid UUID,
-    p_periodnumber INT,
-    p_eventtimestamp TIMESTAMPTZ,
-    p_normalizedmatchtime INTERVAL,
-    p_isleadtogoal BOOLEAN,
-    p_createdat TIMESTAMPTZ
+    p_events JSONB
 )
 RETURNS SETOF public.gameevents AS $$
 BEGIN
+    -- 1. Validate that input JSONB array does not contain duplicate event IDs
+    IF EXISTS (
+        SELECT 1
+        FROM jsonb_to_recordset(p_events) AS x(id UUID)
+        GROUP BY x.id
+        HAVING count(*) > 1
+    ) THEN
+        RAISE EXCEPTION 'Batch payload contains duplicate game event identifiers.' USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 2. Execute set-based upsert operation
     RETURN QUERY
     INSERT INTO public.gameevents (
         id, 
@@ -1563,15 +1567,24 @@ BEGIN
         isleadtogoal, 
         createdat
     )
-    VALUES (
-        p_id, 
-        p_matchlineupid, 
-        p_eventdefinitionid, 
-        p_periodnumber, 
-        p_eventtimestamp, 
-        p_normalizedmatchtime, 
-        p_isleadtogoal, 
-        p_createdat
+    SELECT 
+        x.id, 
+        x.matchlineupid, 
+        x.eventdefinitionid, 
+        x.periodnumber, 
+        x.eventtimestamp, 
+        x.normalizedmatchtime, 
+        x.isleadtogoal, 
+        COALESCE(x.createdat, CURRENT_TIMESTAMP)
+    FROM jsonb_to_recordset(p_events) AS x(
+        id UUID,
+        matchlineupid UUID,
+        eventdefinitionid UUID,
+        periodnumber INT,
+        eventtimestamp TIMESTAMPTZ,
+        normalizedmatchtime INTERVAL,
+        isleadtogoal BOOLEAN,
+        createdat TIMESTAMPTZ
     )
     ON CONFLICT (id) DO UPDATE SET
         matchlineupid = EXCLUDED.matchlineupid,
@@ -1580,7 +1593,7 @@ BEGIN
         eventtimestamp = EXCLUDED.eventtimestamp,
         normalizedmatchtime = EXCLUDED.normalizedmatchtime,
         isleadtogoal = EXCLUDED.isleadtogoal
-    RETURNING *; -- Returns the full row including the correct 'id' column name
+    RETURNING *;
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
@@ -1884,19 +1897,25 @@ END;$$ LANGUAGE plpgsql;
 -- =============================================================
 
 /**********************************************************************************
- * Inserts or updates a time anchor record.
- * If the provided ID exists, updates the record. Otherwise, inserts a new one.
- * Returns the resulting row from the public.timeanchors table.
+ * Ingests a JSONB array of time anchors and performs set-based upsert operations.
+ * Maps JSON properties directly to public.timeanchors table columns.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_time_anchor(
-    p_id UUID,
-    p_match_id UUID,
-    p_period_number INT,
-    p_type INT,
-    p_timestamp TIMESTAMPTZ
+    p_anchors JSONB
 )
 RETURNS SETOF public.timeanchors AS $$
 BEGIN
+    -- 1. Validate that input JSONB array does not contain duplicate time anchor IDs
+    IF EXISTS (
+        SELECT 1
+        FROM jsonb_to_recordset(p_anchors) AS x(id UUID)
+        GROUP BY x.id
+        HAVING count(*) > 1
+    ) THEN
+        RAISE EXCEPTION 'Batch payload contains duplicate time anchor identifiers.' USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 2. Execute set-based upsert operation
     RETURN QUERY
     INSERT INTO public.timeanchors (
         id,
@@ -1905,12 +1924,18 @@ BEGIN
         type,
         timestamp
     )
-    VALUES (
-        p_id,
-        p_match_id,
-        p_period_number,
-        p_type,
-        p_timestamp
+    SELECT 
+        x.id, 
+        x.matchid, 
+        x.periodnumber, 
+        x.type, 
+        x.timestamp
+    FROM jsonb_to_recordset(p_anchors) AS x(
+        id UUID,
+        matchid UUID,
+        periodnumber INT,
+        type INT,
+        timestamp TIMESTAMPTZ
     )
     ON CONFLICT (id) DO UPDATE SET
         matchid = EXCLUDED.matchid,

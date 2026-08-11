@@ -57,15 +57,21 @@ public class UpdateGameEventHandlerTests
             .ReturnsAsync(matchLineup);
 
         _gameEventRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<GameEvent>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingEvent);
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([existingEvent]);
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
 
         // Assert
         result.Should().Be(command.Id);
-        _gameEventRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<GameEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+        _gameEventRepositoryMock.Verify(r => r.UpsertAsync(
+            It.Is<IEnumerable<GameEvent>>(events =>
+                events.Count() == 1 &&
+                events.Single().Id == command.Id &&
+                events.Single().MatchLineupId == command.MatchLineupId &&
+                events.Single().EventDefinitionId == command.EventDefinitionId),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -141,7 +147,7 @@ public class UpdateGameEventHandlerTests
             .ReturnsAsync(matchLineup);
 
         _gameEventRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<GameEvent>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(pgException);
 
         // Act
@@ -174,7 +180,7 @@ public class UpdateGameEventHandlerTests
             .ReturnsAsync(matchLineup);
 
         _gameEventRepositoryMock
-            .Setup(r => r.UpsertAsync(It.IsAny<GameEvent>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(pgException);
 
         // Act
@@ -182,6 +188,37 @@ public class UpdateGameEventHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ConflictException>();
+    }
+
+    /// <summary>
+    /// Verifies that a <see cref="NotFoundException"/> is thrown when UpsertAsync returns an empty result set.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_NotFoundException_When_UpsertAsyncReturnsEmpty()
+    {
+        // Arrange
+        var command = CreateCommand();
+        var existingEvent = new GameEvent { Id = command.Id };
+        var matchLineup = new MatchLineup { Id = command.MatchLineupId, MatchId = command.MatchId };
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingEvent);
+
+        _matchLineupRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchLineupId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(matchLineup);
+
+        _gameEventRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage($"Game event with ID {command.Id} was not found.");
     }
 
     /// <summary>
