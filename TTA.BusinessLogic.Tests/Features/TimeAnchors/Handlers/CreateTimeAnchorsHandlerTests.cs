@@ -765,6 +765,54 @@ public class CreateTimeAnchorsHandlerTests
     }
 
     /// <summary>
+    /// Verifies that sub-millisecond timestamp drift (such as database truncation) between an existing anchor 
+    /// and a re-submitted request does not trigger a false positive <see cref="ConflictException"/>.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_IgnoreSubMillisecondTimestampDrift_WhenParametersMatch()
+    {
+        // Arrange
+        var anchorId = Guid.NewGuid();
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        var existingAnchors = new List<TimeAnchor>
+        {
+            new() { Id = anchorId, MatchId = matchId, PeriodNumber = 1, Type = TimeAnchorType.PeriodStart, Timestamp = baseTime }
+        };
+
+        // Timestamp differs by 500 microseconds (0.5 ms), simulating DB precision truncation
+        var request = new CreateTimeAnchorRequest(
+            Id: anchorId,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: baseTime.AddTicks(5000));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request]);
+        var createdAnchor = request.ToModel(matchId);
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingAnchors);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([createdAnchor]);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        result.Should().ContainSingle().Which.Should().Be(anchorId);
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="CreateTimeAnchorsCommand"/> and its underlying request DTO.
     /// </summary>
     /// <param name="type">The type of anchor to create.</param>

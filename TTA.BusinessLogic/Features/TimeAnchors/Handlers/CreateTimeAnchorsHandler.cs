@@ -50,7 +50,7 @@ public class CreateTimeAnchorsHandler(
             if (existingAnchor != null &&
                 (existingAnchor.Type != candidate.Type ||
                  existingAnchor.PeriodNumber != candidate.PeriodNumber ||
-                 existingAnchor.Timestamp != candidate.Timestamp))
+                 (existingAnchor.Timestamp - candidate.Timestamp).Duration() > TimeSpan.FromMilliseconds(1)))
             {
                 throw new ConflictException($"Time anchor with ID {candidate.Id} already exists with different parameters.");
             }
