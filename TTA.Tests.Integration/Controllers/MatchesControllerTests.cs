@@ -579,6 +579,22 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
+    /// Verifies that RecordMatchEvent returns 400 Bad Request when the JSON request payload is null.
+    /// </summary>
+    [Fact]
+    public async Task RecordMatchEvent_ShouldReturnBadRequest_WhenPayloadIsNull()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+
+        // Act
+        var response = await Client.PostAsJsonAsync<IEnumerable<CreateGameEventRequest>>($"{BaseUrl}/{matchId}/events", null!);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
     /// Verifies recording an event specifically for a team side within a match.
     /// </summary>
     [Fact]
@@ -610,6 +626,28 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    /// <summary>
+    /// Verifies that RecordMatchEventByTeam returns 400 Bad Request when the JSON request payload is null.
+    /// </summary>
+    [Fact]
+    public async Task RecordMatchEventByTeam_ShouldReturnBadRequest_WhenPayloadIsNull()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-NULL-TEST");
+        await SeedAccessPolicyAsync(TestUserId, 0, 2, homeTeamId);
+
+        // Act
+        var response = await Client.PostAsJsonAsync<IEnumerable<CreateGameEventRequest>>($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events", null!);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     /// <summary>
@@ -786,6 +824,22 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var returnedIds = await response.Content.ReadFromJsonAsync<IEnumerable<Guid>>();
         returnedIds.Should().NotBeNull();
         returnedIds.Should().Contain(anchorId);
+    }
+
+    /// <summary>
+    /// Verifies that RecordTimeAnchor returns 400 Bad Request when the JSON request payload is null.
+    /// </summary>
+    [Fact]
+    public async Task RecordTimeAnchor_ShouldReturnBadRequest_WhenPayloadIsNull()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+
+        // Act
+        var response = await Client.PostAsJsonAsync<IEnumerable<CreateTimeAnchorRequest>>($"{BaseUrl}/{matchId}/anchors", null!);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     /// <summary>

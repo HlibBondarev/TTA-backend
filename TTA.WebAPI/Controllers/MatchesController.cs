@@ -391,7 +391,7 @@ public class MatchesController(
         [FromBody] IEnumerable<CreateGameEventRequest> requests,
         [FromServices] IValidator<CreateGameEventRequest> validator)
     {
-        var requestList = requests.ToList();
+        var requestList = (requests ?? []).ToList();
         if (requestList.Count == 0)
         {
             return BadRequest("At least one game event request is required.");
@@ -451,7 +451,7 @@ public class MatchesController(
         [FromBody] IEnumerable<CreateGameEventRequest> requests,
         [FromServices] IValidator<CreateGameEventRequest> validator)
     {
-        var requestList = requests.ToList();
+        var requestList = (requests ?? []).ToList();
         if (requestList.Count == 0)
         {
             return BadRequest("At least one game event request is required.");
@@ -824,7 +824,7 @@ public class MatchesController(
         [FromServices] IValidator<CreateTimeAnchorRequest> validator,
         CancellationToken cancellationToken)
     {
-        var requestList = requests.ToList();
+        var requestList = (requests ?? []).ToList();
         if (requestList.Count == 0)
         {
             return BadRequest("At least one time anchor request is required.");
