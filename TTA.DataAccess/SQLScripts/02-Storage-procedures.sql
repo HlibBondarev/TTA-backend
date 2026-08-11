@@ -1545,6 +1545,17 @@ CREATE OR REPLACE FUNCTION public.upsert_game_event(
 )
 RETURNS SETOF public.gameevents AS $$
 BEGIN
+    -- 1. Validate that input JSONB array does not contain duplicate event IDs
+    IF EXISTS (
+        SELECT 1
+        FROM jsonb_to_recordset(p_events) AS x(id UUID)
+        GROUP BY x.id
+        HAVING count(*) > 1
+    ) THEN
+        RAISE EXCEPTION 'Batch payload contains duplicate game event identifiers.' USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 2. Execute set-based upsert operation
     RETURN QUERY
     INSERT INTO public.gameevents (
         id, 
@@ -1894,6 +1905,17 @@ CREATE OR REPLACE FUNCTION public.upsert_time_anchor(
 )
 RETURNS SETOF public.timeanchors AS $$
 BEGIN
+    -- 1. Validate that input JSONB array does not contain duplicate time anchor IDs
+    IF EXISTS (
+        SELECT 1
+        FROM jsonb_to_recordset(p_anchors) AS x(id UUID)
+        GROUP BY x.id
+        HAVING count(*) > 1
+    ) THEN
+        RAISE EXCEPTION 'Batch payload contains duplicate time anchor identifiers.' USING ERRCODE = 'P0001';
+    END IF;
+
+    -- 2. Execute set-based upsert operation
     RETURN QUERY
     INSERT INTO public.timeanchors (
         id,
