@@ -11,8 +11,8 @@ using TTA.DataAccess.Repository.Auth;
 namespace TTA.BusinessLogic.Features.Matches.Handlers;
 
 /// <summary>
-/// Handles the execution of <see cref="CreateQuickMatchCommand"/> to provision JIT entities, assign access policies, 
-/// create the match, and initialize starting lineups for both competing teams.
+/// Handles the execution of <see cref="CreateQuickMatchCommand"/> to provision JIT entities, assign access policies 
+/// for both Home and Guest teams, create the match, and initialize starting lineups for both competing teams.
 /// </summary>
 /// <param name="userRepository">The user repository for JIT user provisioning and rollbacks.</param>
 /// <param name="matchRepository">The match repository for database operations and JIT provisioning.</param>
@@ -42,7 +42,7 @@ public class CreateQuickMatchHandler(
     private readonly ILogger<CreateQuickMatchHandler> _logger = logger;
 
     /// <summary>
-    /// Provisions quick match infrastructure, verifies or grants team editor access policies, 
+    /// Provisions quick match infrastructure, verifies or grants team editor access policies for both competing teams, 
     /// and copies starter roster entries into the match lineup for both Home and Guest teams.
     /// Performs compensating cleanup if post-creation provisioning fails.
     /// </summary>
@@ -59,13 +59,25 @@ public class CreateQuickMatchHandler(
 
         var isNewUser = false;
         Match? quickMatch = null;
-        Guid? createdPolicyId = null;
+        var createdPolicyIds = new List<Guid>();
 
         try
         {
             isNewUser = await ProvisionJitUserAsync(command, cancellationToken);
             quickMatch = await CreateQuickMatchEntityAsync(command, cancellationToken);
-            createdPolicyId = await EnsureTeamEditorPolicyAsync(command.UserId, quickMatch.HomeTeamId, cancellationToken);
+
+            var homePolicyId = await EnsureTeamEditorPolicyAsync(command.UserId, quickMatch.HomeTeamId, cancellationToken);
+            if (homePolicyId.HasValue)
+            {
+                createdPolicyIds.Add(homePolicyId.Value);
+            }
+
+            var guestPolicyId = await EnsureTeamEditorPolicyAsync(command.UserId, quickMatch.GuestTeamId, cancellationToken);
+            if (guestPolicyId.HasValue)
+            {
+                createdPolicyIds.Add(guestPolicyId.Value);
+            }
+
             await PopulateStartingLineupsAsync(quickMatch, command, cancellationToken);
 
             _logger.LogInformation("Successfully completed quick match creation for Match {MatchId}.", quickMatch.Id);
@@ -74,7 +86,7 @@ public class CreateQuickMatchHandler(
         }
         catch
         {
-            await RollbackOnFailureAsync(quickMatch?.Id, createdPolicyId, isNewUser ? command.UserId : null);
+            await RollbackOnFailureAsync(quickMatch?.Id, createdPolicyIds, isNewUser ? command.UserId : null);
             throw;
         }
     }
@@ -147,7 +159,7 @@ public class CreateQuickMatchHandler(
             return null;
         }
 
-        _logger.LogDebug("Granting TeamEditor policy for User {UserId} on HomeTeam {HomeTeamId}.", userId, teamId);
+        _logger.LogDebug("Granting TeamEditor policy for User {UserId} on Team {TeamId}.", userId, teamId);
 
         var newPolicy = new AccessPolicy
         {
@@ -232,12 +244,12 @@ public class CreateQuickMatchHandler(
     }
 
     /// <summary>
-    /// Executes isolated compensating cleanup steps to delete created match, access policy, and user entities if provisioning fails.
+    /// Executes isolated compensating cleanup steps to delete created match, access policy entities, and user entities if provisioning fails.
     /// </summary>
     /// <param name="matchId">The optional match identifier to delete.</param>
-    /// <param name="accessPolicyId">The optional access policy identifier to delete if created during this request.</param>
+    /// <param name="accessPolicyIds">The collection of access policy identifiers created during this request to purge.</param>
     /// <param name="newUserId">The optional user identifier to delete if provisioned during this request.</param>
-    private async Task RollbackOnFailureAsync(Guid? matchId, Guid? accessPolicyId, string? newUserId)
+    private async Task RollbackOnFailureAsync(Guid? matchId, IEnumerable<Guid> accessPolicyIds, string? newUserId)
     {
         if (matchId.HasValue)
         {
@@ -251,11 +263,11 @@ public class CreateQuickMatchHandler(
             }
         }
 
-        if (accessPolicyId.HasValue)
+        foreach (var policyId in accessPolicyIds)
         {
             try
             {
-                await _accessRepository.DeleteAsync(accessPolicyId.Value, CancellationToken.None);
+                await _accessRepository.DeleteAsync(policyId, CancellationToken.None);
             }
             catch
             {
