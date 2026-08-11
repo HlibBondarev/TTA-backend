@@ -546,7 +546,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that a new game event can be recorded for a specific match.
+    /// Verifies that new game events can be recorded in a batch for a specific match.
     /// </summary>
     [Fact]
     public async Task RecordMatchEvent_ShouldReturnCreated_WhenDataIsValid()
@@ -562,7 +562,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Yellow Card", false);
         var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
 
-        var request = new CreateGameEventRequest(
+        var request1 = new CreateGameEventRequest(
             Id: Guid.NewGuid(),
             MatchLineupId: lineupId,
             EventDefinitionId: eventDefId,
@@ -571,11 +571,23 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             IsLeadToGoal: false
         );
 
+        var request2 = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow.AddSeconds(30),
+            IsLeadToGoal: true
+        );
+
         // Act
-        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", new[] { request });
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", new[] { request1, request2 });
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var returnedIds = await response.Content.ReadFromJsonAsync<IEnumerable<Guid>>();
+        returnedIds.Should().NotBeNull();
+        returnedIds.Should().BeEquivalentTo([request1.Id, request2.Id]);
     }
 
     /// <summary>
@@ -595,7 +607,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies recording an event specifically for a team side within a match.
+    /// Verifies recording events in a batch specifically for a team side within a match.
     /// </summary>
     [Fact]
     public async Task RecordMatchEventByTeam_ShouldReturnCreated_WhenDataIsValid()
@@ -612,7 +624,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Timeout", true);
         var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
 
-        var request = new CreateGameEventRequest(
+        var request1 = new CreateGameEventRequest(
             Id: Guid.NewGuid(),
             MatchLineupId: lineupId,
             EventDefinitionId: eventDefId,
@@ -621,11 +633,23 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             IsLeadToGoal: false
         );
 
+        var request2 = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow.AddSeconds(15),
+            IsLeadToGoal: false
+        );
+
         // Act
-        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events", new[] { request });
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events", new[] { request1, request2 });
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var returnedIds = await response.Content.ReadFromJsonAsync<IEnumerable<Guid>>();
+        returnedIds.Should().NotBeNull();
+        returnedIds.Should().BeEquivalentTo([request1.Id, request2.Id]);
     }
 
     /// <summary>
@@ -798,7 +822,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that an authorized user (Tournament Owner) can successfully record a new time anchor.
+    /// Verifies that an authorized user (Tournament Owner) can successfully record a batch of new time anchors.
     /// </summary>
     [Fact]
     public async Task RecordTimeAnchor_ShouldReturnCreated_WhenUserIsAuthorized()
@@ -811,19 +835,23 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var matchId = Guid.NewGuid();
         await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "TA-03");
 
-        var anchorId = Guid.NewGuid();
-        var request = new CreateTimeAnchorRequest(anchorId, 1, TimeAnchorType.PeriodStart, DateTime.UtcNow);
+        var anchorId1 = Guid.NewGuid();
+        var anchorId2 = Guid.NewGuid();
+        var request1 = new CreateTimeAnchorRequest(anchorId1, 1, TimeAnchorType.PeriodStart, DateTime.UtcNow.AddMinutes(-10));
+        var request2 = new CreateTimeAnchorRequest(anchorId2, 1, TimeAnchorType.PeriodEnd, DateTime.UtcNow.AddMinutes(-2));
 
-        // Act - Wrap the single request in an array to match IEnumerable<CreateTimeAnchorRequest>
-        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/anchors", new[] { request });
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/anchors", new[] { request1, request2 });
 
         // Assert
+        if (response.StatusCode != HttpStatusCode.Created)
+            _output.WriteLine(await response.Content.ReadAsStringAsync());
+
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        // Read response content as a collection of Guids
         var returnedIds = await response.Content.ReadFromJsonAsync<IEnumerable<Guid>>();
         returnedIds.Should().NotBeNull();
-        returnedIds.Should().Contain(anchorId);
+        returnedIds.Should().BeEquivalentTo([anchorId1, anchorId2]);
     }
 
     /// <summary>
@@ -840,6 +868,40 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Verifies that RecordTimeAnchor returns 400 Bad Request and persists no anchors when any item in the batch is invalid.
+    /// </summary>
+    [Fact]
+    public async Task RecordTimeAnchor_ShouldReturnBadRequest_AndNotPersist_WhenBatchContainsInvalidItem()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC InvAnchor");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC InvAnchor");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "TA-05");
+
+        var validAnchorId = Guid.NewGuid();
+        var invalidAnchorId = Guid.NewGuid();
+
+        var validRequest = new CreateTimeAnchorRequest(validAnchorId, 1, TimeAnchorType.PeriodStart, DateTime.UtcNow.AddMinutes(-5));
+        var invalidRequest = new CreateTimeAnchorRequest(invalidAnchorId, 0, TimeAnchorType.PeriodEnd, DateTime.UtcNow); // Invalid PeriodNumber = 0
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/anchors", new[] { validRequest, invalidRequest });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // Verify neither anchor was persisted
+        var getAnchorsResponse = await Client.GetAsync($"{BaseUrl}/{matchId}/anchors");
+        getAnchorsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var anchors = await getAnchorsResponse.Content.ReadFromJsonAsync<List<TimeAnchorResponse>>();
+        anchors.Should().NotBeNull();
+        anchors.Should().NotContain(a => a.Id == validAnchorId || a.Id == invalidAnchorId);
     }
 
     /// <summary>

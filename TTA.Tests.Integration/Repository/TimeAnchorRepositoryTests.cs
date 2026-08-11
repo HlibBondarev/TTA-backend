@@ -31,24 +31,41 @@ public class TimeAnchorRepositoryTests : BaseIntegrationTest
     /// Verifies that <see cref="TimeAnchorRepository.UpsertAsync"/> correctly persists a batch of time anchors.
     /// </summary>
     [Fact]
-    public async Task UpsertAsync_ShouldPersistNewAnchor_WhenDataIsValid()
+    public async Task UpsertAsync_ShouldPersistNewAnchors_WhenDataIsValid()
     {
         // Arrange
         var matchId = await SeedTimeAnchorEnvironmentAsync();
-        var timeAnchor = CreateAnchorModel(matchId, 1, (TimeAnchorType)0); // 0 = PeriodStart
+        var anchor1 = CreateAnchorModel(matchId, 1, (TimeAnchorType)0); // 0 = PeriodStart
+        var anchor2 = CreateAnchorModel(matchId, 1, (TimeAnchorType)1); // 1 = PeriodEnd
 
         // Act
-        var result = await _repository.UpsertAsync([timeAnchor]);
+        var result = (await _repository.UpsertAsync([anchor1, anchor2])).ToList();
 
         // Assert
         result.Should().NotBeNull();
-        var savedAnchor = result.Should().ContainSingle().Subject;
-        savedAnchor.Id.Should().Be(timeAnchor.Id);
-        savedAnchor.MatchId.Should().Be(matchId);
+        result.Should().HaveCount(2);
+        result.Select(a => a.Id).Should().BeEquivalentTo([anchor1.Id, anchor2.Id]);
 
-        var persisted = await _repository.GetByIdAsync(timeAnchor.Id);
-        persisted.Should().NotBeNull();
-        persisted!.Timestamp.Should().BeCloseTo(timeAnchor.Timestamp, TimeSpan.FromMilliseconds(1));
+        var persisted1 = await _repository.GetByIdAsync(anchor1.Id);
+        persisted1.Should().NotBeNull();
+        persisted1!.Timestamp.Should().BeCloseTo(anchor1.Timestamp, TimeSpan.FromMilliseconds(1));
+
+        var persisted2 = await _repository.GetByIdAsync(anchor2.Id);
+        persisted2.Should().NotBeNull();
+        persisted2!.Timestamp.Should().BeCloseTo(anchor2.Timestamp, TimeSpan.FromMilliseconds(1));
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TimeAnchorRepository.UpsertAsync"/> immediately returns an empty collection when passed an empty payload.
+    /// </summary>
+    [Fact]
+    public async Task UpsertAsync_ShouldReturnEmptyCollection_WhenPayloadIsEmpty()
+    {
+        // Act
+        var result = await _repository.UpsertAsync([]);
+
+        // Assert
+        result.Should().BeEmpty();
     }
 
     /// <summary>

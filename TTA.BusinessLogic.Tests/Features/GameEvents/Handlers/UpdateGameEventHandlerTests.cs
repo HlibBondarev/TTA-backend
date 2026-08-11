@@ -65,7 +65,13 @@ public class UpdateGameEventHandlerTests
 
         // Assert
         result.Should().Be(command.Id);
-        _gameEventRepositoryMock.Verify(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _gameEventRepositoryMock.Verify(r => r.UpsertAsync(
+            It.Is<IEnumerable<GameEvent>>(events =>
+                events.Count() == 1 &&
+                events.Single().Id == command.Id &&
+                events.Single().MatchLineupId == command.MatchLineupId &&
+                events.Single().EventDefinitionId == command.EventDefinitionId),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
