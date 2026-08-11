@@ -36,7 +36,7 @@ public class CreateGameEventsHandler(
         _logger.LogInformation("Attempting to create batch of {Count} game events for Match {MatchId}.",
             eventsList.Count, request.MatchId);
 
-        foreach (var lineupId in eventsList.Select(evt => evt.MatchLineupId))
+        foreach (var lineupId in eventsList.Select(evt => evt.MatchLineupId).Distinct())
         {
             var lineupEntry = await _matchLineupRepository.GetByIdAsync(lineupId, cancellationToken);
             if (lineupEntry == null)

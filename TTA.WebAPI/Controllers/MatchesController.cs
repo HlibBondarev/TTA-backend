@@ -408,11 +408,14 @@ public class MatchesController(
                 _logger.LogWarning("Validation failed for CreateGameEventRequest for match {Id}: {Errors}.", matchId, validationResult.Errors);
                 return BadRequest(validationResult.Errors);
             }
+        }
 
-            // 2. Verify lineup belonging to match and team
-            var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(req.MatchLineupId));
+        // 2. Verify lineup belonging to match and team
+        foreach (var lineupId in requestList.Select(req => req.MatchLineupId).Distinct())
+        {
+            var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(lineupId));
             if (lineup == null)
-                return NotFound($"The specified lineup entry {req.MatchLineupId} was not found.");
+                return NotFound($"The specified lineup entry {lineupId} was not found.");
 
             if (lineup.MatchId != matchId || lineup.TeamId != teamId)
                 return Forbid();
@@ -472,7 +475,7 @@ public class MatchesController(
         if (accessError != null) return accessError;
 
         // 3. Verify lineup entry existence
-        foreach (var lineupId in requestList.Select(req => req.MatchLineupId))
+        foreach (var lineupId in requestList.Select(req => req.MatchLineupId).Distinct())
         {
             var lineup = await _mediator.Send(new GetMatchLineupByIdQuery(lineupId));
             if (lineup == null)
