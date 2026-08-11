@@ -665,6 +665,106 @@ public class CreateTimeAnchorsHandlerTests
     }
 
     /// <summary>
+    /// Verifies that a valid multi-anchor batch command is processed atomically and passed to UpsertAsync in a single call.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_CreateMultipleAnchors_When_MultiAnchorSequenceIsValid()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        var request1 = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: baseTime);
+
+        var request2 = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodEnd,
+            Timestamp: baseTime.AddMinutes(8));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [request1, request2]);
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var createdAnchors = new List<TimeAnchor> { request1.ToModel(matchId), request2.ToModel(matchId) };
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<TimeAnchor>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdAnchors);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        var resultList = result.ToList();
+        resultList.Should().HaveCount(2);
+        resultList.Should().Contain([request1.Id, request2.Id]);
+
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(
+            It.Is<IEnumerable<TimeAnchor>>(anchors => anchors.Count() == 2),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that an invalid multi-candidate sequence within the batch payload fails sequence validation and prevents UpsertAsync execution.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Not_Call_UpsertAsync_When_MultiAnchorSequenceIsInvalid()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var baseTime = DateTime.UtcNow;
+
+        // Sequence error: PeriodEnd occurs before PeriodStart in the same incoming batch sequence
+        var requestEnd = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodEnd,
+            Timestamp: baseTime);
+
+        var requestStart = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: baseTime.AddMinutes(10));
+
+        var command = new CreateTimeAnchorsCommand(matchId, [requestEnd, requestStart]);
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _timeAnchorRepositoryMock
+            .Setup(r => r.GetMatchAnchorsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("Cannot end period 1 before it starts.");
+
+        _timeAnchorRepositoryMock.Verify(r => r.UpsertAsync(
+            It.IsAny<IEnumerable<TimeAnchor>>(),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="CreateTimeAnchorsCommand"/> and its underlying request DTO.
     /// </summary>
     /// <param name="type">The type of anchor to create.</param>

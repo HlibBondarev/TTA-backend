@@ -167,6 +167,111 @@ public class CreateGameEventsHandlerTests
     }
 
     /// <summary>
+    /// Verifies that the handler successfully creates a multi-item batch of game events in a single repository invocation.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_CreateEvents_When_BatchIsValid()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var request1 = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false);
+
+        var request2 = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow.AddSeconds(10),
+            IsLeadToGoal: true);
+
+        var command = new CreateGameEventsCommand(matchId, [request1, request2]);
+
+        var matchLineup1 = new MatchLineup { Id = request1.MatchLineupId, MatchId = matchId };
+        var matchLineup2 = new MatchLineup { Id = request2.MatchLineupId, MatchId = matchId };
+
+        _matchLineupRepositoryMock
+            .Setup(r => r.GetByIdAsync(request1.MatchLineupId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(matchLineup1);
+
+        _matchLineupRepositoryMock
+            .Setup(r => r.GetByIdAsync(request2.MatchLineupId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(matchLineup2);
+
+        var createdEvents = new List<GameEvent> { request1.ToModel(), request2.ToModel() };
+
+        _gameEventRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdEvents);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        var resultList = result.ToList();
+        resultList.Should().HaveCount(2);
+        resultList.Should().Contain([request1.Id, request2.Id]);
+
+        _gameEventRepositoryMock.Verify(r => r.UpsertAsync(
+            It.Is<IEnumerable<GameEvent>>(events => events.Count() == 2),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that if any item in a batch refers to an invalid lineup, validation fails and UpsertAsync is never called.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Not_Call_UpsertAsync_When_BatchContainsInvalidLineup()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var validRequest = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false);
+
+        var invalidRequest = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow.AddSeconds(10),
+            IsLeadToGoal: false);
+
+        var command = new CreateGameEventsCommand(matchId, [validRequest, invalidRequest]);
+
+        var validLineup = new MatchLineup { Id = validRequest.MatchLineupId, MatchId = matchId };
+
+        _matchLineupRepositoryMock
+            .Setup(r => r.GetByIdAsync(validRequest.MatchLineupId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(validLineup);
+
+        _matchLineupRepositoryMock
+            .Setup(r => r.GetByIdAsync(invalidRequest.MatchLineupId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((MatchLineup?)null);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<NotFoundException>();
+
+        _gameEventRepositoryMock.Verify(r => r.UpsertAsync(
+            It.IsAny<IEnumerable<GameEvent>>(),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="CreateGameEventsCommand"/> and its underlying request DTO.
     /// </summary>
     /// <returns>A tuple containing the command and the single request item.</returns>
