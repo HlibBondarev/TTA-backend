@@ -146,7 +146,7 @@ public class CreateQuickMatchHandler(
 
     /// <summary>
     /// Ensures the requesting user possesses an active TeamEditor (or higher) policy for the specified team.
-    /// If an active policy exists but is Viewer-only, a new TeamEditor policy is granted.
+    /// If an active policy exists with a Viewer role, it is promoted to TeamEditor and persisted via AddAccessAsync (upsert).
     /// </summary>
     /// <param name="userId">The unique identifier of the user.</param>
     /// <param name="teamId">The unique identifier of the team.</param>
@@ -155,8 +155,18 @@ public class CreateQuickMatchHandler(
     private async Task<Guid?> EnsureTeamEditorPolicyAsync(string userId, Guid teamId, CancellationToken cancellationToken)
     {
         var activePolicy = await _accessRepository.GetActiveTeamPolicyAsync(userId, teamId, cancellationToken);
-        if (activePolicy != null && IsEditorOrHigher(activePolicy.Role))
+        if (activePolicy != null)
         {
+            if (IsEditorOrHigher(activePolicy.Role))
+            {
+                return null;
+            }
+
+            _logger.LogInformation("Promoting existing Viewer policy {PolicyId} to TeamEditor for User {UserId} on Team {TeamId}.",
+                activePolicy.Id, userId, teamId);
+
+            activePolicy.Role = AppRole.Editor;
+            await _accessRepository.AddAccessAsync(activePolicy, cancellationToken);
             return null;
         }
 

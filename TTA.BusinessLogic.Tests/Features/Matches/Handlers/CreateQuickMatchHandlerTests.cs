@@ -21,7 +21,7 @@ namespace TTA.BusinessLogic.Tests.Features.Matches.Handlers;
 /// <list type="bullet">
 ///   <item><description>Just-in-time user provisioning and registration in database.</description></item>
 ///   <item><description>Atomic just-in-time infrastructure provisioning via database repositories.</description></item>
-///   <item><description>Automated granting of team editor permissions for both Home and Guest team managers.</description></item>
+///   <item><description>Automated granting or promotion of team editor permissions for both Home and Guest team managers.</description></item>
 ///   <item><description>Fallback resolution to default sport configurations when config IDs are omitted.</description></item>
 ///   <item><description>Initial starting lineup population for both Home and Guest teams up to configured lineup limits.</description></item>
 ///   <item><description>Compensating rollback cleanup when post-creation initialization steps fail.</description></item>
@@ -310,7 +310,7 @@ public class CreateQuickMatchHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a new TeamEditor policy is granted when the user only holds a Viewer-level policy for a team.
+    /// Verifies that an existing Viewer-level policy is promoted to Editor role via AddAccessAsync (upsert).
     /// </summary>
     [Fact]
     public async Task Handle_ShouldGrantEditorPolicy_WhenUserHasOnlyViewerPolicy()
@@ -345,7 +345,7 @@ public class CreateQuickMatchHandlerTests
             .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdMatch);
 
-        // User holds only Viewer policy for Home Team
+        // User holds Viewer policy for Home Team
         _accessRepositoryMock
             .Setup(a => a.GetActiveTeamPolicyAsync(userId, createdMatch.HomeTeamId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AccessPolicy { UserId = userId, TargetId = createdMatch.HomeTeamId, Role = AppRole.Viewer });
@@ -368,7 +368,7 @@ public class CreateQuickMatchHandlerTests
         // Assert
         Assert.NotNull(result);
 
-        // Verify AddAccessAsync is invoked for Home Team with Editor role despite having Viewer policy
+        // Verify AddAccessAsync is invoked for Home Team with Editor role (promoting existing Viewer policy)
         _accessRepositoryMock.Verify(
             a => a.AddAccessAsync(
                 It.Is<AccessPolicy>(p => p.UserId == userId && p.TargetId == createdMatch.HomeTeamId && p.Role == AppRole.Editor),
