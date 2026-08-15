@@ -248,9 +248,9 @@ public class MatchesController(
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> RecordResult(
-        [FromRoute] Guid id,
-        [FromBody] RecordMatchResultRequest request,
-        [FromServices] IValidator<RecordMatchResultRequest> validator)
+    [FromRoute] Guid id,
+    [FromBody] RecordMatchResultRequest request,
+    [FromServices] IValidator<RecordMatchResultRequest> validator)
     {
         _logger.LogInformation("Executing RecordResult action for match {Id}.", id);
 
@@ -263,15 +263,12 @@ public class MatchesController(
             return BadRequest(validationResult.Errors);
         }
 
-        // 2. Authorization: Validate that the current user is the owner of the tournament associated with this match
-        var authResult = await ValidateTournamentOwnership(id);
+        // 2. Authorization: Validate match edit access permissions
+        var authResult = await ValidateMatchEditAccess(id);
         if (authResult != null) return authResult;
 
         // 3. Map request to command and execute
         var command = request.ToCommand(id);
-
-        // Note: The handler for RecordMatchResultCommand handles match existence check
-        // and throws NotFoundException if match is missing,
         var result = await _mediator.Send(command);
 
         return Ok(result);
