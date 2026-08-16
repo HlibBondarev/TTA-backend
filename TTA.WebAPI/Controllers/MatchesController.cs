@@ -230,7 +230,7 @@ public class MatchesController(
 
     /// <summary>
     /// Records the score and conditions for an existing match.
-    /// Only the tournament organizer has permission to record results.
+    /// Access is allowed for the tournament owner or an authorized editor of either participating team.
     /// </summary>
     /// <param name="id">The unique identifier of the match.</param>
     /// <param name="request">The request containing scores and weather conditions.</param>
@@ -239,7 +239,7 @@ public class MatchesController(
     /// <response code="200">Returns the ID of the updated match.</response>
     /// <response code="400">If the request data is invalid or validation fails.</response>
     /// <response code="401">If the user is not authenticated.</response>
-    /// <response code="403">If the user is not the owner of the tournament.</response>
+    /// <response code="403">If the user is not the tournament owner or an authorized editor of either participating team.</response>
     /// <response code="404">If the match or associated tournament was not found.</response>
     [HttpPut("{id:guid}/result")]
     [ProducesResponseType(typeof(Guid), StatusCodes.Status200OK)]
@@ -263,15 +263,12 @@ public class MatchesController(
             return BadRequest(validationResult.Errors);
         }
 
-        // 2. Authorization: Validate that the current user is the owner of the tournament associated with this match
-        var authResult = await ValidateTournamentOwnership(id);
+        // 2. Authorization: Validate match edit access permissions
+        var authResult = await ValidateMatchEditAccess(id);
         if (authResult != null) return authResult;
 
         // 3. Map request to command and execute
         var command = request.ToCommand(id);
-
-        // Note: The handler for RecordMatchResultCommand handles match existence check
-        // and throws NotFoundException if match is missing,
         var result = await _mediator.Send(command);
 
         return Ok(result);
