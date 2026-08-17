@@ -36,7 +36,7 @@ public class GetPlayerDetailedReportHandlerTests
 
     /// <summary>
     /// Verifies that the handler returns a correctly structured player detailed report
-    /// with sorted events when match is finalized and projections exist.
+    /// with events sorted strictly chronologically by EventTimestamp, even if NormalizedMatchTime suggests a different order.
     /// </summary>
     [Fact]
     public async Task Handle_Should_ReturnDetailedReport_When_MatchIsFinalizedAndProjectionsExist()
@@ -60,6 +60,7 @@ public class GetPlayerDetailedReportHandlerTests
 
         var projections = new List<PlayerDetailedReportProjection>
         {
+            // Event B: Period 2, happens LATER in real time, but has an EARLIER relative match time (e.g., 5th minute of 2nd period)
             new(
                 MatchLineupId: matchLineupId,
                 FirstName: "Alex",
@@ -69,10 +70,11 @@ public class GetPlayerDetailedReportHandlerTests
                 EventName: "Yellow Card",
                 IsPositive: false,
                 PeriodNumber: 2,
-                EventTimestamp: baseTimestamp.AddMinutes(-5),
-                NormalizedMatchTime: TimeSpan.FromMinutes(35),
+                EventTimestamp: baseTimestamp.AddMinutes(15), // LATER real time
+                NormalizedMatchTime: TimeSpan.FromMinutes(5), // EARLIER period-relative time
                 IsLeadToGoal: false
             ),
+            // Event A: Period 1, happens EARLIER in real time, but has a LATER relative match time (e.g., 40th minute of 1st period)
             new(
                 MatchLineupId: matchLineupId,
                 FirstName: "Alex",
@@ -82,8 +84,8 @@ public class GetPlayerDetailedReportHandlerTests
                 EventName: "Goal",
                 IsPositive: true,
                 PeriodNumber: 1,
-                EventTimestamp: baseTimestamp.AddMinutes(-20),
-                NormalizedMatchTime: TimeSpan.FromMinutes(12),
+                EventTimestamp: baseTimestamp,                 // EARLIER real time
+                NormalizedMatchTime: TimeSpan.FromMinutes(40), // LATER period-relative time
                 IsLeadToGoal: true
             )
         };
@@ -104,12 +106,12 @@ public class GetPlayerDetailedReportHandlerTests
         var eventsList = result.Events.ToList();
         eventsList.Should().HaveCount(2);
 
-        // Events should be sorted chronologically by NormalizedMatchTime
+        // Events must be sorted chronologically by EventTimestamp
         eventsList[0].EventName.Should().Be("Goal");
-        eventsList[0].NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(12));
+        eventsList[0].EventTimestamp.Should().Be(baseTimestamp);
 
         eventsList[1].EventName.Should().Be("Yellow Card");
-        eventsList[1].NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(35));
+        eventsList[1].EventTimestamp.Should().Be(baseTimestamp.AddMinutes(15));
 
         _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
         _matchRepositoryMock.Verify(r => r.GetPlayerDetailedReportAsync(matchId, matchLineupId, It.IsAny<CancellationToken>()), Times.Once);
