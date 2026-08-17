@@ -316,6 +316,50 @@ public class MatchesController(
             result);
     }
 
+    /// <summary>
+    /// Retrieves the team summary TTA report for a specific match and team.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A collection of team summary report response entries.</returns>
+    /// <response code="200">Returns the team summary report successfully.</response>
+    /// <response code="404">If the match or team was not found.</response>
+    [AllowAnonymous]
+    [HttpGet("{matchId:guid}/teams/{teamId:guid}/reports/summary")]
+    [ProducesResponseType(typeof(IEnumerable<TeamMatchSummaryReportResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTeamSummaryReport([FromRoute] Guid matchId, [FromRoute] Guid teamId, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Retrieving team summary report for team {TeamId} in match {MatchId}.", teamId, matchId);
+        var query = new GetTeamSummaryReportQuery(matchId, teamId);
+        var result = await _mediator.Send(query, cancellationToken);
+
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Retrieves the detailed player TTA report for a specific match lineup entry.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="matchLineupId">The unique identifier of the match lineup entry.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The detailed player report response including event chronologies.</returns>
+    /// <response code="200">Returns the detailed player report successfully.</response>
+    /// <response code="404">If the match or lineup entry was not found.</response>
+    [AllowAnonymous]
+    [HttpGet("{matchId:guid}/lineups/{matchLineupId:guid}/reports/detailed")]
+    [ProducesResponseType(typeof(PlayerDetailedMatchReportResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetPlayerDetailedReport([FromRoute] Guid matchId, [FromRoute] Guid matchLineupId, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Retrieving detailed player report for lineup {MatchLineupId} in match {MatchId}.", matchLineupId, matchId);
+        var query = new GetPlayerDetailedReportQuery(matchId, matchLineupId);
+        var result = await _mediator.Send(query, cancellationToken);
+
+        return Ok(result);
+    }
+
     #endregion
 
     #region Game Events section

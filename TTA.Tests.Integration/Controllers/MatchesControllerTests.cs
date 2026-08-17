@@ -20,7 +20,7 @@ namespace TTA.Tests.Integration.Controllers;
 
 /// <summary>
 /// Integration tests for the <see cref="TTA.WebAPI.Controllers.MatchesController"/>.
-/// Validates match retrieval, lineup management, result recording, and quick match provisioning.
+/// Validates match retrieval, lineup management, result recording, quick match provisioning, and reports.
 /// </summary>
 public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper output)
     : BaseApiTest(fixture, output)
@@ -94,6 +94,92 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Act
         var response = await Client.GetAsync($"{BaseUrl}/{matchId}/teams/{externalTeamId}/lineup");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetTeamSummaryReport"/> returns HTTP 200 OK
+    /// with summary report items when data exists.
+    /// </summary>
+    [Fact]
+    public async Task GetTeamSummaryReport_ShouldReturnOk_WhenDataExists()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SUM-REPORT");
+
+        await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/teams/{homeId}/reports/summary");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<TeamMatchSummaryReportResponse>>();
+        result.Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetPlayerDetailedReport"/> returns HTTP 200 OK
+    /// with the detailed player report when data exists.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayerDetailedReport_ShouldReturnOk_WhenDataExists()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-DET-REPORT");
+
+        var lineupId = await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/lineups/{lineupId}/reports/detailed");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<PlayerDetailedMatchReportResponse>();
+        result.Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetTeamSummaryReport"/> returns HTTP 404 Not Found
+    /// when the match or team does not exist.
+    /// </summary>
+    [Fact]
+    public async Task GetTeamSummaryReport_ShouldReturnNotFound_WhenMatchOrTeamDoesNotExist()
+    {
+        // Arrange
+        var nonExistentMatchId = Guid.NewGuid();
+        var nonExistentTeamId = Guid.NewGuid();
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{nonExistentMatchId}/teams/{nonExistentTeamId}/reports/summary");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetPlayerDetailedReport"/> returns HTTP 404 Not Found
+    /// when the match or lineup entry does not exist.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayerDetailedReport_ShouldReturnNotFound_WhenMatchOrLineupDoesNotExist()
+    {
+        // Arrange
+        var nonExistentMatchId = Guid.NewGuid();
+        var nonExistentLineupId = Guid.NewGuid();
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{nonExistentMatchId}/lineups/{nonExistentLineupId}/reports/detailed");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);

@@ -2,6 +2,7 @@
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository;
 
@@ -80,6 +81,34 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
         using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
             SqlStatements.ForMatches.DeleteMatch,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async Task<IEnumerable<TeamMatchSummaryReportProjection>> GetTeamSummaryReportAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_match_id", matchId);
+        parameters.Add("p_team_id", teamId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.QueryAsync<TeamMatchSummaryReportProjection>(new CommandDefinition(
+            SqlStatements.ForMatches.GetTeamSummaryReport,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async Task<IEnumerable<PlayerDetailedReportProjection>> GetPlayerDetailedReportAsync(Guid matchId, Guid matchLineupId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_match_id", matchId);
+        parameters.Add("p_match_lineup_id", matchLineupId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.QueryAsync<PlayerDetailedReportProjection>(new CommandDefinition(
+            SqlStatements.ForMatches.GetPlayerDetailedReport,
             parameters,
             cancellationToken: cancellationToken));
     }
