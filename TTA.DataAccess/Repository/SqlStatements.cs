@@ -300,6 +300,18 @@ public static class SqlStatements
         /// </summary>
         public const string DeleteMatch =
             "SELECT public.delete_match(@p_id);";
+
+        /// <summary>
+        /// SQL to retrieve the team summary report for a match.
+        /// </summary>
+        public const string GetTeamSummaryReport =
+            "SELECT * FROM public.get_match_team_summary_report(@p_match_id, @p_team_id);";
+
+        /// <summary>
+        /// SQL to retrieve the detailed player report for a match lineup.
+        /// </summary>
+        public const string GetPlayerDetailedReport =
+            "SELECT * FROM public.get_match_player_detailed_report(@p_match_id, @p_match_lineup_id);";
     }
 
     /// <summary>

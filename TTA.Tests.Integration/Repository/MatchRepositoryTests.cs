@@ -291,6 +291,149 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     #endregion
 
+    #region Report Repository Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetTeamSummaryReportAsync"/> correctly aggregates 
+    /// player statistics, action counts, and play percentage for a specific team in a match.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetTeamSummaryReportAsync_ShouldReturnTeamSummary_WhenDataExists()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        // 1. Seed Time Anchors to establish match duration (Period 1: 0 to 10 minutes)
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var startTime = DateTime.UtcNow.AddMinutes(-30);
+        var endTime = startTime.AddMinutes(10);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) 
+            VALUES 
+            (@idStart, @matchId, 1, 0, @startTs),
+            (@idEnd, @matchId, 1, 1, @endTs);",
+            new
+            {
+                idStart = Guid.NewGuid(),
+                idEnd = Guid.NewGuid(),
+                matchId = match.Id,
+                startTs = startTime,
+                endTs = endTime
+            });
+
+        // 2. Fetch a lineup entry for the Home team
+        var matchLineupId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT ml.id FROM public.matchlineups ml JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = @matchId AND pr.teamid = @teamId LIMIT 1",
+            new { matchId = match.Id, teamId = context.HomeTeamId });
+
+        // If no lineup entry exists from seed, create one for testing
+        Guid targetLineupId = matchLineupId;
+        if (targetLineupId == Guid.Empty)
+        {
+            var rosterId = await conn.ExecuteScalarAsync<Guid>(
+                "SELECT id FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+                new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+            targetLineupId = Guid.NewGuid();
+            await conn.ExecuteAsync(
+                "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number) VALUES (@id, @mId, @rId, 10)",
+                new { id = targetLineupId, mId = match.Id, rId = rosterId });
+        }
+
+        // 3. Seed Player Presence (full 10 minutes duration -> 100% play percentage)
+        await conn.ExecuteAsync(
+            "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) VALUES (@id, @lineupId, 1, @in, @out)",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, @in = startTime, @out = endTime });
+
+        // 4. Seed an Event Definition and a Game Event ('Goal', positive, lead to goal)
+        var eventDefId = Guid.NewGuid();
+        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
+
+        await conn.ExecuteAsync(
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
+            new { id = eventDefId, sId = sportId });
+
+        await conn.ExecuteAsync(
+            "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:05:00', true, NOW())",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = eventDefId, ts = startTime.AddMinutes(5) });
+
+        // Act
+        var report = (await _repository.GetTeamSummaryReportAsync(match.Id, context.HomeTeamId, CancellationToken.None)).ToList();
+
+        // Assert
+        report.Should().NotBeEmpty();
+        var playerSummary = report.FirstOrDefault(r => r.MatchLineupId == targetLineupId);
+        playerSummary.Should().NotBeNull();
+        playerSummary!.Goals.Should().Be(1);
+        playerSummary.TotalPositiveActions.Should().Be(1);
+        playerSummary.PositiveGoalLeadingActions.Should().Be(1);
+        playerSummary.PlayPercentage.Should().Be(100.0);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetPlayerDetailedReportAsync"/> retrieves the chronological 
+    /// list of events for a specific player match lineup entry.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetPlayerDetailedReportAsync_ShouldReturnDetailedEvents_WhenDataExists()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // 1. Fetch or create a match lineup ID for the Home team
+        var rosterId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT id FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+            new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+        var targetLineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number) VALUES (@id, @mId, @rId, 99)",
+            new { id = targetLineupId, mId = match.Id, rId = rosterId });
+
+        // 2. Seed Event Definitions
+        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
+        var eventDefId = Guid.NewGuid();
+
+        await conn.ExecuteAsync(
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Exclusion', 'EX', false, NOW())",
+            new { id = eventDefId, sId = sportId });
+
+        // 3. Seed Game Events for this lineup
+        var eventTimestamp = DateTime.UtcNow;
+        await conn.ExecuteAsync(
+            "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:03:30', false, NOW())",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = eventDefId, ts = eventTimestamp });
+
+        // Act
+        var report = (await _repository.GetPlayerDetailedReportAsync(match.Id, targetLineupId, CancellationToken.None)).ToList();
+
+        // Assert
+        report.Should().NotBeEmpty();
+        report.Should().HaveCount(1);
+
+        var detail = report[0];
+        detail.MatchLineupId.Should().Be(targetLineupId);
+        detail.Number.Should().Be(99);
+        detail.EventName.Should().Be("Exclusion");
+        detail.IsPositive.Should().BeFalse();
+        detail.PeriodNumber.Should().Be(1);
+        detail.NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(3.5));
+    }
+
+    #endregion
+
     #region Helpers
 
     /// <summary>

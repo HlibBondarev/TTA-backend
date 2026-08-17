@@ -20,7 +20,7 @@ namespace TTA.Tests.Integration.Controllers;
 
 /// <summary>
 /// Integration tests for the <see cref="TTA.WebAPI.Controllers.MatchesController"/>.
-/// Validates match retrieval, lineup management, result recording, and quick match provisioning.
+/// Validates match retrieval, lineup management, result recording, quick match provisioning, and reports.
 /// </summary>
 public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper output)
     : BaseApiTest(fixture, output)
@@ -94,6 +94,126 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Act
         var response = await Client.GetAsync($"{BaseUrl}/{matchId}/teams/{externalTeamId}/lineup");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task GetTeamSummaryReport_ShouldReturnOk_WhenDataExists()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+        var matchId = Guid.NewGuid();
+        // Передаємо рахунок для фіналізації матчу
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SUM-REPORT", homeScore: 2, guestScore: 1);
+
+        await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/teams/{homeId}/reports/summary");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<TeamMatchSummaryReportResponse>>();
+        result.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task GetPlayerDetailedReport_ShouldReturnOk_WhenDataExists()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+        var matchId = Guid.NewGuid();
+        // Передаємо рахунок для фіналізації матчу
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-DET-REPORT", homeScore: 3, guestScore: 0);
+
+        var lineupId = await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/lineups/{lineupId}/reports/detailed");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<PlayerDetailedMatchReportResponse>();
+        result.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task GetPlayerDetailedReport_ShouldReturnNotFound_WhenMatchIsNotFinalized()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+        var unfinalizedMatchId = Guid.NewGuid();
+        // Створюємо нефіналізований матч (без рахунку)
+        await SeedMatchAsync(unfinalizedMatchId, context.TournamentId, homeId, guestId, "M-UNFIN-DET");
+        var lineupId = await SeedMatchLineupAsync(unfinalizedMatchId, homeId, context.CityId, context.TournamentId, context.SportId);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{unfinalizedMatchId}/lineups/{lineupId}/reports/detailed");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetTeamSummaryReport"/> returns HTTP 404 Not Found
+    /// when the match or team does not exist.
+    /// </summary>
+    [Fact]
+    public async Task GetTeamSummaryReport_ShouldReturnNotFound_WhenMatchOrTeamDoesNotExist()
+    {
+        // Arrange
+        var nonExistentMatchId = Guid.NewGuid();
+        var nonExistentTeamId = Guid.NewGuid();
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{nonExistentMatchId}/teams/{nonExistentTeamId}/reports/summary");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetPlayerDetailedReport"/> returns HTTP 404 Not Found
+    /// when the match or lineup entry does not exist.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayerDetailedReport_ShouldReturnNotFound_WhenMatchOrLineupDoesNotExist()
+    {
+        // Arrange
+        var nonExistentMatchId = Guid.NewGuid();
+        var nonExistentLineupId = Guid.NewGuid();
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{nonExistentMatchId}/lineups/{nonExistentLineupId}/reports/detailed");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetTeamSummaryReport"/> returns HTTP 404 Not Found
+    /// when requested for an existing match that has not been finalized yet.
+    /// </summary>
+    [Fact]
+    public async Task GetTeamSummaryReport_ShouldReturnNotFound_WhenMatchIsNotFinalized()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+        var unfinalizedMatchId = Guid.NewGuid();
+        await SeedMatchAsync(unfinalizedMatchId, context.TournamentId, homeId, guestId, "M-UNFIN-SUM");
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{unfinalizedMatchId}/teams/{homeId}/reports/summary");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -2074,14 +2194,14 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return (tournamentId, cityId, sportId);
     }
 
-    private async Task SeedMatchAsync(Guid id, Guid tournamentId, Guid homeId, Guid guestId, string matchNumber)
+    private async Task SeedMatchAsync(Guid id, Guid tournamentId, Guid homeId, Guid guestId, string matchNumber, int? homeScore = null, int? guestScore = null)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
         const string sql = @"
-            INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, matchnumber, createdat) 
-            VALUES (@id, @tId, @hId, @gId, @date, @num, @created)";
+            INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, matchnumber, homescore, guestscore, createdat) 
+            VALUES (@id, @tId, @hId, @gId, @date, @num, @homeScore, @guestScore, @created)";
 
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", id);
@@ -2090,6 +2210,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         cmd.Parameters.AddWithValue("gId", guestId);
         cmd.Parameters.AddWithValue("date", DateTime.UtcNow.AddHours(2));
         cmd.Parameters.AddWithValue("num", matchNumber);
+        cmd.Parameters.AddWithValue("homeScore", (object?)homeScore ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("guestScore", (object?)guestScore ?? DBNull.Value);
         cmd.Parameters.AddWithValue("created", DateTime.UtcNow);
 
         await cmd.ExecuteNonQueryAsync();

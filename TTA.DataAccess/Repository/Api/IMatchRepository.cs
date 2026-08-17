@@ -1,5 +1,6 @@
 ﻿using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Base;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.DataAccess.Repository.Api;
 
@@ -59,4 +60,14 @@ public interface IMatchRepository : IEntityRepositoryBase<Guid, Match>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A task returning true if the record was successfully deleted; otherwise, false.</returns>
     Task<bool> DeleteAsync(Guid matchId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves the team summary report projection for a specific team in a match.
+    /// </summary>
+    Task<IEnumerable<TeamMatchSummaryReportProjection>> GetTeamSummaryReportAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves the detailed report projection for a specific player match lineup.
+    /// </summary>
+    Task<IEnumerable<PlayerDetailedReportProjection>> GetPlayerDetailedReportAsync(Guid matchId, Guid matchLineupId, CancellationToken cancellationToken = default);
 }

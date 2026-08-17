@@ -2142,3 +2142,138 @@ BEGIN
       )
     GROUP BY ml.id, pp.periodnumber;
 END;$$ LANGUAGE plpgsql;
+
+-- =============================================================
+-- TTA MATCH & PLAYER REPORTS STORED FUNCTIONS (UPDATED)
+-- =============================================================
+
+-- =============================================================
+-- TTA MATCH & PLAYER REPORTS STORED FUNCTIONS
+-- =============================================================
+
+/**********************************************************************************
+ * Function: public.get_match_team_summary_report
+ * Description: Generates a generalized summary report for all players of a specific 
+ *              team in a match (Type 1 report) with calculated play percentage.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_team_summary_report(
+    p_match_id UUID,
+    p_team_id UUID
+)
+RETURNS TABLE (
+    matchlineupid UUID,
+    firstname VARCHAR,
+    lastname VARCHAR,
+    number INT,
+    goals INT,
+    positivegoalleadingactions INT,
+    negativegoalleadingactions INT,
+    totalpositiveactions INT,
+    totalnegativeactions INT,
+    playpercentage DOUBLE PRECISION
+) AS $$
+DECLARE
+    v_total_match_seconds DOUBLE PRECISION;
+BEGIN
+    -- 1. Calculate total match duration in seconds based on PeriodStart (0) and PeriodEnd (1) anchors
+    SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (end_anch.timestamp - start_anch.timestamp))), 0)
+    INTO v_total_match_seconds
+    FROM public.timeanchors start_anch
+    JOIN public.timeanchors end_anch ON start_anch.matchid = end_anch.matchid 
+         AND start_anch.periodnumber = end_anch.periodnumber
+    WHERE start_anch.matchid = p_match_id 
+      AND start_anch.type = 0 -- PeriodStart
+      AND end_anch.type = 1;  -- PeriodEnd
+
+    -- 2. Return aggregated query results
+    RETURN QUERY
+    SELECT 
+        ml.id AS matchlineupid,
+        p.firstname,
+        p.lastname,
+        ml.number,
+        -- Goals scored (event name = 'Goal')
+        COALESCE(SUM(CASE WHEN ed.name ILIKE 'Goal' THEN 1 ELSE 0 END), 0)::INT AS goals,
+        -- Positive goal-leading actions
+        COALESCE(SUM(CASE WHEN ge.isleadtogoal = TRUE AND ed.ispositive = TRUE THEN 1 ELSE 0 END), 0)::INT AS positivegoalleadingactions,
+        -- Negative goal-leading actions
+        COALESCE(SUM(CASE WHEN ge.isleadtogoal = TRUE AND ed.ispositive = FALSE THEN 1 ELSE 0 END), 0)::INT AS negativegoalleadingactions,
+        -- Total positive actions
+        COALESCE(SUM(CASE WHEN ed.ispositive = TRUE THEN 1 ELSE 0 END), 0)::INT AS totalpositiveactions,
+        -- Total negative actions
+        COALESCE(SUM(CASE WHEN ed.ispositive = FALSE THEN 1 ELSE 0 END), 0)::INT AS totalnegativeactions,
+        -- Play percentage calculation: return percentage if valid positive duration, else 0
+        CASE
+            WHEN v_total_match_seconds > 0 THEN
+                ROUND(
+                    ((COALESCE(tp.total_seconds, 0) / v_total_match_seconds) * 100.0)::NUMERIC,
+                    2
+                )::DOUBLE PRECISION
+            ELSE 0
+        END AS playpercentage
+    FROM public.matchlineups ml
+    INNER JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    INNER JOIN public.players p ON pr.playerid = p.id
+    LEFT JOIN public.gameevents ge ON ml.id = ge.matchlineupid
+    LEFT JOIN public.eventdefinitions ed ON ge.eventdefinitionid = ed.id
+    LEFT JOIN (
+        SELECT 
+            pp.matchlineupid,
+            SUM(EXTRACT(EPOCH FROM (COALESCE(pp.timeout, CURRENT_TIMESTAMP) - pp.timein))) AS total_seconds
+        FROM public.playerpresences pp
+        JOIN public.matchlineups mline ON pp.matchlineupid = mline.id
+        WHERE mline.matchid = p_match_id
+        GROUP BY pp.matchlineupid
+    ) tp ON ml.id = tp.matchlineupid
+    WHERE ml.matchid = p_match_id AND pr.teamid = p_team_id
+    GROUP BY ml.id, p.firstname, p.lastname, ml.number, tp.total_seconds
+    ORDER BY ml.number ASC;
+END;
+$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Function: public.get_match_player_detailed_report
+ * Description: Retrieves detailed event chronologies for a specific player lineup 
+ *              entry across match periods (Type 2 report) with minimized fields.
+ *              Uses LEFT JOIN to ensure player info is returned even with 0 events.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_player_detailed_report(
+    p_match_id UUID,
+    p_match_lineup_id UUID
+)
+RETURNS TABLE (
+    matchlineupid UUID,
+    firstname VARCHAR,
+    lastname VARCHAR,
+    number INT,
+    eventid UUID,
+    eventname VARCHAR,
+    ispositive BOOLEAN,
+    periodnumber INT,
+    eventtimestamp TIMESTAMPTZ,
+    normalizedmatchtime INTERVAL,
+    isleadtogoal BOOLEAN
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        ml.id AS matchlineupid,
+        p.firstname,
+        p.lastname,
+        ml.number,
+        ge.id AS eventid,
+        ed.name AS eventname,
+        ed.ispositive,
+        ge.periodnumber,
+        ge.eventtimestamp,
+        ge.normalizedmatchtime,
+        ge.isleadtogoal
+    FROM public.matchlineups ml
+    INNER JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    INNER JOIN public.players p ON pr.playerid = p.id
+    LEFT JOIN public.gameevents ge ON ml.id = ge.matchlineupid
+    LEFT JOIN public.eventdefinitions ed ON ge.eventdefinitionid = ed.id
+    WHERE ml.id = p_match_lineup_id AND ml.matchid = p_match_id
+    ORDER BY ge.periodnumber ASC, ge.eventtimestamp ASC;
+END;
+$$ LANGUAGE plpgsql;
