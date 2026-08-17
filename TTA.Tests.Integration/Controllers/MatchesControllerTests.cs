@@ -199,17 +199,21 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
-    /// Verifies that report endpoints return HTTP 404 Not Found when requested for an unfinalized match.
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetTeamSummaryReport"/> returns HTTP 404 Not Found
+    /// when requested for an existing match that has not been finalized yet.
     /// </summary>
     [Fact]
     public async Task GetTeamSummaryReport_ShouldReturnNotFound_WhenMatchIsNotFinalized()
     {
         // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
         var unfinalizedMatchId = Guid.NewGuid();
-        var teamId = Guid.NewGuid();
+        await SeedMatchAsync(unfinalizedMatchId, context.TournamentId, homeId, guestId, "M-UNFIN-SUM");
 
         // Act
-        var response = await Client.GetAsync($"{BaseUrl}/{unfinalizedMatchId}/teams/{teamId}/reports/summary");
+        var response = await Client.GetAsync($"{BaseUrl}/{unfinalizedMatchId}/teams/{homeId}/reports/summary");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
