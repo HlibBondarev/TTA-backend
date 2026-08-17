@@ -2185,11 +2185,6 @@ BEGIN
       AND start_anch.type = 0 -- PeriodStart
       AND end_anch.type = 1;  -- PeriodEnd
 
-    -- Fallback to prevent division by zero if anchors are missing
-    IF v_total_match_seconds <= 0 THEN
-        v_total_match_seconds := 1;
-    END IF;
-
     -- 2. Return aggregated query results
     RETURN QUERY
     SELECT 
@@ -2207,11 +2202,15 @@ BEGIN
         COALESCE(SUM(CASE WHEN ed.ispositive = TRUE THEN 1 ELSE 0 END), 0)::INT AS totalpositiveactions,
         -- Total negative actions
         COALESCE(SUM(CASE WHEN ed.ispositive = FALSE THEN 1 ELSE 0 END), 0)::INT AS totalnegativeactions,
-        -- Play percentage calculation: (Player Play Seconds / Total Match Duration Seconds) * 100 (cast to numeric for ROUND)
-        ROUND(
-            ((COALESCE(tp.total_seconds, 0) / v_total_match_seconds) * 100.0)::NUMERIC, 
-            2
-        )::DOUBLE PRECISION AS playpercentage
+        -- Play percentage calculation: return percentage if valid positive duration, else 0
+        CASE
+            WHEN v_total_match_seconds > 0 THEN
+                ROUND(
+                    ((COALESCE(tp.total_seconds, 0) / v_total_match_seconds) * 100.0)::NUMERIC,
+                    2
+                )::DOUBLE PRECISION
+            ELSE 0
+        END AS playpercentage
     FROM public.matchlineups ml
     INNER JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
     INNER JOIN public.players p ON pr.playerid = p.id
