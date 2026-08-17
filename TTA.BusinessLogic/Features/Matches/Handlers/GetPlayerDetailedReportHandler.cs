@@ -39,7 +39,7 @@ public class GetPlayerDetailedReportHandler(
             throw new NotFoundException($"Match lineup with ID {request.MatchLineupId} not found.");
         }
 
-        var first = projections.First();
+        var first = projections[0];
 
         var events = projections
             .Where(p => p.EventId.HasValue)
