@@ -99,10 +99,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
-    /// <summary>
-    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetTeamSummaryReport"/> returns HTTP 200 OK
-    /// with summary report items when data exists.
-    /// </summary>
     [Fact]
     public async Task GetTeamSummaryReport_ShouldReturnOk_WhenDataExists()
     {
@@ -111,7 +107,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
         var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
         var matchId = Guid.NewGuid();
-        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SUM-REPORT");
+        // Передаємо рахунок для фіналізації матчу
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SUM-REPORT", homeScore: 2, guestScore: 1);
 
         await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
 
@@ -124,10 +121,6 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         result.Should().NotBeNull();
     }
 
-    /// <summary>
-    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetPlayerDetailedReport"/> returns HTTP 200 OK
-    /// with the detailed player report when data exists.
-    /// </summary>
     [Fact]
     public async Task GetPlayerDetailedReport_ShouldReturnOk_WhenDataExists()
     {
@@ -136,7 +129,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
         var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
         var matchId = Guid.NewGuid();
-        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-DET-REPORT");
+        // Передаємо рахунок для фіналізації матчу
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-DET-REPORT", homeScore: 3, guestScore: 0);
 
         var lineupId = await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
 
@@ -147,6 +141,25 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var result = await response.Content.ReadFromJsonAsync<PlayerDetailedMatchReportResponse>();
         result.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task GetPlayerDetailedReport_ShouldReturnNotFound_WhenMatchIsNotFinalized()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+        var unfinalizedMatchId = Guid.NewGuid();
+        // Створюємо нефіналізований матч (без рахунку)
+        await SeedMatchAsync(unfinalizedMatchId, context.TournamentId, homeId, guestId, "M-UNFIN-DET");
+        var lineupId = await SeedMatchLineupAsync(unfinalizedMatchId, homeId, context.CityId, context.TournamentId, context.SportId);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{unfinalizedMatchId}/lineups/{lineupId}/reports/detailed");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     /// <summary>
@@ -180,6 +193,23 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Act
         var response = await Client.GetAsync($"{BaseUrl}/{nonExistentMatchId}/lineups/{nonExistentLineupId}/reports/detailed");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// Verifies that report endpoints return HTTP 404 Not Found when requested for an unfinalized match.
+    /// </summary>
+    [Fact]
+    public async Task GetTeamSummaryReport_ShouldReturnNotFound_WhenMatchIsNotFinalized()
+    {
+        // Arrange
+        var unfinalizedMatchId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{unfinalizedMatchId}/teams/{teamId}/reports/summary");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -2160,14 +2190,14 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return (tournamentId, cityId, sportId);
     }
 
-    private async Task SeedMatchAsync(Guid id, Guid tournamentId, Guid homeId, Guid guestId, string matchNumber)
+    private async Task SeedMatchAsync(Guid id, Guid tournamentId, Guid homeId, Guid guestId, string matchNumber, int? homeScore = null, int? guestScore = null)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
         const string sql = @"
-            INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, matchnumber, createdat) 
-            VALUES (@id, @tId, @hId, @gId, @date, @num, @created)";
+            INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, matchnumber, homescore, guestscore, createdat) 
+            VALUES (@id, @tId, @hId, @gId, @date, @num, @homeScore, @guestScore, @created)";
 
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", id);
@@ -2176,6 +2206,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         cmd.Parameters.AddWithValue("gId", guestId);
         cmd.Parameters.AddWithValue("date", DateTime.UtcNow.AddHours(2));
         cmd.Parameters.AddWithValue("num", matchNumber);
+        cmd.Parameters.AddWithValue("homeScore", (object?)homeScore ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("guestScore", (object?)guestScore ?? DBNull.Value);
         cmd.Parameters.AddWithValue("created", DateTime.UtcNow);
 
         await cmd.ExecuteNonQueryAsync();

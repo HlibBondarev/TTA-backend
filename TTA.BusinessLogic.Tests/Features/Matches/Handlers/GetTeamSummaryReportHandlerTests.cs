@@ -6,12 +6,13 @@ using TTA.BusinessLogic.Features.Matches.Queries;
 using TTA.Common.Exceptions;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Projections;
+using Match = TTA.DataAccess.Models.Match;
 
 namespace TTA.BusinessLogic.Tests.Features.Matches.Handlers;
 
 /// <summary>
 /// Unit tests for the <see cref="GetTeamSummaryReportHandler"/> class.
-/// Ensures correct mapping of repository summary projections to DTO responses.
+/// Ensures correct mapping of repository summary projections to DTO responses and match finalization verification.
 /// </summary>
 public class GetTeamSummaryReportHandlerTests
 {
@@ -35,15 +36,26 @@ public class GetTeamSummaryReportHandlerTests
 
     /// <summary>
     /// Verifies that the handler returns a collection of populated summary DTOs
-    /// when player records exist for the given team in a match.
+    /// when the match is finalized and player records exist for the given team.
     /// </summary>
     [Fact]
-    public async Task Handle_Should_ReturnSummaryResponses_When_ProjectionsExist()
+    public async Task Handle_Should_ReturnSummaryResponses_When_MatchIsFinalizedAndProjectionsExist()
     {
         // Arrange
         var matchId = Guid.NewGuid();
         var teamId = Guid.NewGuid();
         var query = new GetTeamSummaryReportQuery(matchId, teamId);
+
+        var finalizedMatch = new Match
+        {
+            Id = matchId,
+            HomeScore = 2,
+            GuestScore = 1
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(finalizedMatch);
 
         var projections = new List<TeamMatchSummaryReportProjection>
         {
@@ -93,11 +105,75 @@ public class GetTeamSummaryReportHandlerTests
         resultList[1].PositiveGoalLeadingActions.Should().Be(2);
         resultList[1].PlayPercentage.Should().Be(60.0);
 
+        _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
         _matchRepositoryMock.Verify(r => r.GetTeamSummaryReportAsync(matchId, teamId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
-    /// Verifies that the handler throws a <see cref="NotFoundException"/> when no player summary records are found.
+    /// Verifies that a <see cref="NotFoundException"/> is thrown when the match does not exist.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_ThrowNotFoundException_When_MatchDoesNotExist()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+        var query = new GetTeamSummaryReportQuery(matchId, teamId);
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Match?)null);
+
+        // Act
+        Func<Task> act = async () => await _handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage($"Match with ID {matchId} is not finalized or does not exist.");
+
+        _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
+        _matchRepositoryMock.Verify(r => r.GetTeamSummaryReportAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that a <see cref="NotFoundException"/> is thrown when the match is not finalized (scores are null).
+    /// </summary>
+    [Theory]
+    [InlineData(null, 1)]
+    [InlineData(2, null)]
+    [InlineData(null, null)]
+    public async Task Handle_Should_ThrowNotFoundException_When_MatchIsNotFinalized(int? homeScore, int? guestScore)
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+        var query = new GetTeamSummaryReportQuery(matchId, teamId);
+
+        var unfinalizedMatch = new Match
+        {
+            Id = matchId,
+            HomeScore = homeScore,
+            GuestScore = guestScore
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(unfinalizedMatch);
+
+        // Act
+        Func<Task> act = async () => await _handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<NotFoundException>()
+            .WithMessage($"Match with ID {matchId} is not finalized or does not exist.");
+
+        _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
+        _matchRepositoryMock.Verify(r => r.GetTeamSummaryReportAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that the handler throws a <see cref="NotFoundException"/> when the match exists and is finalized, 
+    /// but no player summary records are found for the given team.
     /// </summary>
     [Fact]
     public async Task Handle_Should_ThrowNotFoundException_When_NoProjectionsExist()
@@ -106,6 +182,17 @@ public class GetTeamSummaryReportHandlerTests
         var matchId = Guid.NewGuid();
         var teamId = Guid.NewGuid();
         var query = new GetTeamSummaryReportQuery(matchId, teamId);
+
+        var finalizedMatch = new Match
+        {
+            Id = matchId,
+            HomeScore = 3,
+            GuestScore = 0
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(finalizedMatch);
 
         _matchRepositoryMock
             .Setup(r => r.GetTeamSummaryReportAsync(matchId, teamId, It.IsAny<CancellationToken>()))
@@ -116,8 +203,9 @@ public class GetTeamSummaryReportHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<NotFoundException>()
-            .WithMessage($"Team summary report for team {teamId} in match {matchId} not found.");
+            .WithMessage($"Team {teamId} or Match {matchId} not found.");
 
+        _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
         _matchRepositoryMock.Verify(r => r.GetTeamSummaryReportAsync(matchId, teamId, It.IsAny<CancellationToken>()), Times.Once);
     }
 }

@@ -31,15 +31,22 @@ public class GetTeamSummaryReportHandler(
     {
         _logger.LogInformation("Fetching team summary report for Team {TeamId} in Match {MatchId}.", request.TeamId, request.MatchId);
 
+        var match = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken);
+        if (match == null || !match.HomeScore.HasValue || !match.GuestScore.HasValue)
+        {
+            _logger.LogWarning("Team summary report failed: Match {MatchId} is not finalized or does not exist.", request.MatchId);
+            throw new NotFoundException($"Match with ID {request.MatchId} is not finalized or does not exist.");
+        }
+
         var projections = (await _matchRepository.GetTeamSummaryReportAsync(request.MatchId, request.TeamId, cancellationToken)).ToList();
 
         if (projections.Count == 0)
         {
             _logger.LogWarning("Team summary report failed: Team {TeamId} or Match {MatchId} not found.", request.TeamId, request.MatchId);
-            throw new NotFoundException($"Team summary report for team {request.TeamId} in match {request.MatchId} not found.");
+            throw new NotFoundException($"Team {request.TeamId} or Match {request.MatchId} not found.");
         }
 
-        var response = projections.Select(p => new TeamMatchSummaryReportResponse(
+        return projections.Select(p => new TeamMatchSummaryReportResponse(
             MatchLineupId: p.MatchLineupId,
             FirstName: p.FirstName,
             LastName: p.LastName,
@@ -50,10 +57,6 @@ public class GetTeamSummaryReportHandler(
             TotalPositiveActions: p.TotalPositiveActions,
             TotalNegativeActions: p.TotalNegativeActions,
             PlayPercentage: p.PlayPercentage
-        )).ToList();
-
-        _logger.LogInformation("Successfully retrieved {Count} player summary records for Team {TeamId} in Match {MatchId}.", response.Count, request.TeamId, request.MatchId);
-
-        return response;
+        ));
     }
 }

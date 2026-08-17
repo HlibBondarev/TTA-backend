@@ -31,6 +31,13 @@ public class GetPlayerDetailedReportHandler(
     {
         _logger.LogInformation("Fetching detailed player report for MatchLineup {MatchLineupId} in Match {MatchId}.", request.MatchLineupId, request.MatchId);
 
+        var match = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken);
+        if (match == null || !match.HomeScore.HasValue || !match.GuestScore.HasValue)
+        {
+            _logger.LogWarning("Detailed player report failed: Match {MatchId} is not finalized or does not exist.", request.MatchId);
+            throw new NotFoundException($"Match with ID {request.MatchId} is not finalized or does not exist.");
+        }
+
         var projections = (await _matchRepository.GetPlayerDetailedReportAsync(request.MatchId, request.MatchLineupId, cancellationToken)).ToList();
 
         if (projections.Count == 0)
