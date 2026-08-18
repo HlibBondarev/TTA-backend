@@ -121,6 +121,10 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         result.Should().NotBeNull();
     }
 
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetPlayerDetailedReport"/> returns HTTP 200 OK
+    /// and ensures events are strictly sorted in ascending order by EventTimestamp, even when cross-period NormalizedMatchTime conflicts.
+    /// </summary>
     [Fact]
     public async Task GetPlayerDetailedReport_ShouldReturnOk_WhenDataExists()
     {
@@ -129,10 +133,35 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
         var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
         var matchId = Guid.NewGuid();
-        // Передаємо рахунок для фіналізації матчу
         await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-DET-REPORT", homeScore: 3, guestScore: 0);
 
         var lineupId = await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
+
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // Seed a valid event definition with mandatory shortname included
+        var eventDefId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat)
+            VALUES (@id, @sportId, 'Goal', 'GL', true, NOW())",
+            new { id = eventDefId, sportId = context.SportId });
+
+        var baseTime = DateTime.UtcNow;
+
+        // Event 1: Period 2, occurs LATER in real time (baseTime + 15 min), but has a SMALLER normalized relative match time (5 min)
+        var eventPeriod2 = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat)
+            VALUES (@id, @mlId, @edId, 2, @ts, @norm, false, NOW())",
+            new { id = eventPeriod2, mlId = lineupId, edId = eventDefId, ts = baseTime.AddMinutes(15), norm = TimeSpan.FromMinutes(5) });
+
+        // Event 2: Period 1, occurs EARLIER in real time (baseTime), but has a LARGER normalized relative match time (40 min)
+        var eventPeriod1 = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat)
+            VALUES (@id, @mlId, @edId, 1, @ts, @norm, true, NOW())",
+            new { id = eventPeriod1, mlId = lineupId, edId = eventDefId, ts = baseTime, norm = TimeSpan.FromMinutes(40) });
 
         // Act
         var response = await Client.GetAsync($"{BaseUrl}/{matchId}/lineups/{lineupId}/reports/detailed");
@@ -141,6 +170,16 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var result = await response.Content.ReadFromJsonAsync<PlayerDetailedMatchReportResponse>();
         result.Should().NotBeNull();
+
+        var events = result!.Events.ToList();
+        events.Should().HaveCount(2);
+
+        // Verify events are strictly ordered by ascending EventTimestamp (Event 2 from Period 1 first, Event 1 from Period 2 second)
+        events[0].EventTimestamp.Should().BeCloseTo(baseTime, TimeSpan.FromSeconds(1));
+        events[0].IsLeadToGoal.Should().BeTrue();
+
+        events[1].EventTimestamp.Should().BeCloseTo(baseTime.AddMinutes(15), TimeSpan.FromSeconds(1));
+        events[1].IsLeadToGoal.Should().BeFalse();
     }
 
     [Fact]
