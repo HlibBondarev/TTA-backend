@@ -496,11 +496,18 @@ public class MatchRepositoryTests : BaseIntegrationTest
         eventsWithData.Should().HaveCount(2);
 
         // Verify that the repository (database function) orders strictly ascending by EventTimestamp
-        eventsWithData[0].PeriodNumber.Should().Be(1); // Earlier event from Period 1 first
+        eventsWithData[0].PeriodNumber.Should().Be(1);
+        eventsWithData[0].EventTimestamp.Should().NotBeNull();
+        eventsWithData[0].EventTimestamp!.Value.Should().BeCloseTo(baseTime, TimeSpan.FromMilliseconds(100));
         eventsWithData[0].IsLeadToGoal.Should().BeTrue();
 
-        eventsWithData[1].PeriodNumber.Should().Be(2); // Later event from Period 2 second
+        eventsWithData[1].PeriodNumber.Should().Be(2);
+        eventsWithData[1].EventTimestamp.Should().NotBeNull();
+        eventsWithData[1].EventTimestamp!.Value.Should().BeCloseTo(baseTime.AddMinutes(30), TimeSpan.FromMilliseconds(100));
         eventsWithData[1].IsLeadToGoal.Should().BeFalse();
+
+        // Compare non-nullable DateTime values using .Value
+        eventsWithData[0].EventTimestamp!.Value.Should().BeBefore(eventsWithData[1].EventTimestamp!.Value);
     }
 
     #endregion
