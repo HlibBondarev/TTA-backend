@@ -4,6 +4,7 @@ using System.Data.Common;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
+using TTA.Tests.Integration.Repository.Auth;
 
 namespace TTA.Tests.Integration.Repository;
 
@@ -430,6 +431,83 @@ public class MatchRepositoryTests : BaseIntegrationTest
         detail.IsPositive.Should().BeFalse();
         detail.PeriodNumber.Should().Be(1);
         detail.NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(3.5));
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetPlayerDetailedReportAsync"/> returns player events
+    /// ordered strictly ascending by EventTimestamp, resolving any cross-period conflicts.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayerDetailedReportAsync_ShouldOrderEventsStrictlyByAscendingEventTimestamp()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId, "M-REP-SORT");
+        await _repository.UpsertMatchAsync(match);
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // Retrieve sportId associated with the seeded tournament
+        var sportId = await conn.QueryFirstAsync<Guid>(
+            "SELECT sportid FROM public.tournaments WHERE id = @tourId",
+            new { tourId = context.TournamentId });
+
+        // Query the existing player roster and position identifier using the exact column names from 01-Tables.sql
+        var rosterData = await conn.QueryFirstAsync<dynamic>(
+            "SELECT id, positionid FROM public.playerrosters WHERE teamid = @teamId AND tournamentid = @tourId LIMIT 1",
+            new { teamId = context.HomeTeamId, tourId = context.TournamentId });
+
+        Guid rosterId = rosterData.id;
+        Guid positionId = rosterData.positionid;
+
+        var lineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @m, @r, 99, @posId)",
+            new { id = lineupId, m = match.Id, r = rosterId, posId = positionId });
+
+        // Seed event definition explicitly including shortname for the test sport
+        var eventDefId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat)
+            VALUES (@id, @sportId, 'Goal', 'GL', true, NOW())",
+            new { id = eventDefId, sportId });
+
+        var baseTime = DateTime.UtcNow;
+
+        // Event 1: Period 2, absolute time is later (+30 min), but relative period time is smaller (2 min)
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat)
+            VALUES (@id, @mlId, @edId, 2, @ts, @norm, false, NOW())",
+            new { id = Guid.NewGuid(), mlId = lineupId, edId = eventDefId, ts = baseTime.AddMinutes(30), norm = TimeSpan.FromMinutes(2) });
+
+        // Event 2: Period 1, absolute time is earlier (baseTime), but relative period time is larger (44 min)
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat)
+            VALUES (@id, @mlId, @edId, 1, @ts, @norm, true, NOW())",
+            new { id = Guid.NewGuid(), mlId = lineupId, edId = eventDefId, ts = baseTime, norm = TimeSpan.FromMinutes(44) });
+
+        // Act
+        var result = (await _repository.GetPlayerDetailedReportAsync(match.Id, lineupId)).ToList();
+
+        // Assert
+        result.Should().NotBeNull();
+        var eventsWithData = result.Where(r => r.EventId.HasValue).ToList();
+        eventsWithData.Should().HaveCount(2);
+
+        // Verify that the repository (database function) orders strictly ascending by EventTimestamp
+        eventsWithData[0].PeriodNumber.Should().Be(1);
+        eventsWithData[0].EventTimestamp.Should().NotBeNull();
+        eventsWithData[0].EventTimestamp!.Value.Should().BeCloseTo(baseTime, TimeSpan.FromMilliseconds(100));
+        eventsWithData[0].IsLeadToGoal.Should().BeTrue();
+
+        eventsWithData[1].PeriodNumber.Should().Be(2);
+        eventsWithData[1].EventTimestamp.Should().NotBeNull();
+        eventsWithData[1].EventTimestamp!.Value.Should().BeCloseTo(baseTime.AddMinutes(30), TimeSpan.FromMilliseconds(100));
+        eventsWithData[1].IsLeadToGoal.Should().BeFalse();
+
+        // Compare non-nullable DateTime values using .Value
+        eventsWithData[0].EventTimestamp!.Value.Should().BeBefore(eventsWithData[1].EventTimestamp!.Value);
     }
 
     #endregion

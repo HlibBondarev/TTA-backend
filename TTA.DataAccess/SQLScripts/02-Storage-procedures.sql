@@ -2274,6 +2274,6 @@ BEGIN
     LEFT JOIN public.gameevents ge ON ml.id = ge.matchlineupid
     LEFT JOIN public.eventdefinitions ed ON ge.eventdefinitionid = ed.id
     WHERE ml.id = p_match_lineup_id AND ml.matchid = p_match_id
-    ORDER BY ge.periodnumber ASC, ge.eventtimestamp ASC;
+    ORDER BY ge.eventtimestamp ASC;
 END;
 $$ LANGUAGE plpgsql;

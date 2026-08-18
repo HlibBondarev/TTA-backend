@@ -57,9 +57,8 @@ public class GetPlayerDetailedReportHandler(
                 EventTimestamp: p.EventTimestamp!.Value,
                 NormalizedMatchTime: p.NormalizedMatchTime,
                 IsLeadToGoal: p.IsLeadToGoal!.Value
-            ))
-            .OrderBy(e => e.NormalizedMatchTime ?? TimeSpan.MaxValue)
-            .ThenBy(e => e.EventTimestamp)
+                ))
+            .OrderBy(e => e.EventTimestamp)
             .ToList();
 
         var response = new PlayerDetailedMatchReportResponse(
