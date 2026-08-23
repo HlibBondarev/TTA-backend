@@ -2346,6 +2346,7 @@ BEGIN
     RETURN v_deleted;
 END;
 $$ LANGUAGE plpgsql;
+
 /**********************************************************************************
  * Checks whether a user tracks a specific match and team context.
  **********************************************************************************/

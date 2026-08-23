@@ -32,8 +32,8 @@ public class AddUserToTrackedMatchHandler(
     /// <exception cref="NotFoundException">Thrown when target user with specified email is not found.</exception>
     public async Task<bool> Handle(AddUserToTrackedMatchCommand request, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("User {CallerId} attempting to share Match {MatchId} (Team {TeamId}) with Email {Email}.",
-            request.CurrentUserId, request.MatchId, request.TeamId, request.Email);
+        _logger.LogInformation("User {CallerId} attempting to share Match {MatchId} for Team {TeamId}.",
+            request.CurrentUserId, request.MatchId, request.TeamId);
 
         // 1. Verify caller tracks this match/team context
         var callerTracksMatch = await _matchRepository.IsMatchCatchedByUserAsync(
@@ -52,7 +52,7 @@ public class AddUserToTrackedMatchHandler(
 
         if (targetUser == null)
         {
-            _logger.LogWarning("Share match failed: Target user with email {Email} not found.", request.Email);
+            _logger.LogWarning("Share match failed: Target user not found.");
             throw new NotFoundException($"User with email '{request.Email}' was not found.");
         }
 
@@ -62,8 +62,8 @@ public class AddUserToTrackedMatchHandler(
             var isCatched = await _matchRepository.CatchMatchAsync(
                 request.MatchId, request.TeamId, targetUser.Id, cancellationToken);
 
-            _logger.LogInformation("Match {MatchId} successfully shared with User {TargetUserId} ({Email}).",
-                request.MatchId, targetUser.Id, request.Email);
+            _logger.LogInformation("Match {MatchId} successfully shared with User {TargetUserId}.",
+                request.MatchId, targetUser.Id);
 
             return isCatched;
         }
