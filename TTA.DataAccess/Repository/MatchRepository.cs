@@ -112,4 +112,62 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
             parameters,
             cancellationToken: cancellationToken));
     }
+
+    /// <inheritdoc />
+    public async Task<bool> CatchMatchAsync(Guid matchId, Guid teamId, string userId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_user_id", userId);
+        parameters.Add("p_match_id", matchId);
+        parameters.Add("p_team_id", teamId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            SqlStatements.ForMatches.CatchUserMatch,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> UncatchMatchAsync(Guid matchId, Guid teamId, string userId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_user_id", userId);
+        parameters.Add("p_match_id", matchId);
+        parameters.Add("p_team_id", teamId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            SqlStatements.ForMatches.UncatchUserMatch,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> IsMatchCatchedByUserAsync(Guid matchId, Guid teamId, string userId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_user_id", userId);
+        parameters.Add("p_match_id", matchId);
+        parameters.Add("p_team_id", teamId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            SqlStatements.ForMatches.IsMatchCatchedByUser,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async Task<IEnumerable<MatchWithDetailsProjection>> GetCatchedMatchesByUserIdAsync(string userId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("p_user_id", userId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+        return await connection.QueryAsync<MatchWithDetailsProjection>(new CommandDefinition(
+            SqlStatements.ForMatches.GetUserCatchedMatches,
+            parameters,
+            cancellationToken: cancellationToken));
+    }
 }

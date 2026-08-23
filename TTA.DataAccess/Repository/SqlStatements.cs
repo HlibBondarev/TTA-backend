@@ -312,6 +312,30 @@ public static class SqlStatements
         /// </summary>
         public const string GetPlayerDetailedReport =
             "SELECT * FROM public.get_match_player_detailed_report(@p_match_id, @p_match_lineup_id);";
+
+        /// <summary>
+        /// SQL to catch (track) a match for a user and team.
+        /// </summary>
+        public const string CatchUserMatch =
+            "SELECT public.catch_user_match(@p_user_id, @p_match_id, @p_team_id);";
+
+        /// <summary>
+        /// SQL to uncatch (untrack) a match for a user and team.
+        /// </summary>
+        public const string UncatchUserMatch =
+            "SELECT public.uncatch_user_match(@p_user_id, @p_match_id, @p_team_id);";
+
+        /// <summary>
+        /// SQL to check if a match and team combination is tracked by a specific user.
+        /// </summary>
+        public const string IsMatchCatchedByUser =
+            "SELECT public.is_match_catched_by_user(@p_user_id, @p_match_id, @p_team_id);";
+
+        /// <summary>
+        /// SQL to retrieve all matches tracked by a specific user with detailed metadata.
+        /// </summary>
+        public const string GetUserCatchedMatches =
+            "SELECT * FROM public.get_user_catched_matches(@p_user_id);";
     }
 
     /// <summary>

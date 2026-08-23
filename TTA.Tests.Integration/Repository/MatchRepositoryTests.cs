@@ -512,7 +512,232 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     #endregion
 
+    #region User Tracked Matches Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.CatchMatchAsync"/> successfully links a user to a match/team 
+    /// context and returns true on the first call.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CatchMatchAsync_ShouldReturnTrue_WhenMatchIsCatchedFirstTime()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var userId = $"auth0|user-{Guid.NewGuid()}";
+        await SeedUserAsync(userId, "catch1@test.com", "Catch User 1");
+
+        // Act
+        var result = await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeTrue("catching a match for the first time should return true");
+
+        var isCatched = await _repository.IsMatchCatchedByUserAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+        isCatched.Should().BeTrue("tracking record should exist in the database");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.CatchMatchAsync"/> returns false on duplicate invocations 
+    /// due to idempotency enforcement (ON CONFLICT DO NOTHING).
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CatchMatchAsync_ShouldReturnFalse_WhenMatchIsAlreadyCatchedByUser()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var userId = $"auth0|user-{Guid.NewGuid()}";
+        await SeedUserAsync(userId, "catch2@test.com", "Catch User 2");
+
+        await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Act
+        var secondResult = await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Assert
+        secondResult.Should().BeFalse("catching an already tracked match should return false");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.CatchMatchAsync"/> throws a database exception when the specified team 
+    /// does not participate in the match (SQLSTATE P0001).
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CatchMatchAsync_ShouldThrowException_WhenTeamDoesNotParticipateInMatch()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var userId = $"auth0|user-{Guid.NewGuid()}";
+        await SeedUserAsync(userId, "invalidteam@test.com", "Invalid Team User");
+
+        var invalidTeamId = Guid.NewGuid();
+
+        // Act
+        Func<Task> act = async () => await _repository.CatchMatchAsync(match.Id, invalidTeamId, userId, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*does not participate in match*");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.IsMatchCatchedByUserAsync"/> returns false when no tracking record exists.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task IsMatchCatchedByUserAsync_ShouldReturnFalse_WhenTrackingRecordDoesNotExist()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+        var userId = $"auth0|user-{Guid.NewGuid()}";
+
+        // Act
+        var result = await _repository.IsMatchCatchedByUserAsync(matchId, teamId, userId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.UncatchMatchAsync"/> removes the tracking link for User A, 
+    /// but keeps the match in the database because User B is still tracking it.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task UncatchMatchAsync_ShouldRemoveTrackingLinkAndKeepMatch_WhenOtherUserStillTracksIt()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var userA = $"auth0|userA-{Guid.NewGuid()}";
+        var userB = $"auth0|userB-{Guid.NewGuid()}";
+
+        await SeedUserAsync(userA, "usera@test.com", "User A");
+        await SeedUserAsync(userB, "userb@test.com", "User B");
+
+        await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userA, CancellationToken.None);
+        await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userB, CancellationToken.None);
+
+        // Act
+        var isUncatched = await _repository.UncatchMatchAsync(match.Id, context.HomeTeamId, userA, CancellationToken.None);
+
+        // Assert
+        isUncatched.Should().BeTrue("uncatching an existing tracking link should return true");
+
+        var isCatchedByA = await _repository.IsMatchCatchedByUserAsync(match.Id, context.HomeTeamId, userA, CancellationToken.None);
+        isCatchedByA.Should().BeFalse("user A link must be removed");
+
+        var isCatchedByB = await _repository.IsMatchCatchedByUserAsync(match.Id, context.HomeTeamId, userB, CancellationToken.None);
+        isCatchedByB.Should().BeTrue("user B link must remain intact");
+
+        var matchInDb = await _repository.GetByIdAsync(match.Id, CancellationToken.None);
+        matchInDb.Should().NotBeNull("the match must remain in the database because User B still tracks it");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.UncatchMatchAsync"/> automatically deletes the match entity 
+    /// from the database when the last tracking user uncatches it.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task UncatchMatchAsync_ShouldRemoveTrackingLinkAndDeleteMatch_WhenLastUserUncatches()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var userId = $"auth0|single-user-{Guid.NewGuid()}";
+        await SeedUserAsync(userId, "single@test.com", "Single User");
+
+        await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Act
+        var isUncatched = await _repository.UncatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Assert
+        isUncatched.Should().BeTrue();
+
+        var isCatched = await _repository.IsMatchCatchedByUserAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+        isCatched.Should().BeFalse();
+
+        var matchInDb = await _repository.GetByIdAsync(match.Id, CancellationToken.None);
+        matchInDb.Should().BeNull("the match entity must be deleted automatically when no tracking records remain");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetCatchedMatchesByUserIdAsync"/> retrieves only matches 
+    /// catched by the specified user, returning strongly-typed <see cref="MatchWithDetailsProjection"/> objects.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetCatchedMatchesByUserIdAsync_ShouldReturnOnlyCatchedMatchesForSpecifiedUser()
+    {
+        // Arrange
+        var context1 = await SeedMatchEnvironmentAsync();
+        var match1 = CreateMatchModel(context1.TournamentId, context1.HomeTeamId, context1.GuestTeamId, "CATCH-01");
+        await _repository.UpsertMatchAsync(match1, CancellationToken.None);
+
+        var context2 = await SeedMatchEnvironmentAsync();
+        var match2 = CreateMatchModel(context2.TournamentId, context2.HomeTeamId, context2.GuestTeamId, "CATCH-02");
+        await _repository.UpsertMatchAsync(match2, CancellationToken.None);
+
+        var targetUserId = $"auth0|target-{Guid.NewGuid()}";
+        var noiseUserId = $"auth0|noise-{Guid.NewGuid()}";
+
+        await SeedUserAsync(targetUserId, "targetuser@test.com", "Target User");
+        await SeedUserAsync(noiseUserId, "noiseuser@test.com", "Noise User");
+
+        // Target user catches match 1; Noise user catches match 2
+        await _repository.CatchMatchAsync(match1.Id, context1.HomeTeamId, targetUserId, CancellationToken.None);
+        await _repository.CatchMatchAsync(match2.Id, context2.HomeTeamId, noiseUserId, CancellationToken.None);
+
+        // Act
+        var catchedMatches = (await _repository.GetCatchedMatchesByUserIdAsync(targetUserId, CancellationToken.None)).ToList();
+
+        // Assert
+        catchedMatches.Should().HaveCount(1);
+
+        var item = catchedMatches[0];
+        item.Id.Should().Be(match1.Id);
+        item.MatchNumber.Should().Be("CATCH-01");
+        item.HomeTeamName.Should().NotBeNullOrEmpty();
+        item.GuestTeamName.Should().NotBeNullOrEmpty();
+        item.TournamentName.Should().NotBeNullOrEmpty();
+    }
+
+    #endregion
+
     #region Helpers
+
+    /// <summary>
+    /// Helper method to insert a user record into the database for integration testing.
+    /// </summary>
+    /// <param name="userId">The unique string identifier of the user.</param>
+    /// <param name="email">The email address of the user.</param>
+    /// <param name="displayName">The display name of the user.</param>
+    private async Task SeedUserAsync(string userId, string email, string displayName)
+    {
+        using var conn = (System.Data.Common.DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @email, @displayName, NOW()) ON CONFLICT (id) DO NOTHING;",
+            new { id = userId, email, displayName });
+    }
 
     /// <summary>
     /// Seeds all necessary entities with unique names and valid codes strictly following 01-Tables.sql schema.

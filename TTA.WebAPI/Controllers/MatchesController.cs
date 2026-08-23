@@ -7,6 +7,7 @@ using TTA.BusinessLogic.Features.EventDefinitions.Queries;
 using TTA.BusinessLogic.Features.GameEvents.Commands;
 using TTA.BusinessLogic.Features.GameEvents.DTOs;
 using TTA.BusinessLogic.Features.GameEvents.Queries;
+using TTA.BusinessLogic.Features.Matches.Commands;
 using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.Matches.Queries;
 using TTA.BusinessLogic.Features.MatchLineups.DTOs;
@@ -357,6 +358,105 @@ public class MatchesController(
         var query = new GetPlayerDetailedReportQuery(matchId, matchLineupId);
         var result = await _mediator.Send(query, cancellationToken);
 
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Links the authorized user to a specific match and team context for tracking.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match context.</param>
+    /// <param name="teamId">The unique identifier of the team context.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>HTTP 200 OK if successful.</returns>
+    [HttpPost("{matchId:guid}/teams/{teamId:guid}/catch")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> CatchMatch(
+        [FromRoute] Guid matchId,
+        [FromRoute] Guid teamId,
+        CancellationToken cancellationToken)
+    {
+        var userId = this.GetUserId(_auth0Settings);
+        var command = new CatchMatchCommand(matchId, teamId, userId);
+
+        await _mediator.Send(command, cancellationToken);
+        return Ok();
+    }
+
+    /// <summary>
+    /// Removes the tracking link between the authorized user and a match/team context.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match context.</param>
+    /// <param name="teamId">The unique identifier of the team context.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>HTTP 200 OK if successful.</returns>
+    [HttpDelete("{matchId:guid}/teams/{teamId:guid}/catch")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UncatchMatch(
+        [FromRoute] Guid matchId,
+        [FromRoute] Guid teamId,
+        CancellationToken cancellationToken)
+    {
+        var userId = this.GetUserId(_auth0Settings);
+        var command = new UncatchMatchCommand(matchId, teamId, userId);
+
+        await _mediator.Send(command, cancellationToken);
+        return Ok();
+    }
+
+    /// <summary>
+    /// Shares a tracked match with another user using their email address.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match context.</param>
+    /// <param name="teamId">The unique identifier of the team context.</param>
+    /// <param name="request">The request payload containing the target user's email address.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>HTTP 200 OK if the match was successfully shared.</returns>
+    [HttpPost("{matchId:guid}/teams/{teamId:guid}/catch/add-user")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> AddUserToTrackedMatch(
+        [FromRoute] Guid matchId,
+        [FromRoute] Guid teamId,
+        [FromBody] AddUserToTrackedMatchRequest request,
+        [FromServices] IValidator<AddUserToTrackedMatchRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            return BadRequest(validationResult.ToDictionary());
+        }
+
+        var currentUserId = this.GetUserId(_auth0Settings);
+        var command = request.ToCommand(matchId, teamId, currentUserId);
+
+        await _mediator.Send(command, cancellationToken);
+        return Ok();
+    }
+
+    /// <summary>
+    /// Retrieves all detailed matches tracked by the authorized user.
+    /// </summary>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A collection of detailed match responses tracked by the user.</returns>
+    [HttpGet("catch")]
+    [ProducesResponseType(typeof(IEnumerable<MatchWithDetailsResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<IEnumerable<MatchWithDetailsResponse>>> GetCatchedMatches(
+        CancellationToken cancellationToken)
+    {
+        var userId = this.GetUserId(_auth0Settings);
+        var query = new GetUserCatchedMatchesQuery(userId);
+
+        var result = await _mediator.Send(query, cancellationToken);
         return Ok(result);
     }
 

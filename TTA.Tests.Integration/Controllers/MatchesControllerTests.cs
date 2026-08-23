@@ -1523,7 +1523,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         await SeedSportDataAsync(sportId, $"WaterPolo_Api_{Guid.NewGuid():N}");
         var configId = await SeedConfigurationAsync(sportId);
 
-        await SeedUserAsync(TestUserId);
+        await SeedUserAsync(TestUserId, "test@example.com", "Test User");
         await SeedTournamentAsync(tournamentId, sportId, configId, cityId, TestUserId, "Spring Cup");
 
         var homeTeamId = await SeedTeamAsync(cityId, sportId, "Team A");
@@ -1559,7 +1559,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         await SeedSportDataAsync(sportId, $"WaterPolo_Admin_{Guid.NewGuid():N}");
         var configId = await SeedConfigurationAsync(sportId);
 
-        await SeedUserAsync(TestUserId);
+        await SeedUserAsync(TestUserId, "test@example.com", "Test User");
         await SeedTournamentAsync(tournamentId, sportId, configId, cityId, TestUserId, "Admin Tournament");
 
         var homeTeamId = await SeedTeamAsync(cityId, sportId, "Team Admin A");
@@ -1863,6 +1863,215 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             TestAuthHandler.CustomEmail = null;
             TestAuthHandler.CustomDisplayName = null;
         }
+    }
+
+    #endregion
+
+    #region User Tracked Matches Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.CatchMatch"/> returns HTTP 200 OK 
+    /// when an authorized user catches a valid match and team context.
+    /// </summary>
+    [Fact]
+    public async Task CatchMatch_ShouldReturnOk_WhenRequestIsValid()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC Catch");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC Catch");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-CATCH-01");
+
+        // Act
+        var response = await Client.PostAsync($"{BaseUrl}/{matchId}/teams/{homeId}/catch", null);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.CatchMatch"/> returns HTTP 401 Unauthorized 
+    /// when authentication is disabled.
+    /// </summary>
+    [Fact]
+    public async Task CatchMatch_ShouldReturnUnauthorized_WhenAuthenticationIsDisabled()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+
+        try
+        {
+            TestAuthHandler.IsEnabled = false;
+
+            // Act
+            var response = await Client.PostAsync($"{BaseUrl}/{matchId}/teams/{teamId}/catch", null);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+        finally
+        {
+            TestAuthHandler.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.UncatchMatch"/> returns HTTP 200 OK 
+    /// when a tracking link exists and is successfully removed by the user.
+    /// </summary>
+    [Fact]
+    public async Task UncatchMatch_ShouldReturnOk_WhenTrackingExists()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC Uncatch");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC Uncatch");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-UNCATCH-01");
+
+        // Catch the match first
+        var catchResponse = await Client.PostAsync($"{BaseUrl}/{matchId}/teams/{homeId}/catch", null);
+        catchResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Act
+        var response = await Client.DeleteAsync($"{BaseUrl}/{matchId}/teams/{homeId}/catch");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.UncatchMatch"/> returns HTTP 404 NotFound 
+    /// when trying to remove a tracking link that does not exist.
+    /// </summary>
+    [Fact]
+    public async Task UncatchMatch_ShouldReturnNotFound_WhenTrackingDoesNotExist()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC NoCatch");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC NoCatch");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-NOCATCH-01");
+
+        // Act
+        var response = await Client.DeleteAsync($"{BaseUrl}/{matchId}/teams/{homeId}/catch");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.AddUserToTrackedMatch"/> returns HTTP 200 OK 
+    /// when the caller tracks the match and the target user exists.
+    /// </summary>
+    [Fact]
+    public async Task AddUserToTrackedMatch_ShouldReturnOk_WhenRequestIsValidAndUserExists()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC Share");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC Share");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SHARE-01");
+
+        // 1. Caller catches the match first
+        await Client.PostAsync($"{BaseUrl}/{matchId}/teams/{homeId}/catch", null);
+
+        // 2. Seed target user
+        var targetUserId = $"auth0|target-{Guid.NewGuid():N}";
+        const string targetEmail = "target.user@test.com";
+        await SeedUserAsync(targetUserId, targetEmail, "Target User");
+
+        var request = new AddUserToTrackedMatchRequest(targetEmail);
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeId}/catch/add-user", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.AddUserToTrackedMatch"/> returns HTTP 400 BadRequest 
+    /// when the target email format is invalid.
+    /// </summary>
+    [Fact]
+    public async Task AddUserToTrackedMatch_ShouldReturnBadRequest_WhenEmailIsInvalid()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+        var request = new AddUserToTrackedMatchRequest("plainaddress");
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{teamId}/catch/add-user", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.AddUserToTrackedMatch"/> returns HTTP 409 Conflict 
+    /// when the caller is not tracking the match before attempting to share it.
+    /// </summary>
+    [Fact]
+    public async Task AddUserToTrackedMatch_ShouldReturnConflict_WhenCallerDoesNotTrackMatch()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC NoTrack");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC NoTrack");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-NOTRACK-01");
+
+        const string targetEmail = "target.notrack@test.com";
+        await SeedUserAsync($"auth0|target-{Guid.NewGuid():N}", targetEmail, "Target NoTrack");
+
+        var request = new AddUserToTrackedMatchRequest(targetEmail);
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeId}/catch/add-user", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetCatchedMatches"/> returns HTTP 200 OK 
+    /// with the list of matches tracked by the authenticated user.
+    /// </summary>
+    [Fact]
+    public async Task GetCatchedMatches_ShouldReturnOkWithMatches_WhenUserHasTrackedMatches()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC GetCatched");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC GetCatched");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-GETCATCH-01");
+
+        // Catch the match
+        await Client.PostAsync($"{BaseUrl}/{matchId}/teams/{homeId}/catch", null);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/catch");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var catchedMatches = await response.Content.ReadFromJsonAsync<IEnumerable<MatchWithDetailsResponse>>();
+
+        catchedMatches.Should().NotBeNull();
+        var list = catchedMatches!.ToList();
+        list.Should().Contain(m => m.Id == matchId);
     }
 
     #endregion
@@ -2222,7 +2431,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     private async Task<(Guid TournamentId, Guid CityId, Guid SportId)> SetupTournamentContextAsync(string ownerId)
     {
-        await SeedUserAsync(ownerId);
+        await SeedUserAsync(ownerId, "owner@example.com", "Tournament Owner");
         var cityId = Guid.NewGuid();
         await SeedRequiredLocationDataAsync(cityId);
         var sportId = await SeedSportDataAsync(Guid.NewGuid(), "Sport-" + Guid.NewGuid());
@@ -2302,15 +2511,15 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return rosterId;
     }
 
-    private async Task SeedUserAsync(string userId)
+    private async Task SeedUserAsync(string userId, string email, string displayName)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         const string sql = "INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @email, @name, @created) ON CONFLICT (id) DO NOTHING";
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", userId);
-        cmd.Parameters.AddWithValue("email", $"{userId}@test.com");
-        cmd.Parameters.AddWithValue("name", "Test User");
+        cmd.Parameters.AddWithValue("email", email);
+        cmd.Parameters.AddWithValue("name", displayName);
         cmd.Parameters.AddWithValue("created", DateTime.UtcNow);
         await cmd.ExecuteNonQueryAsync();
     }
