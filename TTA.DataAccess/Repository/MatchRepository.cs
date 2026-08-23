@@ -12,6 +12,10 @@ namespace TTA.DataAccess.Repository;
 public class MatchRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, Match>(connectionFactory), IMatchRepository
 {
+    private const string ParamMatchId = "p_match_id";
+    private const string ParamTeamId = "p_team_id";
+    private const string ParamUserId = "p_user_id";
+
     /// <inheritdoc />
     public async Task<Match> UpsertMatchAsync(Match match, CancellationToken cancellationToken = default)
     {
@@ -89,8 +93,8 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
     public async Task<IEnumerable<TeamMatchSummaryReportProjection>> GetTeamSummaryReportAsync(Guid matchId, Guid teamId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_match_id", matchId);
-        parameters.Add("p_team_id", teamId);
+        parameters.Add(ParamMatchId, matchId);
+        parameters.Add(ParamTeamId, teamId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.QueryAsync<TeamMatchSummaryReportProjection>(new CommandDefinition(
@@ -103,7 +107,7 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
     public async Task<IEnumerable<PlayerDetailedReportProjection>> GetPlayerDetailedReportAsync(Guid matchId, Guid matchLineupId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_match_id", matchId);
+        parameters.Add(ParamMatchId, matchId);
         parameters.Add("p_match_lineup_id", matchLineupId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
@@ -117,9 +121,9 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
     public async Task<bool> CatchMatchAsync(Guid matchId, Guid teamId, string userId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_user_id", userId);
-        parameters.Add("p_match_id", matchId);
-        parameters.Add("p_team_id", teamId);
+        parameters.Add(ParamUserId, userId);
+        parameters.Add(ParamMatchId, matchId);
+        parameters.Add(ParamTeamId, teamId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
@@ -132,9 +136,9 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
     public async Task<bool> UncatchMatchAsync(Guid matchId, Guid teamId, string userId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_user_id", userId);
-        parameters.Add("p_match_id", matchId);
-        parameters.Add("p_team_id", teamId);
+        parameters.Add(ParamUserId, userId);
+        parameters.Add(ParamMatchId, matchId);
+        parameters.Add(ParamTeamId, teamId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
@@ -147,9 +151,9 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
     public async Task<bool> IsMatchCatchedByUserAsync(Guid matchId, Guid teamId, string userId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_user_id", userId);
-        parameters.Add("p_match_id", matchId);
-        parameters.Add("p_team_id", teamId);
+        parameters.Add(ParamUserId, userId);
+        parameters.Add(ParamMatchId, matchId);
+        parameters.Add(ParamTeamId, teamId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
@@ -162,7 +166,7 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
     public async Task<IEnumerable<MatchWithDetailsProjection>> GetCatchedMatchesByUserIdAsync(string userId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_user_id", userId);
+        parameters.Add(ParamUserId, userId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.QueryAsync<MatchWithDetailsProjection>(new CommandDefinition(
