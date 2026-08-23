@@ -70,4 +70,42 @@ public interface IMatchRepository : IEntityRepositoryBase<Guid, Match>
     /// Retrieves the detailed report projection for a specific player match lineup.
     /// </summary>
     Task<IEnumerable<PlayerDetailedReportProjection>> GetPlayerDetailedReportAsync(Guid matchId, Guid matchLineupId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Links a user to a specific match and team context for tracking.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="userId">The unique identifier of the user.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task returning true if the link was newly created; false if it already existed.</returns>
+    Task<bool> CatchMatchAsync(Guid matchId, Guid teamId, string userId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes a tracking link between a user and a specific match/team context.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="userId">The unique identifier of the user.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task returning true if the record was successfully deleted; otherwise, false.</returns>
+    Task<bool> UncatchMatchAsync(Guid matchId, Guid teamId, string userId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Checks whether a user tracks a specific match and team context.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the team.</param>
+    /// <param name="userId">The unique identifier of the user.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task returning true if the record exists; otherwise, false.</returns>
+    Task<bool> IsMatchCatchedByUserAsync(Guid matchId, Guid teamId, string userId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves all detailed matches tracked by a specific user.
+    /// </summary>
+    /// <param name="userId">The unique identifier of the user.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A collection of detailed match projections tracked by the user.</returns>
+    Task<IEnumerable<MatchWithDetailsProjection>> GetCatchedMatchesByUserIdAsync(string userId, CancellationToken cancellationToken = default);
 }

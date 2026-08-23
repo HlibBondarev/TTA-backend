@@ -164,6 +164,20 @@ CREATE TABLE matches (
 );
 
 -- ==========================================
+-- USER TRACKED MATCHES (QUICK MATCH CATCHING)
+-- ==========================================
+
+CREATE TABLE public.usertrackedmatches (
+    userid VARCHAR(64) NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    matchid UUID NOT NULL REFERENCES public.matches(id) ON DELETE CASCADE,
+    teamid UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
+    PRIMARY KEY (userid, matchid, teamid)
+);
+
+CREATE INDEX ix_usertrackedmatches_userid ON public.usertrackedmatches(userid);
+CREATE INDEX ix_usertrackedmatches_matchid ON public.usertrackedmatches(matchid);
+
+-- ==========================================
 -- 5. PLAYERS & ROSTERS
 -- ==========================================
 

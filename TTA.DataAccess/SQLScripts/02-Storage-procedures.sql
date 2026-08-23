@@ -2144,10 +2144,6 @@ BEGIN
 END;$$ LANGUAGE plpgsql;
 
 -- =============================================================
--- TTA MATCH & PLAYER REPORTS STORED FUNCTIONS (UPDATED)
--- =============================================================
-
--- =============================================================
 -- TTA MATCH & PLAYER REPORTS STORED FUNCTIONS
 -- =============================================================
 
@@ -2275,5 +2271,134 @@ BEGIN
     LEFT JOIN public.eventdefinitions ed ON ge.eventdefinitionid = ed.id
     WHERE ml.id = p_match_lineup_id AND ml.matchid = p_match_id
     ORDER BY ge.eventtimestamp ASC;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =============================================================
+-- USER TRACKED MATCHES STORED FUNCTIONS
+-- =============================================================
+
+/**********************************************************************************
+ * Links a user to a specific match and team context for tracking.
+ * Validates that the specified team actually participates in the match.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.catch_user_match(
+    p_user_id VARCHAR(64),
+    p_match_id UUID,
+    p_team_id UUID
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_affected_rows INT;
+BEGIN
+    -- Validate team participation in the match
+    IF NOT EXISTS (
+        SELECT 1 FROM public.matches 
+        WHERE id = p_match_id AND (hometeamid = p_team_id OR guestteamid = p_team_id)
+    ) THEN
+        RAISE EXCEPTION 'Team % does not participate in match %.', p_team_id, p_match_id 
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    INSERT INTO public.usertrackedmatches (userid, matchid, teamid)
+    VALUES (p_user_id, p_match_id, p_team_id)
+    ON CONFLICT (userid, matchid, teamid) DO NOTHING;
+
+    GET DIAGNOSTICS v_affected_rows = ROW_COUNT;
+    RETURN v_affected_rows > 0;
+END;
+$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Removes tracking link between a user and a specific match/team context.
+ * Automatically deletes the match entity if no tracking references remain.
+ * Returns TRUE if a tracking record was deleted, FALSE otherwise.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.uncatch_user_match(
+    p_user_id VARCHAR(64),
+    p_match_id UUID,
+    p_team_id UUID
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_deleted BOOLEAN := FALSE;
+BEGIN
+    -- 1. Remove the tracking record for the specified user and match/team context
+    DELETE FROM public.usertrackedmatches
+    WHERE userid = p_user_id AND matchid = p_match_id AND teamid = p_team_id;
+
+    v_deleted := FOUND;
+
+    -- 2. If the tracking record existed and was deleted,
+    -- check if any other user is still tracking this match
+    IF v_deleted THEN
+        IF NOT EXISTS (
+            SELECT 1 FROM public.usertrackedmatches
+            WHERE matchid = p_match_id
+        ) THEN
+            -- 3. If no other users are tracking this match, delete the match entity
+            -- (ON DELETE CASCADE will automatically clean up lineups, events, anchors, etc.)
+            DELETE FROM public.matches
+            WHERE id = p_match_id;
+        END IF;
+    END IF;
+
+    RETURN v_deleted;
+END;
+$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Checks whether a user tracks a specific match and team context.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.is_match_catched_by_user(
+    p_user_id VARCHAR(64),
+    p_match_id UUID,
+    p_team_id UUID
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM public.usertrackedmatches
+        WHERE userid = p_user_id AND matchid = p_match_id AND teamid = p_team_id
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves all matches tracked by a specific user with detailed metadata.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_user_catched_matches(
+    p_user_id VARCHAR(64)
+)
+RETURNS TABLE (
+    id UUID,
+    tournamentid UUID,
+    tournamentname VARCHAR,
+    hometeamid UUID,
+    hometeamname VARCHAR,
+    guestteamid UUID,
+    guestteamname VARCHAR,
+    scheduledat TIMESTAMPTZ,
+    matchnumber VARCHAR,
+    venue VARCHAR,
+    temperature DOUBLE PRECISION,
+    homescore INT,
+    guestscore INT,
+    createdat TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT DISTINCT
+        m.id, m.tournamentid, t.name as tournamentname,
+        m.hometeamid, ht.name as hometeamname,
+        m.guestteamid, gt.name as guestteamname,
+        m.scheduledat, m.matchnumber, m.venue, m.temperature, m.homescore, m.guestscore, m.createdat
+    FROM public.usertrackedmatches utm
+    INNER JOIN public.matches m ON utm.matchid = m.id
+    INNER JOIN public.tournaments t ON m.tournamentid = t.id
+    INNER JOIN public.teams ht ON m.hometeamid = ht.id
+    INNER JOIN public.teams gt ON m.guestteamid = gt.id
+    WHERE utm.userid = p_user_id
+    ORDER BY m.scheduledat DESC;
 END;
 $$ LANGUAGE plpgsql;
