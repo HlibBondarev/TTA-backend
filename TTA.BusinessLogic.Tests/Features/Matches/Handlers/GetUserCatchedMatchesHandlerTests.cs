@@ -82,6 +82,7 @@ public class GetUserCatchedMatchesHandlerTests
         response.HomeScore.Should().Be(proj.HomeScore);
         response.GuestScore.Should().Be(proj.GuestScore);
         response.CreatedAt.Should().Be(proj.CreatedAt);
+        response.TrackedTeamId.Should().Be(proj.TrackedTeamId);
 
         _matchRepositoryMock.Verify(r => r.GetCatchedMatchesByUserIdAsync(userId, It.IsAny<CancellationToken>()), Times.Once);
     }
