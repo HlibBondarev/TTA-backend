@@ -46,7 +46,8 @@ public class GetUserCatchedMatchesHandler(
             Temperature: p.Temperature,
             HomeScore: p.HomeScore,
             GuestScore: p.GuestScore,
-            CreatedAt: p.CreatedAt
+            CreatedAt: p.CreatedAt,
+            TrackedTeamId: p.TrackedTeamId
         ));
 
         _logger.LogInformation("Successfully retrieved {Count} catched matches for User {UserId}.",

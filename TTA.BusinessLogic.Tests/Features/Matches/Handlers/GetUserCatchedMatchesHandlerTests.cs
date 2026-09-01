@@ -49,7 +49,8 @@ public class GetUserCatchedMatchesHandlerTests
                 Temperature: 24.5,
                 HomeScore: 5,
                 GuestScore: 3,
-                CreatedAt: DateTime.UtcNow.AddHours(-1)
+                CreatedAt: DateTime.UtcNow.AddHours(-1),
+                TrackedTeamId: Guid.NewGuid()
             )
         };
 
