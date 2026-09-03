@@ -49,7 +49,8 @@ public class GetUserCatchedMatchesHandlerTests
                 Temperature: 24.5,
                 HomeScore: 5,
                 GuestScore: 3,
-                CreatedAt: DateTime.UtcNow.AddHours(-1)
+                CreatedAt: DateTime.UtcNow.AddHours(-1),
+                TrackedTeamId: Guid.NewGuid()
             )
         };
 
@@ -81,6 +82,7 @@ public class GetUserCatchedMatchesHandlerTests
         response.HomeScore.Should().Be(proj.HomeScore);
         response.GuestScore.Should().Be(proj.GuestScore);
         response.CreatedAt.Should().Be(proj.CreatedAt);
+        response.TrackedTeamId.Should().Be(proj.TrackedTeamId);
 
         _matchRepositoryMock.Verify(r => r.GetCatchedMatchesByUserIdAsync(userId, It.IsAny<CancellationToken>()), Times.Once);
     }

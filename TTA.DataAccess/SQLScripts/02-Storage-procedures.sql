@@ -2384,15 +2384,17 @@ RETURNS TABLE (
     temperature DOUBLE PRECISION,
     homescore INT,
     guestscore INT,
-    createdat TIMESTAMPTZ
+    createdat TIMESTAMPTZ,
+    trackedteamid UUID
 ) AS $$
 BEGIN
     RETURN QUERY
-    SELECT DISTINCT
+    SELECT 
         m.id, m.tournamentid, t.name as tournamentname,
         m.hometeamid, ht.name as hometeamname,
         m.guestteamid, gt.name as guestteamname,
-        m.scheduledat, m.matchnumber, m.venue, m.temperature, m.homescore, m.guestscore, m.createdat
+        m.scheduledat, m.matchnumber, m.venue, m.temperature, m.homescore, m.guestscore, m.createdat,
+        utm.teamid as trackedteamid
     FROM public.usertrackedmatches utm
     INNER JOIN public.matches m ON utm.matchid = m.id
     INNER JOIN public.tournaments t ON m.tournamentid = t.id

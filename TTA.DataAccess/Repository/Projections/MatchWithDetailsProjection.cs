@@ -17,6 +17,7 @@
 /// <param name="HomeScore">The number of goals/points scored by the home team (optional).</param>
 /// <param name="GuestScore">The number of goals/points scored by the guest team (optional).</param>
 /// <param name="CreatedAt">The timestamp when the match record was initially created.</param>
+/// <param name="TrackedTeamId">The unique identifier of the specific team tracked by the user for this match.</param>
 public record MatchWithDetailsProjection(
     Guid Id,
     Guid TournamentId,
@@ -31,4 +32,5 @@ public record MatchWithDetailsProjection(
     double? Temperature,
     int? HomeScore,
     int? GuestScore,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    Guid TrackedTeamId);
