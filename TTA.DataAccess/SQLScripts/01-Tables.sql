@@ -272,7 +272,6 @@ CREATE TABLE timeanchors (
 
 CREATE TABLE gameevents (
     id UUID PRIMARY KEY,
-    -- matchid REMOVED: it is now strictly accessible via matchlineupid
     matchlineupid UUID NOT NULL, 
     eventdefinitionid UUID NOT NULL REFERENCES eventdefinitions(id),
     periodnumber INT NOT NULL,
@@ -281,10 +280,10 @@ CREATE TABLE gameevents (
     isleadtogoal BOOLEAN NOT NULL DEFAULT FALSE, 
     createdat TIMESTAMPTZ NOT NULL,
 
-    -- FK remains to ensure the event is linked to a valid match protocol record
+    -- Updated FK constraint to ON DELETE CASCADE to allow automated cleanup during match deletion
     CONSTRAINT fk_gameevents_matchlineup
         FOREIGN KEY (matchlineupid)
-        REFERENCES public.matchlineups (id) ON DELETE RESTRICT
+        REFERENCES public.matchlineups (id) ON DELETE CASCADE
 );
 
 CREATE TABLE playerpresences (
