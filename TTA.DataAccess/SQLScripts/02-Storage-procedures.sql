@@ -1498,15 +1498,143 @@ BEGIN
 END;$$ LANGUAGE plpgsql;
 
 -- =============================================================
--- EVENT DEFINITION STORED FUNCTIONS
+-- EVENT DEFINITION & USER PRESETS STORED FUNCTIONS
 -- =============================================================
 
 /**********************************************************************************
- * Retrieves all game event definitions for a specific match.
- * Resolves the sport context via matches -> tournaments -> eventdefinitions.
+ * Upserts a custom user event definition and automatically enables it inside 
+ * the user's active preset for the sport.
+ * Validates ownership and prohibits modifying system default definitions.
  **********************************************************************************/
-CREATE OR REPLACE FUNCTION public.get_match_event_definitions(
-    p_match_id UUID
+CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
+    p_id UUID,
+    p_sport_id UUID,
+    p_owner_id VARCHAR(64),
+    p_name VARCHAR(50),
+    p_short_name VARCHAR(10),
+    p_is_positive BOOLEAN
+)
+RETURNS SETOF public.eventdefinitions AS $$
+DECLARE
+    v_now TIMESTAMPTZ := NOW();
+BEGIN
+    -- Validation: Owner ID must be provided for custom definitions
+    IF p_owner_id IS NULL OR TRIM(p_owner_id) = '' THEN
+        RAISE EXCEPTION 'Owner ID is required for custom event definitions.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Validation: Cannot update existing system default definition (where ownerid IS NULL)
+    IF EXISTS (SELECT 1 FROM public.eventdefinitions WHERE id = p_id AND ownerid IS NULL) THEN
+        RAISE EXCEPTION 'System default event definitions cannot be modified as custom definitions.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Validation: Ownership check if updating an existing custom definition
+    IF EXISTS (SELECT 1 FROM public.eventdefinitions WHERE id = p_id AND ownerid <> p_owner_id) THEN
+        RAISE EXCEPTION 'Access denied: You are not the owner of this event definition.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Perform upsert on eventdefinitions
+    INSERT INTO public.eventdefinitions (
+        id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat
+    )
+    VALUES (
+        p_id, p_sport_id, p_owner_id, p_name, p_short_name, p_is_positive, FALSE, v_now
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        shortname = EXCLUDED.shortname,
+        ispositive = EXCLUDED.ispositive,
+        issoftdeleted = FALSE;
+
+    -- Automatically add the custom definition into the user's active preset if not already present
+    INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
+    VALUES (p_owner_id, p_id, 0, v_now)
+    ON CONFLICT (userid, eventdefinitionid) DO NOTHING;
+
+    RETURN QUERY
+    SELECT * FROM public.eventdefinitions WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Soft-deletes a user-owned custom event definition by setting issoftdeleted = TRUE.
+ * Automatically purges the definition from active user presets across all users while
+ * preserving historical game events references for analytical consistency.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.soft_delete_event_definition(
+    p_id UUID,
+    p_user_id VARCHAR(64)
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_deleted BOOLEAN := FALSE;
+BEGIN
+    -- Validation: User can only soft-delete custom definitions that they own
+    IF NOT EXISTS (
+        SELECT 1 FROM public.eventdefinitions 
+        WHERE id = p_id AND ownerid = p_user_id AND issoftdeleted = FALSE
+    ) THEN
+        RETURN FALSE;
+    END IF;
+
+    -- Set soft delete flag to preserve historical gameevents references
+    UPDATE public.eventdefinitions
+    SET issoftdeleted = TRUE
+    WHERE id = p_id AND ownerid = p_user_id;
+
+    v_deleted := FOUND;
+
+    -- Purge soft-deleted event definition from all user presets
+    IF v_deleted THEN
+        DELETE FROM public.usereventpresets
+        WHERE eventdefinitionid = p_id;
+    END IF;
+
+    RETURN v_deleted;
+END;
+$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Atomically clears existing user presets for a specific sport and persists a new 
+ * collection of active event definitions with matching array index layout order (sortorder).
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.save_user_event_preset(
+    p_user_id VARCHAR(64),
+    p_sport_id UUID,
+    p_event_definition_ids UUID[]
+)
+RETURNS VOID AS $$
+BEGIN
+    -- 1. Clear previous active presets for the specified user and sport
+    DELETE FROM public.usereventpresets uep
+    USING public.eventdefinitions ed
+    WHERE uep.eventdefinitionid = ed.id 
+      AND uep.userid = p_user_id 
+      AND ed.sportid = p_sport_id;
+
+    -- 2. Bulk insert new preset selection with matching array index as sortorder
+    INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
+    SELECT 
+        p_user_id,
+        item.def_id,
+        (item.ord - 1)::INT AS sortorder,
+        NOW()
+    FROM unnest(p_event_definition_ids) WITH ORDINALITY AS item(def_id, ord)
+    ON CONFLICT (userid, eventdefinitionid) DO UPDATE
+    SET sortorder = EXCLUDED.sortorder;
+END;
+$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves all available active event definitions (system defaults + user custom ones)
+ * for a specific sport, enriched with user enablement status and layout sortorder.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_user_available_event_definitions(
+    p_user_id VARCHAR(64),
+    p_sport_id UUID
 )
 RETURNS TABLE (
     id UUID,
@@ -1514,7 +1642,9 @@ RETURNS TABLE (
     name VARCHAR,
     shortname VARCHAR,
     ispositive BOOLEAN,
-    createdat TIMESTAMPTZ
+    iscustom BOOLEAN,
+    isenabled BOOLEAN,
+    sortorder INT
 ) AS $$
 BEGIN
     RETURN QUERY
@@ -1524,13 +1654,103 @@ BEGIN
         ed.name,
         ed.shortname,
         ed.ispositive,
-        ed.createdat
+        (ed.ownerid IS NOT NULL) AS iscustom,
+        (uep.eventdefinitionid IS NOT NULL) AS isenabled,
+        COALESCE(uep.sortorder, 999) AS sortorder
     FROM public.eventdefinitions ed
-    INNER JOIN public.tournaments t ON ed.sportid = t.sportid
-    INNER JOIN public.matches m ON t.id = m.tournamentid
-    WHERE m.id = p_match_id
-    ORDER BY ed.name ASC;
-END;$$ LANGUAGE plpgsql;
+    LEFT JOIN public.usereventpresets uep 
+        ON ed.id = uep.eventdefinitionid AND uep.userid = p_user_id
+    WHERE ed.sportid = p_sport_id
+      AND ed.issoftdeleted = FALSE
+      AND (ed.ownerid IS NULL OR ed.ownerid = p_user_id)
+    ORDER BY 
+        (uep.eventdefinitionid IS NOT NULL) DESC,
+        uep.sortorder ASC,
+        ed.name ASC;
+END;
+$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Retrieves active event definitions required for match hydration.
+ * Resolves user preset for the match sport; falls back to all active system default 
+ * definitions if no preset has been saved by the specified user.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_event_definitions(
+    p_match_id UUID,
+    p_user_id VARCHAR(64) DEFAULT NULL
+)
+RETURNS TABLE (
+    id UUID,
+    sportid UUID,
+    name VARCHAR,
+    shortname VARCHAR,
+    ispositive BOOLEAN,
+    iscustom BOOLEAN,
+    isenabled BOOLEAN,
+    sortorder INT
+) AS $$
+DECLARE
+    v_sport_id UUID;
+    v_has_preset BOOLEAN := FALSE;
+BEGIN
+    -- Resolve sport ID from match context
+    SELECT t.sportid INTO v_sport_id
+    FROM public.matches m
+    INNER JOIN public.tournaments t ON m.tournamentid = t.id
+    WHERE m.id = p_match_id;
+
+    IF v_sport_id IS NULL THEN
+        RAISE EXCEPTION 'Match with ID % not found.', p_match_id USING ERRCODE = 'P0002';
+    END IF;
+
+    -- Check if user has an active preset configured for this sport
+    IF p_user_id IS NOT NULL AND TRIM(p_user_id) <> '' THEN
+        SELECT EXISTS (
+            SELECT 1 
+            FROM public.usereventpresets uep
+            INNER JOIN public.eventdefinitions ed ON uep.eventdefinitionid = ed.id
+            WHERE uep.userid = p_user_id AND ed.sportid = v_sport_id
+        ) INTO v_has_preset;
+    END IF;
+
+    -- If preset exists, return enabled user choices ordered by sortorder
+    IF v_has_preset THEN
+        RETURN QUERY
+        SELECT 
+            ed.id,
+            ed.sportid,
+            ed.name,
+            ed.shortname,
+            ed.ispositive,
+            (ed.ownerid IS NOT NULL) AS iscustom,
+            TRUE AS isenabled,
+            uep.sortorder
+        FROM public.usereventpresets uep
+        INNER JOIN public.eventdefinitions ed ON uep.eventdefinitionid = ed.id
+        WHERE uep.userid = p_user_id 
+          AND ed.sportid = v_sport_id
+          AND ed.issoftdeleted = FALSE
+        ORDER BY uep.sortorder ASC, ed.name ASC;
+    ELSE
+        -- Fallback: Return all active system default definitions for the sport
+        RETURN QUERY
+        SELECT 
+            ed.id,
+            ed.sportid,
+            ed.name,
+            ed.shortname,
+            ed.ispositive,
+            FALSE AS iscustom,
+            TRUE AS isenabled,
+            0 AS sortorder
+        FROM public.eventdefinitions ed
+        WHERE ed.sportid = v_sport_id
+          AND ed.ownerid IS NULL
+          AND ed.issoftdeleted = FALSE
+        ORDER BY ed.name ASC;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
 
 -- =============================================================
 -- GAME EVENTS STORED FUNCTIONS

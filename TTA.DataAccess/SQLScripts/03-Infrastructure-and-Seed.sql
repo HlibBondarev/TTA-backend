@@ -8,17 +8,17 @@ DECLARE
 BEGIN
     INSERT INTO countries (name, code) 
     VALUES ('Ukraine', 'UKR')
-    ON CONFLICT (code) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     SELECT id INTO v_ukraine_id FROM countries WHERE code = 'UKR';
 
     INSERT INTO regions (countryid, name) VALUES 
     (v_ukraine_id, 'Dnipropetrovsk Oblast')
-    ON CONFLICT (countryid, name) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     INSERT INTO cities (id, regionid, name) VALUES 
     ('c0000000-0000-0000-0000-000000000005', (SELECT id FROM regions WHERE name = 'Dnipropetrovsk Oblast' AND countryid = v_ukraine_id), 'Dnipro')
-    ON CONFLICT (regionid, name) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     RAISE NOTICE 'Minimal geography seeding completed successfully.';
 END $$;
@@ -42,9 +42,7 @@ DECLARE
     bb_sport_id uuid := '8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b7c';
     bb_config_id uuid := '8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b80';
 BEGIN
-    -- -------------------------------------------------------------------------
     -- A. WATER POLO SEEDING
-    -- -------------------------------------------------------------------------
     INSERT INTO sports (id, name, shortname, defaultconfigid) 
     VALUES (wp_sport_id, 'Water Polo', 'WP', wp_config_id)
     ON CONFLICT DO NOTHING;
@@ -56,42 +54,40 @@ BEGIN
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', wp_sport_id, 'Driver', 'D'),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', wp_sport_id, 'Wing', 'W'),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', wp_sport_id, 'Utility', 'UTL')
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     -- Standard Water Polo Configuration
     INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
     VALUES (wp_config_id, wp_sport_id, true, 4, 8, '30x20m', 15, 13, 7)
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     -- Alternative Water Polo Configuration (Smaller field 25x15m, 6 active players)
     INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
     VALUES (wp_config_alt_id, wp_sport_id, true, 4, 7, '25x15m', 13, 11, 6)
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     -- Water Polo Event Definitions
-    INSERT INTO eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES 
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f81', wp_sport_id, 'Goal', 'GOAL', true, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82', wp_sport_id, 'Assist', 'ASST', true, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f83', wp_sport_id, 'Sprint Won', 'SPR+', true, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f84', wp_sport_id, 'Exclusion Earned', 'EXCL+', true, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f85', wp_sport_id, 'Penalty Earned', 'PEN+', true, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f86', wp_sport_id, 'Steal', 'STL', true, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f87', wp_sport_id, 'Shot Saved', 'SAVE', true, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f88', wp_sport_id, 'Block', 'BLK', true, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f89', wp_sport_id, 'Shot Missed', 'MISS', false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f90', wp_sport_id, 'Turnover', 'T-OVER', false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f91', wp_sport_id, 'Exclusion Received', 'EXCL-', false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f92', wp_sport_id, 'Penalty Committed', 'PEN-', false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f93', wp_sport_id, 'Sprint Lost', 'SPR-', false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f94', wp_sport_id, 'Critical Foul', 'C-FOUL', false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f95', wp_sport_id, 'Bad Goal Conceded', 'B-GOAL', false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f96', wp_sport_id, 'Tactical Error', 'T-ERR', false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f97', wp_sport_id, 'Defensive Transition Failure', 'D-TRANS', false, NOW())
-    ON CONFLICT (id) DO NOTHING;
+    INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat) VALUES 
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f81', wp_sport_id, NULL, 'Goal', 'GOAL', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82', wp_sport_id, NULL, 'Assist', 'ASST', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f83', wp_sport_id, NULL, 'Sprint Won', 'SPR+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f84', wp_sport_id, NULL, 'Exclusion Earned', 'EXCL+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f85', wp_sport_id, NULL, 'Penalty Earned', 'PEN+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f86', wp_sport_id, NULL, 'Steal', 'STL', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f87', wp_sport_id, NULL, 'Shot Saved', 'SAVE', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f88', wp_sport_id, NULL, 'Block', 'BLK', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f89', wp_sport_id, NULL, 'Shot Missed', 'MISS', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f90', wp_sport_id, NULL, 'Turnover', 'T-OVER', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f91', wp_sport_id, NULL, 'Exclusion Received', 'EXCL-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f92', wp_sport_id, NULL, 'Penalty Committed', 'PEN-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f93', wp_sport_id, NULL, 'Sprint Lost', 'SPR-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f94', wp_sport_id, NULL, 'Critical Foul', 'C-FOUL', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f95', wp_sport_id, NULL, 'Bad Goal Conceded', 'B-GOAL', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f96', wp_sport_id, NULL, 'Tactical Error', 'T-ERR', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f97', wp_sport_id, NULL, 'Defensive Transition Failure', 'D-TRANS', false, false, NOW())
+    ON CONFLICT DO NOTHING;
 
-    -- -------------------------------------------------------------------------
     -- B. FOOTBALL SEEDING
-    -- -------------------------------------------------------------------------
     INSERT INTO sports (id, name, shortname, defaultconfigid) 
     VALUES (fb_sport_id, 'Football', 'FB', fb_config_id)
     ON CONFLICT DO NOTHING;
@@ -101,24 +97,22 @@ BEGIN
     ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a62', fb_sport_id, 'Defender', 'DEF'),
     ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a63', fb_sport_id, 'Midfielder', 'MID'),
     ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a64', fb_sport_id, 'Forward', 'FWD')
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
     VALUES (fb_config_id, fb_sport_id, false, 2, 45, '105x68m', 23, 18, 11)
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
-    INSERT INTO eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES 
-    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a81', fb_sport_id, 'Goal', 'GOAL', true, NOW()),
-    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a82', fb_sport_id, 'Assist', 'ASST', true, NOW()),
-    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a83', fb_sport_id, 'Key Pass', 'KP', true, NOW()),
-    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a84', fb_sport_id, 'Yellow Card', 'YC', false, NOW()),
-    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a85', fb_sport_id, 'Red Card', 'RC', false, NOW()),
-    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a86', fb_sport_id, 'Foul Committed', 'FOUL', false, NOW())
-    ON CONFLICT (id) DO NOTHING;
+    INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat) VALUES 
+    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a81', fb_sport_id, NULL, 'Goal', 'GOAL', true, false, NOW()),
+    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a82', fb_sport_id, NULL, 'Assist', 'ASST', true, false, NOW()),
+    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a83', fb_sport_id, NULL, 'Key Pass', 'KP', true, false, NOW()),
+    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a84', fb_sport_id, NULL, 'Yellow Card', 'YC', false, false, NOW()),
+    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a85', fb_sport_id, NULL, 'Red Card', 'RC', false, false, NOW()),
+    ('7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a86', fb_sport_id, NULL, 'Foul Committed', 'FOUL', false, false, NOW())
+    ON CONFLICT DO NOTHING;
 
-    -- -------------------------------------------------------------------------
     -- C. BASKETBALL SEEDING
-    -- -------------------------------------------------------------------------
     INSERT INTO sports (id, name, shortname, defaultconfigid) 
     VALUES (bb_sport_id, 'Basketball', 'BB', bb_config_id)
     ON CONFLICT DO NOTHING;
@@ -129,20 +123,20 @@ BEGIN
     ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b63', bb_sport_id, 'Small Forward', 'SF'),
     ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b64', bb_sport_id, 'Power Forward', 'PF'),
     ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b65', bb_sport_id, 'Center', 'C')
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
     VALUES (bb_config_id, bb_sport_id, true, 4, 10, '28x15m', 12, 12, 5)
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
-    INSERT INTO eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES 
-    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b81', bb_sport_id, 'Field Goal', 'FG', true, NOW()),
-    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b82', bb_sport_id, 'Three-Pointer', '3PT', true, NOW()),
-    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b83', bb_sport_id, 'Assist', 'AST', true, NOW()),
-    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b84', bb_sport_id, 'Rebound', 'REB', true, NOW()),
-    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b85', bb_sport_id, 'Turnover', 'TO', false, NOW()),
-    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b86', bb_sport_id, 'Personal Foul', 'PF', false, NOW())
-    ON CONFLICT (id) DO NOTHING;
+    INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat) VALUES 
+    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b81', bb_sport_id, NULL, 'Field Goal', 'FG', true, false, NOW()),
+    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b82', bb_sport_id, NULL, 'Three-Pointer', '3PT', true, false, NOW()),
+    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b83', bb_sport_id, NULL, 'Assist', 'AST', true, false, NOW()),
+    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b84', bb_sport_id, NULL, 'Rebound', 'REB', true, false, NOW()),
+    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b85', bb_sport_id, NULL, 'Turnover', 'TO', false, false, NOW()),
+    ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b86', bb_sport_id, NULL, 'Personal Foul', 'PF', false, false, NOW())
+    ON CONFLICT DO NOTHING;
 
 END $$;
 
@@ -154,7 +148,7 @@ INSERT INTO clubs (id, cityid, name, createdat) VALUES
 ('11111111-1111-1111-1111-000000000001', 
     (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
      WHERE c.name = 'Dnipro' AND r.name = 'Dnipropetrovsk Oblast' AND co.code = 'UKR' LIMIT 1), 'TTA Training Club', NOW())
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 -- ==========================================
 -- 4. USERS (Without pre-assigned clubs/teams)
@@ -168,15 +162,15 @@ DECLARE
 BEGIN
     INSERT INTO public.users (id, email, displayname, createdat)
     VALUES (v_user_id, 'hlib.bondarev@gmail.com', 'Hlib Bondarev', NOW())
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     INSERT INTO public.users (id, email, displayname, createdat)
     VALUES (v_user_id_2, 'user1@example.com', 'Taras Shevchenko', NOW())
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     INSERT INTO public.users (id, email, displayname, createdat)
     VALUES (v_user_id_3, 'user2@example.com', 'Ivan Franko', NOW())
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     -- Assign Global FullControl (Admin) policy to v_user_id (Hlib Bondarev)
     INSERT INTO auth.accesspolicies (id, userid, role, targettype, targetid, createdat)
@@ -206,7 +200,7 @@ BEGIN
         0 AS gender,
         NOW() AS createdat
     FROM generate_series(1, 50) AS i
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
 
     RAISE NOTICE 'Seed for 50 static players in TTA Training Club completed successfully.';
 END $$;
