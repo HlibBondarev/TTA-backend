@@ -112,6 +112,36 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         await act.Should().ThrowAsync<Exception>();
     }
 
+    /// <summary>
+    /// Verifies that GetMatchEventDefinitionsAsync filters out custom definitions 
+    /// owned by other users during match hydration.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchEventDefinitionsAsync_ShouldExcludeCustomDefinitionsOfOtherUsers()
+    {
+        // Arrange
+        var (matchId, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: true);
+        var otherUserId = $"auth0|other-user-{Guid.NewGuid():N}";
+        var foreignDefId = Guid.NewGuid();
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.users (id, email, displayname, createdat) 
+                VALUES (@userId, 'other@tta.com', 'Other User', NOW());
+
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, createdat)
+                VALUES (@defId, @sportId, @userId, 'Foreign Action', 'FRG', true, NOW());",
+                new { userId = otherUserId, defId = foreignDefId, sportId });
+        }
+
+        // Act
+        var definitions = await _repository.GetMatchEventDefinitionsAsync(matchId, userId);
+
+        // Assert
+        definitions.Should().NotContain(d => d.Id == foreignDefId);
+    }
+
     #endregion
 
     #region UpsertCustomAsync Tests

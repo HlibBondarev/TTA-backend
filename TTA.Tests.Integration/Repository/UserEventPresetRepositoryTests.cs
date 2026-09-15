@@ -132,6 +132,37 @@ public class UserEventPresetRepositoryTests : BaseIntegrationTest
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
+    /// <summary>
+    /// Verifies that SavePresetAsync raises a PostgresException (P0001) when attempting to save 
+    /// an event definition ID that belongs to another user or a different sport scope.
+    /// </summary>
+    [Fact]
+    public async Task SavePresetAsync_ShouldThrowException_WhenEventDefinitionIsUnauthorizedOrInvalid()
+    {
+        // Arrange
+        var (userId, sportId, _) = await SeedPresetEnvironmentAsync(defCount: 1);
+        var otherUserId = $"auth0|other-user-{Guid.NewGuid():N}";
+        var foreignDefId = Guid.NewGuid();
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.users (id, email, displayname, createdat) 
+                VALUES (@userId, 'other@tta.com', 'Other User', NOW());
+
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, createdat)
+                VALUES (@defId, @sportId, @userId, 'Foreign Action', 'FRG', true, NOW());",
+                new { userId = otherUserId, defId = foreignDefId, sportId });
+        }
+
+        // Act
+        Func<Task> act = async () => await _repository.SavePresetAsync(userId, sportId, new[] { foreignDefId });
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .Where(ex => ex.SqlState == "P0001");
+    }
+
     #endregion
 
     #region Seed Helpers

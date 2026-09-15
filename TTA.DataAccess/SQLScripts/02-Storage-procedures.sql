@@ -1621,6 +1621,8 @@ $$ LANGUAGE plpgsql;
 /**********************************************************************************
  * Atomically clears existing user presets for a specific sport and persists a new 
  * collection of active event definitions with matching array index layout order (sortorder).
+ * Validates all supplied eventdefinition IDs against sport scope, active state,
+ * and ownership authorization before modifying the database state.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.save_user_event_preset(
     p_user_id VARCHAR(64),
@@ -1628,7 +1630,28 @@ CREATE OR REPLACE FUNCTION public.save_user_event_preset(
     p_event_definition_ids UUID[]
 )
 RETURNS VOID AS $$
+DECLARE
+    v_invalid_count INT := 0;
 BEGIN
+    -- Validate provided event definition IDs if input array is non-empty
+    IF p_event_definition_ids IS NOT NULL AND CARDINALITY(p_event_definition_ids) > 0 THEN
+        SELECT COUNT(*) INTO v_invalid_count
+        FROM (
+            SELECT DISTINCT id FROM unnest(p_event_definition_ids) AS id
+        ) inputs
+        LEFT JOIN public.eventdefinitions ed 
+            ON inputs.id = ed.id 
+           AND ed.sportid = p_sport_id 
+           AND ed.issoftdeleted = FALSE 
+           AND (ed.ownerid IS NULL OR ed.ownerid = p_user_id)
+        WHERE ed.id IS NULL;
+
+        IF v_invalid_count > 0 THEN
+            RAISE EXCEPTION 'One or more event definition IDs are invalid, belong to a different sport, soft-deleted, or unauthorized.'
+                USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
     -- 1. Clear previous active presets for the specified user and sport
     DELETE FROM public.usereventpresets uep
     USING public.eventdefinitions ed
@@ -1637,15 +1660,17 @@ BEGIN
       AND ed.sportid = p_sport_id;
 
     -- 2. Bulk insert new preset selection with matching array index as sortorder
-    INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
-    SELECT 
-        p_user_id,
-        item.def_id,
-        (item.ord - 1)::INT AS sortorder,
-        NOW()
-    FROM unnest(p_event_definition_ids) WITH ORDINALITY AS item(def_id, ord)
-    ON CONFLICT (userid, eventdefinitionid) DO UPDATE
-    SET sortorder = EXCLUDED.sortorder;
+    IF p_event_definition_ids IS NOT NULL AND CARDINALITY(p_event_definition_ids) > 0 THEN
+        INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
+        SELECT 
+            p_user_id,
+            item.def_id,
+            (item.ord - 1)::INT AS sortorder,
+            NOW()
+        FROM unnest(p_event_definition_ids) WITH ORDINALITY AS item(def_id, ord)
+        ON CONFLICT (userid, eventdefinitionid) DO UPDATE
+        SET sortorder = EXCLUDED.sortorder;
+    END IF;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -1695,6 +1720,7 @@ $$ LANGUAGE plpgsql;
  * Retrieves active event definitions required for match hydration.
  * Resolves user preset for the match sport; falls back to all active system default 
  * definitions if no preset has been saved by the specified user.
+ * Enforces ownership boundary checking (system default OR owned by user).
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_match_event_definitions(
     p_match_id UUID,
@@ -1730,7 +1756,10 @@ BEGIN
             SELECT 1 
             FROM public.usereventpresets uep
             INNER JOIN public.eventdefinitions ed ON uep.eventdefinitionid = ed.id
-            WHERE uep.userid = p_user_id AND ed.sportid = v_sport_id
+            WHERE uep.userid = p_user_id 
+              AND ed.sportid = v_sport_id
+              AND ed.issoftdeleted = FALSE
+              AND (ed.ownerid IS NULL OR ed.ownerid = p_user_id)
         ) INTO v_has_preset;
     END IF;
 
@@ -1751,6 +1780,7 @@ BEGIN
         WHERE uep.userid = p_user_id 
           AND ed.sportid = v_sport_id
           AND ed.issoftdeleted = FALSE
+          AND (ed.ownerid IS NULL OR ed.ownerid = p_user_id)
         ORDER BY uep.sortorder ASC, ed.name ASC;
     ELSE
         -- Fallback: Return all active system default definitions for the sport
