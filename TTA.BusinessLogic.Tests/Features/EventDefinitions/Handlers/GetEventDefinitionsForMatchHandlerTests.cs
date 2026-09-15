@@ -7,6 +7,9 @@ using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Projections;
 using Match = TTA.DataAccess.Models.Match;
 
+
+namespace TTA.BusinessLogic.Tests.Features.EventDefinitions.Handlers;
+
 /// <summary>
 /// Unit tests for <see cref="GetEventDefinitionsForMatchHandler"/>.
 /// </summary>
