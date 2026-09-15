@@ -10,13 +10,16 @@ namespace TTA.BusinessLogic.Features.EventDefinitions.Handlers;
 /// Handles the retrieval of active game event definitions for a specific match context.
 /// </summary>
 /// <param name="eventDefinitionRepository">The repository for event definition data access.</param>
+/// <param name="matchRepository">The repository for match data access.</param>
 /// <param name="logger">The logger instance for tracking execution.</param>
 public class GetEventDefinitionsForMatchHandler(
     IEventDefinitionRepository eventDefinitionRepository,
+    IMatchRepository matchRepository,
     ILogger<GetEventDefinitionsForMatchHandler> logger)
     : IRequestHandler<GetEventDefinitionsForMatchQuery, IEnumerable<EventDefinitionResponse>>
 {
     private readonly IEventDefinitionRepository _eventDefinitionRepository = eventDefinitionRepository;
+    private readonly IMatchRepository _matchRepository = matchRepository;
     private readonly ILogger<GetEventDefinitionsForMatchHandler> _logger = logger;
 
     /// <summary>
@@ -30,6 +33,13 @@ public class GetEventDefinitionsForMatchHandler(
         CancellationToken cancellationToken)
     {
         _logger.LogInformation("Fetching event definitions for Match {MatchId}.", request.MatchId);
+
+        var match = await _matchRepository.GetByIdAsync(request.MatchId, cancellationToken);
+        if (match == null)
+        {
+            _logger.LogWarning("Match {MatchId} was not found.", request.MatchId);
+            throw new KeyNotFoundException($"Match with ID '{request.MatchId}' was not found.");
+        }
 
         var projections = await _eventDefinitionRepository.GetMatchEventDefinitionsAsync(request.MatchId, request.UserId, cancellationToken);
 

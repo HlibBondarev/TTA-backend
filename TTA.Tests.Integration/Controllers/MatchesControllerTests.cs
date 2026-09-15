@@ -549,11 +549,11 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     #region Event Definitions Tests
 
     /// <summary>
-    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetEventDefinitionsForMatch"/> 
-    /// returns 200 OK with the list of event definitions associated with the sport of the specified match.
+    /// Verifies that <see cref="MatchesController.GetEventDefinitionsForMatch"/> 
+    /// returns 200 OK with system default event definitions when an anonymous user requests event definitions for a match.
     /// </summary>
     [Fact]
-    public async Task GetEventDefinitionsForMatch_ShouldReturnOkWithDefinitions_WhenMatchAndDefinitionsExist()
+    public async Task GetEventDefinitionsForMatch_ShouldReturnOkWithDefaultDefinitions_WhenUserIsAnonymousOrHasNoPreset()
     {
         // Arrange
         var context = await SetupTournamentContextAsync(TestUserId);
@@ -566,23 +566,86 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var goalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", true);
         var foulDefId = await SeedEventDefinitionAsync(context.SportId, "Foul", false);
 
-        // Act
-        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/eventdefinitions");
+        try
+        {
+            TestAuthHandler.IsEnabled = false; // Simulate anonymous request
 
-        // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionForMatchResponse>>();
+            // Act
+            var response = await Client.GetAsync($"{BaseUrl}/{matchId}/event-definitions");
 
-        result.Should().NotBeNull();
-        var definitions = result!.ToList();
-        definitions.Should().HaveCount(2);
-        definitions.Should().Contain(d => d.Id == goalDefId && d.Name == "Goal" && d.IsPositive);
-        definitions.Should().Contain(d => d.Id == foulDefId && d.Name == "Foul" && !d.IsPositive);
-        definitions.Should().OnlyContain(d => d.SportId == context.SportId);
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+
+            result.Should().NotBeNull();
+            var definitions = result!.ToList();
+            definitions.Should().HaveCount(2);
+
+            var goalDef = definitions.FirstOrDefault(d => d.Id == goalDefId);
+            goalDef.Should().NotBeNull();
+            goalDef!.Name.Should().Be("Goal");
+            goalDef.IsPositive.Should().BeTrue();
+            goalDef.IsCustom.Should().BeFalse();
+            goalDef.IsEnabled.Should().BeTrue();
+
+            var foulDef = definitions.FirstOrDefault(d => d.Id == foulDefId);
+            foulDef.Should().NotBeNull();
+            foulDef!.Name.Should().Be("Foul");
+            foulDef.IsPositive.Should().BeFalse();
+            foulDef.IsCustom.Should().BeFalse();
+            foulDef.IsEnabled.Should().BeTrue();
+        }
+        finally
+        {
+            TestAuthHandler.IsEnabled = true;
+        }
     }
 
     /// <summary>
-    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetEventDefinitionsForMatch"/> 
+    /// Verifies that <see cref="MatchesController.GetEventDefinitionsForMatch"/> 
+    /// returns 200 OK with user-configured preset event definitions when an authenticated user requests event definitions.
+    /// </summary>
+    [Fact]
+    public async Task GetEventDefinitionsForMatch_ShouldReturnUserPresetDefinitions_WhenUserIsAuthenticatedAndHasPreset()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-EVDEF-02");
+
+        var sysDef1 = await SeedEventDefinitionAsync(context.SportId, "System Goal", true);
+        var sysDef2 = await SeedEventDefinitionAsync(context.SportId, "System Foul", false);
+
+        // Seed user custom preset linking only sysDef1 for TestUserId
+        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat) 
+                VALUES (@userId, @defId, 0, NOW())",
+                new { userId = TestUserId, defId = sysDef1 });
+        }
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/event-definitions");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+
+        result.Should().NotBeNull();
+        var definitions = result!.ToList();
+        definitions.Should().HaveCount(1);
+        definitions[0].Id.Should().Be(sysDef1);
+        definitions[0].Name.Should().Be("System Goal");
+        definitions[0].IsEnabled.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetEventDefinitionsForMatch"/> 
     /// returns 200 OK with an empty collection when no event definitions exist for the match's sport.
     /// </summary>
     [Fact]
@@ -594,38 +657,34 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
 
         var matchId = Guid.NewGuid();
-        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-EVDEF-02");
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-EVDEF-03");
 
         // Act
-        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/eventdefinitions");
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/event-definitions");
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionForMatchResponse>>();
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
 
         result.Should().NotBeNull();
         result.Should().BeEmpty();
     }
 
     /// <summary>
-    /// Verifies that <see cref="TTA.WebAPI.Controllers.MatchesController.GetEventDefinitionsForMatch"/> 
-    /// returns 200 OK with an empty collection when the specified match identifier does not exist.
+    /// Verifies that <see cref="MatchesController.GetEventDefinitionsForMatch"/> 
+    /// returns 404 Not Found when the specified match identifier does not exist in the database.
     /// </summary>
     [Fact]
-    public async Task GetEventDefinitionsForMatch_ShouldReturnOkWithEmptyList_WhenMatchDoesNotExist()
+    public async Task GetEventDefinitionsForMatch_ShouldReturnNotFound_WhenMatchDoesNotExist()
     {
         // Arrange
         var nonExistentMatchId = Guid.NewGuid();
 
         // Act
-        var response = await Client.GetAsync($"{BaseUrl}/{nonExistentMatchId}/eventdefinitions");
+        var response = await Client.GetAsync($"{BaseUrl}/{nonExistentMatchId}/event-definitions");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionForMatchResponse>>();
-
-        result.Should().NotBeNull();
-        result.Should().BeEmpty();
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     #endregion

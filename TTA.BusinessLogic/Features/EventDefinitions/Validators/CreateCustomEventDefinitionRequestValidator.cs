@@ -11,6 +11,7 @@ public class CreateCustomEventDefinitionRequestValidator : AbstractValidator<Cre
     /// <summary>
     /// Initializes a new instance of the <see cref="CreateCustomEventDefinitionRequestValidator"/> class.
     /// </summary>
+
     public CreateCustomEventDefinitionRequestValidator()
     {
         RuleFor(x => x.Id)
@@ -19,12 +20,14 @@ public class CreateCustomEventDefinitionRequestValidator : AbstractValidator<Cre
 
         RuleFor(x => x.Name)
             .NotEmpty()
+            .WithMessage("Name is required.")
             .MaximumLength(50)
-            .WithMessage("Name is required and must not exceed 50 characters.");
+            .WithMessage("Name must not exceed 50 characters.");
 
         RuleFor(x => x.ShortName)
             .NotEmpty()
+            .WithMessage("Short name is required.")
             .MaximumLength(10)
-            .WithMessage("Short name is required and must not exceed 10 characters.");
+            .WithMessage("Short name must not exceed 10 characters.");
     }
 }

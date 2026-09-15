@@ -1,6 +1,9 @@
-﻿using FluentAssertions;
+﻿using Dapper;
+using FluentAssertions;
+using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
+using TTA.BusinessLogic.Features.EventDefinitions.DTOs;
 using TTA.BusinessLogic.Features.SportConfigurations.DTOs;
 using TTA.BusinessLogic.Features.Sports.DTOs;
 using TTA.Tests.Integration.Infrastructure;
@@ -10,7 +13,8 @@ namespace TTA.Tests.Integration.Controllers;
 
 /// <summary>
 /// Integration tests for the <see cref="TTA.WebAPI.Controllers.SportsController"/>.
-/// Validates retrieval of sports and sport configuration profiles via HTTP API endpoints.
+/// Validates retrieval of sports, sport configuration profiles, custom event definition management,
+/// and user event preset layouts via HTTP API endpoints.
 /// </summary>
 public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper output)
     : BaseApiTest(fixture, output)
@@ -118,6 +122,277 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    #endregion
+
+    #region GetAvailableEventDefinitions Tests
+
+    /// <summary>
+    /// Verifies that <c>GET /api/sports/{sportId}/event-definitions</c> returns HTTP 200 OK
+    /// with available system default and custom event definitions when an authenticated user requests them.
+    /// </summary>
+    [Fact]
+    public async Task GetAvailableEventDefinitions_ShouldReturnOkWithDefinitions_WhenUserIsAuthenticated()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(sportId, $"Sport_{Guid.NewGuid():N}", "SPT", configId);
+
+        await SeedUserAsync(TestUserId, "user@test.com", "Test User");
+
+        var sysDefId = await SeedEventDefinitionAsync(sportId, "Goal", "GL", isPositive: true, ownerId: null);
+        var customDefId = await SeedEventDefinitionAsync(sportId, "Custom Assist", "AST", isPositive: true, ownerId: TestUserId);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{sportId}/event-definitions");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+        result.Should().NotBeNull();
+
+        var definitions = result!.ToList();
+        definitions.Should().HaveCount(2);
+
+        var sysDef = definitions.FirstOrDefault(d => d.Id == sysDefId);
+        sysDef.Should().NotBeNull();
+        sysDef!.Name.Should().Be("Goal");
+        sysDef.IsCustom.Should().BeFalse();
+
+        var customDef = definitions.FirstOrDefault(d => d.Id == customDefId);
+        customDef.Should().NotBeNull();
+        customDef!.Name.Should().Be("Custom Assist");
+        customDef.IsCustom.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Verifies that <c>GET /api/sports/{sportId}/event-definitions</c> returns HTTP 401 Unauthorized 
+    /// when the request is made without authentication credentials.
+    /// </summary>
+    [Fact]
+    public async Task GetAvailableEventDefinitions_ShouldReturnUnauthorized_WhenAuthenticationIsDisabled()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+
+        try
+        {
+            TestAuthHandler.IsEnabled = false;
+
+            // Act
+            var response = await Client.GetAsync($"{BaseUrl}/{sportId}/event-definitions");
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+        finally
+        {
+            TestAuthHandler.IsEnabled = true;
+        }
+    }
+
+    #endregion
+
+    #region CreateCustomEventDefinition Tests
+
+    /// <summary>
+    /// Verifies that <c>POST /api/sports/{sportId}/event-definitions/custom</c> returns HTTP 201 Created
+    /// and persists a new custom event definition when provided with valid request data.
+    /// </summary>
+    [Fact]
+    public async Task CreateCustomEventDefinition_ShouldReturnCreated_WhenRequestIsValid()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(sportId, $"Sport_{Guid.NewGuid():N}", "SPT", configId);
+        await SeedUserAsync(TestUserId, "creator@test.com", "Creator User");
+
+        var request = new CreateCustomEventDefinitionRequest(
+            Id: Guid.NewGuid(),
+            Name: "Custom Timeout",
+            ShortName: "CTO",
+            IsPositive: true
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{sportId}/event-definitions/custom", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var result = await response.Content.ReadFromJsonAsync<EventDefinitionResponse>();
+
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(request.Id);
+        result.SportId.Should().Be(sportId);
+        result.Name.Should().Be("Custom Timeout");
+        result.ShortName.Should().Be("CTO");
+        result.IsPositive.Should().BeTrue();
+        result.IsCustom.Should().BeTrue();
+        result.IsEnabled.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Verifies that <c>POST /api/sports/{sportId}/event-definitions/custom</c> returns HTTP 400 Bad Request 
+    /// when model validation fails due to empty parameters.
+    /// </summary>
+    [Fact]
+    public async Task CreateCustomEventDefinition_ShouldReturnBadRequest_WhenValidationFails()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var invalidRequest = new CreateCustomEventDefinitionRequest(
+            Id: Guid.NewGuid(),
+            Name: string.Empty,
+            ShortName: string.Empty,
+            IsPositive: false
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{sportId}/event-definitions/custom", invalidRequest);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Verifies that <c>POST /api/sports/{sportId}/event-definitions/custom</c> returns HTTP 401 Unauthorized 
+    /// when an anonymous user attempts to create a custom event definition.
+    /// </summary>
+    [Fact]
+    public async Task CreateCustomEventDefinition_ShouldReturnUnauthorized_WhenAuthenticationIsDisabled()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var request = new CreateCustomEventDefinitionRequest(Guid.NewGuid(), "Foul", "FL", false);
+
+        try
+        {
+            TestAuthHandler.IsEnabled = false;
+
+            // Act
+            var response = await Client.PostAsJsonAsync($"{BaseUrl}/{sportId}/event-definitions/custom", request);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+        finally
+        {
+            TestAuthHandler.IsEnabled = true;
+        }
+    }
+
+    #endregion
+
+    #region SaveUserEventPreset Tests
+
+    /// <summary>
+    /// Verifies that <c>PUT /api/sports/{sportId}/event-definitions/preset</c> returns HTTP 200 OK
+    /// and persists the user preset layout and ordering when valid event definition IDs are provided.
+    /// </summary>
+    [Fact]
+    public async Task SaveUserEventPreset_ShouldReturnOk_WhenRequestIsValid()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(sportId, $"Sport_{Guid.NewGuid():N}", "SPT", configId);
+        await SeedUserAsync(TestUserId, "preset.user@test.com", "Preset User");
+
+        var defId1 = await SeedEventDefinitionAsync(sportId, "Goal", "GL", isPositive: true, ownerId: null);
+        var defId2 = await SeedEventDefinitionAsync(sportId, "Foul", "FL", isPositive: false, ownerId: null);
+
+        var request = new SaveUserEventPresetRequest(new[] { defId1, defId2 });
+
+        // Act
+        var response = await Client.PutAsJsonAsync($"{BaseUrl}/{sportId}/event-definitions/preset", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Verify database persistence for user presets
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var presets = (await conn.QueryAsync<(string UserId, Guid EventDefinitionId, int SortOrder)>(
+            "SELECT userid, eventdefinitionid, sortorder FROM public.usereventpresets WHERE userid = @userId",
+            new { userId = TestUserId })).ToList();
+
+        presets.Should().HaveCount(2);
+        presets.Should().Contain(p => p.EventDefinitionId == defId1 && p.SortOrder == 0);
+        presets.Should().Contain(p => p.EventDefinitionId == defId2 && p.SortOrder == 1);
+    }
+
+    /// <summary>
+    /// Verifies that <c>PUT /api/sports/{sportId}/event-definitions/preset</c> returns HTTP 400 Bad Request 
+    /// when the request payload fails model validation rules (e.g., null payload).
+    /// </summary>
+    [Fact]
+    public async Task SaveUserEventPreset_ShouldReturnBadRequest_WhenPayloadIsNull()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+
+        // Act
+        var response = await Client.PutAsJsonAsync<SaveUserEventPresetRequest>($"{BaseUrl}/{sportId}/event-definitions/preset", null!);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Verifies that <c>PUT /api/sports/{sportId}/event-definitions/preset</c> returns HTTP 401 Unauthorized 
+    /// when an anonymous user attempts to update event presets.
+    /// </summary>
+    [Fact]
+    public async Task SaveUserEventPreset_ShouldReturnUnauthorized_WhenAuthenticationIsDisabled()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var request = new SaveUserEventPresetRequest(new[] { Guid.NewGuid() });
+
+        try
+        {
+            TestAuthHandler.IsEnabled = false;
+
+            // Act
+            var response = await Client.PutAsJsonAsync($"{BaseUrl}/{sportId}/event-definitions/preset", request);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+        finally
+        {
+            TestAuthHandler.IsEnabled = true;
+        }
+    }
+
+    #endregion
+
+    #region Helper Seed Methods
+
+    private async Task SeedUserAsync(string userId, string email, string displayName)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        const string sql = "INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @email, @name, NOW()) ON CONFLICT (id) DO NOTHING";
+        await conn.ExecuteAsync(sql, new { id = userId, email, name = displayName });
+    }
+
+    private async Task<Guid> SeedEventDefinitionAsync(Guid sportId, string name, string shortName, bool isPositive, string? ownerId)
+    {
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        var id = Guid.NewGuid();
+
+        const string sql = @"
+            INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat)
+            VALUES (@id, @sportId, @ownerId, @name, @shortName, @isPositive, false, NOW())";
+
+        await conn.ExecuteAsync(sql, new { id, sportId, ownerId, name, shortName, isPositive });
+        return id;
     }
 
     #endregion

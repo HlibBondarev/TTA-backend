@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using FluentAssertions;
 using System.Data.Common;
+using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
 
@@ -8,7 +9,7 @@ namespace TTA.Tests.Integration.Repository;
 
 /// <summary>
 /// Integration tests for the <see cref="EventDefinitionRepository"/>.
-/// Validates data access logic and PostgreSQL storage function integration for retrieving match event definitions.
+/// Validates data access logic and PostgreSQL storage function integration for event definitions, user presets, and soft-delete operations.
 /// </summary>
 public class EventDefinitionRepositoryTests : BaseIntegrationTest
 {
@@ -23,17 +24,17 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         _repository = new EventDefinitionRepository(fixture.ConnectionFactory);
     }
 
-    #region Integration Tests
+    #region GetMatchEventDefinitionsAsync Tests
 
     /// <summary>
     /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync"/> returns 
-    /// all event definitions associated with the sport of the specified match.
+    /// system default event definitions when no user-specific preset is configured.
     /// </summary>
     [Fact]
-    public async Task GetMatchEventDefinitionsAsync_ShouldReturnEventDefinitions_WhenMatchAndDefinitionsExist()
+    public async Task GetMatchEventDefinitionsAsync_ShouldReturnDefaultEventDefinitions_WhenMatchAndSystemDefinitionsExist()
     {
         // Arrange
-        var (matchId, sportId, definitionIds) = await SeedEventDefinitionEnvironmentAsync(createDefinitions: true);
+        var (matchId, sportId, _, definitionIds) = await SeedFullEnvironmentAsync(createSystemDefs: true);
 
         // Act
         var definitions = await _repository.GetMatchEventDefinitionsAsync(matchId);
@@ -42,8 +43,38 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         var result = definitions.ToList();
         result.Should().NotBeNull();
         result.Should().HaveCount(definitionIds.Count);
-        result.Should().OnlyContain(d => d.SportId == sportId);
+        result.Should().OnlyContain(d => d.SportId == sportId && !d.IsCustom && d.IsEnabled);
         result.Select(d => d.Id).Should().BeEquivalentTo(definitionIds);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync"/> returns 
+    /// active user preset definitions when a valid user identifier is provided.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchEventDefinitionsAsync_ShouldReturnUserPresetDefinitions_WhenUserPresetExists()
+    {
+        // Arrange
+        var (matchId, sportId, userId, definitionIds) = await SeedFullEnvironmentAsync(createSystemDefs: true);
+
+        // Create active user preset for def1 only
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat) 
+                VALUES (@userId, @defId, 0, NOW())",
+                new { userId, defId = definitionIds[0] });
+        }
+
+        // Act
+        var definitions = await _repository.GetMatchEventDefinitionsAsync(matchId, userId);
+
+        // Assert
+        var result = definitions.ToList();
+        result.Should().NotBeNull();
+        result.Should().HaveCount(1);
+        result[0].Id.Should().Be(definitionIds[0]);
+        result[0].IsEnabled.Should().BeTrue();
     }
 
     /// <summary>
@@ -54,7 +85,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     public async Task GetMatchEventDefinitionsAsync_ShouldReturnEmpty_WhenNoDefinitionsExistForSport()
     {
         // Arrange
-        var (matchId, _, _) = await SeedEventDefinitionEnvironmentAsync(createDefinitions: false);
+        var (matchId, _, _, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
 
         // Act
         var definitions = await _repository.GetMatchEventDefinitionsAsync(matchId);
@@ -75,20 +106,214 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         var nonExistentMatchId = Guid.NewGuid();
 
         // Act
-        var definitions = await _repository.GetMatchEventDefinitionsAsync(nonExistentMatchId);
+        Func<Task> act = async () => await _repository.GetMatchEventDefinitionsAsync(nonExistentMatchId);
 
         // Assert
-        definitions.Should().NotBeNull();
-        definitions.Should().BeEmpty();
+        await act.Should().ThrowAsync<Exception>();
+    }
+
+    #endregion
+
+    #region UpsertCustomAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> successfully creates 
+    /// a new custom event definition entity and automatically registers it in user presets.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldInsertNewCustomEventDefinition_AndAddToPresets()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var customDefinition = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Custom Tactical Block",
+            ShortName = "C-BLK",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var created = await _repository.UpsertCustomAsync(customDefinition);
+
+        // Assert
+        created.Should().NotBeNull();
+        created!.Id.Should().Be(customDefinition.Id);
+        created.Name.Should().Be("Custom Tactical Block");
+        created.OwnerId.Should().Be(userId);
+
+        // Verify database state: user preset entry should exist
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var presetCount = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM public.usereventpresets WHERE userid = @userId AND eventdefinitionid = @defId",
+            new { userId, defId = customDefinition.Id });
+
+        presetCount.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> updates an existing custom event definition.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldUpdateExistingCustomEventDefinition()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var customDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Initial Name",
+            ShortName = "INIT",
+            IsPositive = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(customDef);
+
+        var updatedDef = new EventDefinition
+        {
+            Id = customDef.Id,
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Updated Name",
+            ShortName = "UPD",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var result = await _repository.UpsertCustomAsync(updatedDef);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Name.Should().Be("Updated Name");
+        result.ShortName.Should().Be("UPD");
+        result.IsPositive.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region SoftDeleteAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.SoftDeleteAsync"/> sets <c>issoftdeleted = TRUE</c> 
+    /// for a user-owned custom definition and removes it from active presets.
+    /// </summary>
+    [Fact]
+    public async Task SoftDeleteAsync_ShouldSoftDeleteCustomEventDefinition_AndRemoveFromPresets()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var customDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Definition To Delete",
+            ShortName = "DEL",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(customDef);
+
+        // Act
+        var deleted = await _repository.SoftDeleteAsync(customDef.Id, userId);
+
+        // Assert
+        deleted.Should().BeTrue();
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var isSoftDeleted = await conn.ExecuteScalarAsync<bool>(
+            "SELECT issoftdeleted FROM public.eventdefinitions WHERE id = @id",
+            new { id = customDef.Id });
+
+        isSoftDeleted.Should().BeTrue();
+
+        var presetCount = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM public.usereventpresets WHERE eventdefinitionid = @id",
+            new { id = customDef.Id });
+
+        presetCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.SoftDeleteAsync"/> returns false when 
+    /// trying to delete a non-existent definition or one not owned by the specified user.
+    /// </summary>
+    [Fact]
+    public async Task SoftDeleteAsync_ShouldReturnFalse_WhenDefinitionNotFoundOrNotOwnedByUser()
+    {
+        // Arrange
+        var (_, _, userId, definitionIds) = await SeedFullEnvironmentAsync(createSystemDefs: true);
+
+        // System default definitions (ownerid IS NULL) cannot be soft-deleted by user
+        // Act
+        var result = await _repository.SoftDeleteAsync(definitionIds[0], userId);
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    #endregion
+
+    #region GetAvailableForUserAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.GetAvailableForUserAsync"/> returns system default
+    /// and user custom event definitions enriched with layout ordering and preset enablement metadata.
+    /// </summary>
+    [Fact]
+    public async Task GetAvailableForUserAsync_ShouldReturnSystemAndCustomDefinitions_EnrichedWithPresetState()
+    {
+        // Arrange
+        var (_, sportId, userId, systemDefIds) = await SeedFullEnvironmentAsync(createSystemDefs: true);
+
+        var customDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Custom Tactical Move",
+            ShortName = "CTM",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(customDef);
+
+        // Act
+        var available = await _repository.GetAvailableForUserAsync(userId, sportId);
+
+        // Assert
+        var list = available.ToList();
+        list.Should().NotBeNull();
+        list.Should().HaveCount(systemDefIds.Count + 1);
+
+        var customItem = list.FirstOrDefault(x => x.Id == customDef.Id);
+        customItem.Should().NotBeNull();
+        customItem!.IsCustom.Should().BeTrue();
+        customItem.IsEnabled.Should().BeTrue(); // Automatically enabled on creation
+
+        var systemItem = list.FirstOrDefault(x => x.Id == systemDefIds[0]);
+        systemItem.Should().NotBeNull();
+        systemItem!.IsCustom.Should().BeFalse();
     }
 
     #endregion
 
     #region Seed Helpers
 
-    private async Task<(Guid MatchId, Guid SportId, List<Guid> DefinitionIds)> SeedEventDefinitionEnvironmentAsync(bool createDefinitions)
+    private async Task<(Guid MatchId, Guid SportId, string UserId, List<Guid> DefinitionIds)> SeedFullEnvironmentAsync(bool createSystemDefs)
     {
-        // Cast IDbConnection to DbConnection to support asynchronous transactions
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
@@ -148,16 +373,16 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         // 4. Event Definitions Setup
         var definitionIds = new List<Guid>();
 
-        if (createDefinitions)
+        if (createSystemDefs)
         {
             var def1 = Guid.NewGuid();
             var def2 = Guid.NewGuid();
 
             await conn.ExecuteAsync(@"
-                INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat)
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, createdat)
                 VALUES 
-                (@id1, @sid, 'Goal', 'G', true, NOW()),
-                (@id2, @sid, 'Foul', 'F', false, NOW())",
+                (@id1, @sid, NULL, 'Goal', 'G', true, NOW()),
+                (@id2, @sid, NULL, 'Foul', 'F', false, NOW())",
                 new { id1 = def1, id2 = def2, sid = sportId },
                 transaction: transaction);
 
@@ -194,7 +419,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         await transaction.CommitAsync();
 
-        return (matchId, sportId, definitionIds);
+        return (matchId, sportId, userId, definitionIds);
     }
 
     #endregion
