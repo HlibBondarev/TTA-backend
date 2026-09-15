@@ -13,6 +13,7 @@ namespace TTA.Tests.Integration.Repository;
 /// </summary>
 public class EventDefinitionRepositoryTests : BaseIntegrationTest
 {
+    private static readonly int[] ExpectedSortOrders = [0, 1];
     private readonly EventDefinitionRepository _repository;
 
     /// <summary>
@@ -493,7 +494,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         // One must be 0, the other must be 1 (order depending on lock acquisition sequence)
         var sortOrders = new[] { sortOrder1, sortOrder2 };
-        sortOrders.Should().BeEquivalentTo(new[] { 0, 1 });
+        sortOrders.Should().BeEquivalentTo(ExpectedSortOrders);
 
         // Verify database state: User presets table must have exactly 2 entries with unique sort orders (0 and 1)
         using var conn = Fixture.ConnectionFactory.CreateConnection();
@@ -502,7 +503,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             new { userId })).ToList();
 
         presets.Should().HaveCount(2);
-        presets.Select(p => p.SortOrder).Should().BeEquivalentTo(new[] { 0, 1 });
+        presets.Select(p => p.SortOrder).Should().BeEquivalentTo(ExpectedSortOrders);
     }
 
     /// <summary>
