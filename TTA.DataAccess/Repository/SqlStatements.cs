@@ -404,10 +404,50 @@ public static class SqlStatements
     public static class ForEventDefinitions
     {
         /// <summary>
+        /// SQL statement to upsert a custom user event definition.
+        /// </summary>
+        public const string UpsertCustomEventDefinition = @"
+            SELECT * FROM public.upsert_custom_event_definition(
+                @p_id, @p_sport_id, @p_owner_id, @p_name, @p_short_name, @p_is_positive
+            );";
+
+        /// <summary>
+        /// SQL statement to soft delete a custom user event definition.
+        /// </summary>
+        public const string SoftDeleteEventDefinition = @"
+            SELECT public.soft_delete_event_definition(
+                @p_id, @p_user_id
+            );";
+
+        /// <summary>
+        /// SQL statement to retrieve all available event definitions for a user and sport with preset state.
+        /// </summary>
+        public const string GetUserAvailableEventDefinitions = @"
+            SELECT * FROM public.get_user_available_event_definitions(
+                @p_user_id, @p_sport_id
+            );";
+
+        /// <summary>
         /// Invokes the storage function to retrieve all event definitions associated with the sport of a specific match.
         /// </summary>
-        public const string GetMatchEventDefinitions =
-            "SELECT * FROM public.get_match_event_definitions(@p_match_id);";
+        public const string GetMatchEventDefinitions = @"
+            SELECT * FROM public.get_match_event_definitions(
+                @p_match_id, @p_user_id
+            );";
+    }
+
+    /// <summary>
+    /// SQL constants for User Event Preset related database operations.
+    /// </summary>
+    public static class ForUserEventPresets
+    {
+        /// <summary>
+        /// SQL statement to save user event definition presets and layout order.
+        /// </summary>
+        public const string SaveUserEventPreset = @"
+            SELECT public.save_user_event_preset(
+                @p_user_id, @p_sport_id, @p_event_definition_ids
+            );";
     }
 
     /// <summary>
