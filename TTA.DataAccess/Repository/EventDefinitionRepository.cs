@@ -14,7 +14,7 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, EventDefinition>(connectionFactory), IEventDefinitionRepository
 {
     /// <inheritdoc />
-    public async Task<EventDefinition?> UpsertCustomAsync(EventDefinition entity, CancellationToken cancellationToken = default)
+    public async Task<(EventDefinition? Definition, int SortOrder)> UpsertCustomAsync(EventDefinition entity, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_id", entity.Id);
@@ -26,10 +26,26 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
-        return await connection.QueryFirstOrDefaultAsync<EventDefinition>(new CommandDefinition(
+        var created = await connection.QueryFirstOrDefaultAsync<EventDefinition>(new CommandDefinition(
             SqlStatements.ForEventDefinitions.UpsertCustomEventDefinition,
             parameters,
             cancellationToken: cancellationToken));
+
+        if (created == null)
+        {
+            return (null, 0);
+        }
+
+        var presetParameters = new DynamicParameters();
+        presetParameters.Add("p_user_id", entity.OwnerId);
+        presetParameters.Add("p_event_definition_id", entity.Id);
+
+        var sortOrder = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
+            SqlStatements.ForUserEventPresets.GetUserEventPresetSortOrder,
+            presetParameters,
+            cancellationToken: cancellationToken));
+
+        return (created, sortOrder);
     }
 
     /// <inheritdoc />

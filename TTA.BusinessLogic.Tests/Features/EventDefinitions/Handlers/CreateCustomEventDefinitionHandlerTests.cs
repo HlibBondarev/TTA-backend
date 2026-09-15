@@ -11,7 +11,7 @@ using TTA.DataAccess.Repository.Api;
 namespace TTA.BusinessLogic.Tests.Features.EventDefinitions.Handlers;
 
 /// <summary>
-/// Unit tests for <see cref="CreateCustomEventDefinitionHandler"/>.
+/// Unit tests for <see cref="CreateCustomEventDefinitionHandler" />.
 /// </summary>
 public class CreateCustomEventDefinitionHandlerTests
 {
@@ -27,7 +27,7 @@ public class CreateCustomEventDefinitionHandlerTests
     }
 
     /// <summary>
-    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> successfully creates and
+    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle" /> successfully creates and
     /// persists a custom event definition entity via repository and returns a mapped response DTO.
     /// </summary>
     [Fact]
@@ -54,6 +54,8 @@ public class CreateCustomEventDefinitionHandlerTests
             CreatedAt = DateTime.UtcNow
         };
 
+        const int expectedSortOrder = 3;
+
         _repositoryMock
             .Setup(r => r.UpsertCustomAsync(It.Is<EventDefinition>(e =>
                 e.Id == command.Id &&
@@ -63,7 +65,7 @@ public class CreateCustomEventDefinitionHandlerTests
                 e.ShortName == command.ShortName &&
                 e.IsPositive == command.IsPositive &&
                 !e.IsSoftDeleted), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(createdEntity);
+            .ReturnsAsync((createdEntity, expectedSortOrder));
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
@@ -77,14 +79,14 @@ public class CreateCustomEventDefinitionHandlerTests
         result.IsPositive.Should().BeTrue();
         result.IsCustom.Should().BeTrue();
         result.IsEnabled.Should().BeTrue();
-        result.SortOrder.Should().Be(0);
+        result.SortOrder.Should().Be(expectedSortOrder);
 
         _repositoryMock.Verify(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
-    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> throws an 
-    /// <see cref="InvalidOperationException"/> when repository persistence fails and returns null.
+    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle" /> throws an 
+    /// <see cref="InvalidOperationException" /> when repository persistence fails and returns null.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldThrowInvalidOperationException_WhenRepositoryReturnsNull()
@@ -100,7 +102,7 @@ public class CreateCustomEventDefinitionHandlerTests
 
         _repositoryMock
             .Setup(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((EventDefinition?)null);
+            .ReturnsAsync(((EventDefinition?)null, 0));
 
         // Act
         Func<Task> act = async () => await _handler.Handle(command, CancellationToken.None);
@@ -113,7 +115,7 @@ public class CreateCustomEventDefinitionHandlerTests
     }
 
     /// <summary>
-    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> correctly passes 
+    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle" /> correctly passes 
     /// the cancellation token to the repository method call.
     /// </summary>
     [Fact]
@@ -144,7 +146,7 @@ public class CreateCustomEventDefinitionHandlerTests
 
         _repositoryMock
             .Setup(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), cancellationToken))
-            .ReturnsAsync(createdEntity);
+            .ReturnsAsync((createdEntity, 0));
 
         // Act
         await _handler.Handle(command, cancellationToken);
@@ -154,8 +156,8 @@ public class CreateCustomEventDefinitionHandlerTests
     }
 
     /// <summary>
-    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> catches a <see cref="PostgresException"/>
-    /// with SQLSTATE P0001 and throws a < see cref="ConflictException"/ >.
+    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle" /> catches a <see cref="PostgresException" />
+    /// with SQLSTATE P0001 and throws a <see cref="ConflictException" />.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldThrowConflictException_WhenDatabaseRuleFails()

@@ -14,8 +14,8 @@ public interface IEventDefinitionRepository : IEntityRepositoryBase<Guid, EventD
     /// </summary>
     /// <param name="entity">The event definition entity to upsert.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>The persisted event definition instance.</returns>
-    Task<EventDefinition?> UpsertCustomAsync(EventDefinition entity, CancellationToken cancellationToken = default);
+    /// <returns>A tuple containing the persisted event definition instance and its assigned sort order in the user's preset.</returns>
+    Task<(EventDefinition? Definition, int SortOrder)> UpsertCustomAsync(EventDefinition entity, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Soft-deletes a custom event definition owned by a specific user.

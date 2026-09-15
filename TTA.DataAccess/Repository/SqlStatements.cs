@@ -445,9 +445,17 @@ public static class SqlStatements
         /// SQL statement to save user event definition presets and layout order.
         /// </summary>
         public const string SaveUserEventPreset = @"
-            SELECT public.save_user_event_preset(
-                @p_user_id, @p_sport_id, @p_event_definition_ids
-            );";
+        SELECT public.save_user_event_preset(
+            @p_user_id, @p_sport_id, @p_event_definition_ids
+        );";
+
+        /// <summary>
+        /// Invokes the storage function to retrieve the sort order of a user event preset.
+        /// </summary>
+        public const string GetUserEventPresetSortOrder = @"
+        SELECT public.get_user_event_preset_sort_order(
+            @p_user_id, @p_event_definition_id
+        );";
     }
 
     /// <summary>

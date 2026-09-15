@@ -8,7 +8,7 @@ using TTA.Tests.Integration.Infrastructure;
 namespace TTA.Tests.Integration.Repository;
 
 /// <summary>
-/// Integration tests for the <see cref="EventDefinitionRepository"/>.
+/// Integration tests for the <see cref="EventDefinitionRepository" />.
 /// Validates data access logic and PostgreSQL storage function integration for event definitions, user presets, and soft-delete operations.
 /// </summary>
 public class EventDefinitionRepositoryTests : BaseIntegrationTest
@@ -16,7 +16,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     private readonly EventDefinitionRepository _repository;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="EventDefinitionRepositoryTests"/> class.
+    /// Initializes a new instance of the <see cref="EventDefinitionRepositoryTests" /> class.
     /// </summary>
     /// <param name="fixture">The shared database fixture.</param>
     public EventDefinitionRepositoryTests(DatabaseFixture fixture) : base(fixture)
@@ -27,7 +27,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     #region GetMatchEventDefinitionsAsync Tests
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync"/> returns 
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> returns 
     /// system default event definitions when no user-specific preset is configured.
     /// </summary>
     [Fact]
@@ -48,7 +48,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync"/> returns 
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> returns 
     /// active user preset definitions when a valid user identifier is provided.
     /// </summary>
     [Fact]
@@ -78,7 +78,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync"/> returns 
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> returns 
     /// an empty collection when no event definitions exist for the match's sport.
     /// </summary>
     [Fact]
@@ -96,7 +96,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync"/> returns 
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> returns 
     /// an empty collection when the specified match does not exist in the database.
     /// </summary>
     [Fact]
@@ -117,7 +117,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     #region UpsertCustomAsync Tests
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> successfully creates 
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> successfully creates 
     /// a new custom event definition entity and automatically registers it in user presets.
     /// </summary>
     [Fact]
@@ -138,13 +138,14 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         };
 
         // Act
-        var created = await _repository.UpsertCustomAsync(customDefinition);
+        var (created, sortOrder) = await _repository.UpsertCustomAsync(customDefinition);
 
         // Assert
         created.Should().NotBeNull();
         created!.Id.Should().Be(customDefinition.Id);
         created.Name.Should().Be("Custom Tactical Block");
         created.OwnerId.Should().Be(userId);
+        sortOrder.Should().Be(0);
 
         // Verify database state: user preset entry should exist
         using var conn = Fixture.ConnectionFactory.CreateConnection();
@@ -156,7 +157,8 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> updates an existing custom event definition.
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> updates an existing custom event definition
+    /// and returns its current preset sort order.
     /// </summary>
     [Fact]
     public async Task UpsertCustomAsync_ShouldUpdateExistingCustomEventDefinition()
@@ -177,6 +179,14 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         await _repository.UpsertCustomAsync(customDef);
 
+        // Manually set preset sort order to 3 to verify update retrieves existing sort order
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "UPDATE public.usereventpresets SET sortorder = 3 WHERE userid = @userId AND eventdefinitionid = @defId",
+                new { userId, defId = customDef.Id });
+        }
+
         var updatedDef = new EventDefinition
         {
             Id = customDef.Id,
@@ -189,19 +199,20 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         };
 
         // Act
-        var result = await _repository.UpsertCustomAsync(updatedDef);
+        var (result, sortOrder) = await _repository.UpsertCustomAsync(updatedDef);
 
         // Assert
         result.Should().NotBeNull();
         result!.Name.Should().Be("Updated Name");
         result.ShortName.Should().Be("UPD");
         result.IsPositive.Should().BeTrue();
+        sortOrder.Should().Be(3);
     }
 
-    /// < summary >
-    /// Verifies that < see cref="EventDefinitionRepository.UpsertCustomAsync"/ > throws PostgresException (P0001)
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> throws PostgresException (P0001)
     /// when attempting to reuse an event definition identifier whose existing record has IsSoftDeleted set to true.
-    /// < /summary >
+    /// </summary>
     [Fact]
     public async Task UpsertCustomAsync_ShouldThrowException_WhenReusingSoftDeletedDefinitionId()
     {
@@ -249,7 +260,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     #region SoftDeleteAsync Tests
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.SoftDeleteAsync"/> sets <c>issoftdeleted = TRUE</c> 
+    /// Verifies that <see cref="EventDefinitionRepository.SoftDeleteAsync" /> sets <c>issoftdeleted = TRUE</c> 
     /// for a user-owned custom definition and removes it from active presets.
     /// </summary>
     [Fact]
@@ -292,7 +303,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.SoftDeleteAsync"/> returns false when 
+    /// Verifies that <see cref="EventDefinitionRepository.SoftDeleteAsync" /> returns false when 
     /// trying to delete a non-existent definition or one not owned by the specified user.
     /// </summary>
     [Fact]
@@ -314,7 +325,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     #region GetAvailableForUserAsync Tests
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.GetAvailableForUserAsync"/> returns system default
+    /// Verifies that <see cref="EventDefinitionRepository.GetAvailableForUserAsync" /> returns system default
     /// and user custom event definitions enriched with layout ordering and preset enablement metadata.
     /// </summary>
     [Fact]

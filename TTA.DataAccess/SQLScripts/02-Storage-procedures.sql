@@ -1766,6 +1766,25 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+/**********************************************************************************
+ * Retrieves the sort order for a specific user event preset.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_user_event_preset_sort_order(
+    p_user_id VARCHAR(64),
+    p_event_definition_id UUID
+)
+RETURNS INT AS $$
+DECLARE
+    v_sort_order INT;
+BEGIN
+    SELECT sortorder INTO v_sort_order
+    FROM public.usereventpresets
+    WHERE userid = p_user_id AND eventdefinitionid = p_event_definition_id;
+
+    RETURN COALESCE(v_sort_order, 0);
+END;
+$$ LANGUAGE plpgsql;
+
 -- =============================================================
 -- GAME EVENTS STORED FUNCTIONS
 -- =============================================================
