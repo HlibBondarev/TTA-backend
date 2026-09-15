@@ -13,6 +13,8 @@ namespace TTA.DataAccess.Repository;
 public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, EventDefinition>(connectionFactory), IEventDefinitionRepository
 {
+    private const string UserIdParameter = "p_user_id";
+
     /// <inheritdoc />
     public async Task<(EventDefinition? Definition, int SortOrder)> UpsertCustomAsync(EventDefinition entity, CancellationToken cancellationToken = default)
     {
@@ -37,7 +39,7 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
         }
 
         var presetParameters = new DynamicParameters();
-        presetParameters.Add("p_user_id", entity.OwnerId);
+        presetParameters.Add(UserIdParameter, entity.OwnerId);
         presetParameters.Add("p_event_definition_id", entity.Id);
 
         var sortOrder = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
@@ -53,7 +55,7 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_id", id);
-        parameters.Add("p_user_id", userId);
+        parameters.Add(UserIdParameter, userId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
@@ -67,7 +69,7 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
     public async Task<IEnumerable<UserEventDefinitionProjection>> GetAvailableForUserAsync(string userId, Guid sportId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_user_id", userId);
+        parameters.Add(UserIdParameter, userId);
         parameters.Add("p_sport_id", sportId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
@@ -83,7 +85,7 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_match_id", matchId);
-        parameters.Add("p_user_id", userId);
+        parameters.Add(UserIdParameter, userId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
