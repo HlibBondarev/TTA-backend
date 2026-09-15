@@ -1526,6 +1526,9 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
+    -- Acquire transaction-scoped advisory lock for user and sport context
+    PERFORM pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_sport_id::text));
+
     -- Validation: Cannot update existing system default definition (where ownerid IS NULL)
     IF EXISTS (SELECT 1 FROM public.eventdefinitions WHERE id = p_id AND ownerid IS NULL) THEN
         RAISE EXCEPTION 'System default event definitions cannot be modified as custom definitions.'
@@ -1592,14 +1595,19 @@ CREATE OR REPLACE FUNCTION public.soft_delete_event_definition(
 RETURNS BOOLEAN AS $$
 DECLARE
     v_deleted BOOLEAN := FALSE;
+    v_sport_id UUID;
 BEGIN
-    -- Validation: User can only soft-delete custom definitions that they own
-    IF NOT EXISTS (
-        SELECT 1 FROM public.eventdefinitions 
-        WHERE id = p_id AND ownerid = p_user_id AND issoftdeleted = FALSE
-    ) THEN
+    -- Resolve sport ID and validate ownership
+    SELECT sportid INTO v_sport_id
+    FROM public.eventdefinitions 
+    WHERE id = p_id AND ownerid = p_user_id AND issoftdeleted = FALSE;
+
+    IF v_sport_id IS NULL THEN
         RETURN FALSE;
     END IF;
+
+    -- Acquire transaction-scoped advisory lock for user and sport context
+    PERFORM pg_advisory_xact_lock(hashtext(p_user_id), hashtext(v_sport_id::text));
 
     -- Set soft delete flag to preserve historical gameevents references
     UPDATE public.eventdefinitions

@@ -442,6 +442,194 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
     #endregion
 
+    #region Concurrency & Advisory Lock Tests
+
+    /// <summary>
+    /// Verifies that concurrent calls to <see cref="EventDefinitionRepository.UpsertCustomAsync" /> for the same user and sport 
+    /// are properly serialized via PostgreSQL advisory locks, preventing sort order race conditions or database deadlocks.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ConcurrentCallsSameUserAndSport_ShouldSerializeAndAssignSequentialSortOrders()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var firstDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Concurrent Action A",
+            ShortName = "ACT_A",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var secondDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Concurrent Action B",
+            ShortName = "ACT_B",
+            IsPositive = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act: Run both upsert operations concurrently using separate connections managed inside repository methods
+        var task1 = Task.Run(() => _repository.UpsertCustomAsync(firstDef));
+        var task2 = Task.Run(() => _repository.UpsertCustomAsync(secondDef));
+
+        Func<Task> act = async () => await Task.WhenAll(task1, task2);
+
+        // Assert: Both tasks should execute without deadlocks or Postgres exceptions
+        await act.Should().NotThrowAsync();
+
+        var (created1, sortOrder1) = await task1;
+        var (created2, sortOrder2) = await task2;
+
+        created1.Should().NotBeNull();
+        created2.Should().NotBeNull();
+
+        // One must be 0, the other must be 1 (order depending on lock acquisition sequence)
+        var sortOrders = new[] { sortOrder1, sortOrder2 };
+        sortOrders.Should().BeEquivalentTo(new[] { 0, 1 });
+
+        // Verify database state: User presets table must have exactly 2 entries with unique sort orders (0 and 1)
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var presets = (await conn.QueryAsync<(Guid EventDefinitionId, int SortOrder)>(
+            "SELECT eventdefinitionid, sortorder FROM public.usereventpresets WHERE userid = @userId ORDER BY sortorder ASC",
+            new { userId })).ToList();
+
+        presets.Should().HaveCount(2);
+        presets.Select(p => p.SortOrder).Should().BeEquivalentTo(new[] { 0, 1 });
+    }
+
+    /// <summary>
+    /// Verifies that concurrent calls to <see cref="EventDefinitionRepository.UpsertCustomAsync" /> and 
+    /// <see cref="EventDefinitionRepository.SoftDeleteAsync" /> for the same user/sport execute safely in parallel without conflicts.
+    /// </summary>
+    [Fact]
+    public async Task UpsertAndSoftDelete_ConcurrentOperations_ShouldSerializeWithAdvisoryLockWithoutErrors()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var existingDefId = Guid.NewGuid();
+        var initialDef = new EventDefinition
+        {
+            Id = existingDefId,
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Definition To Delete Concurrently",
+            ShortName = "DEL_C",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(initialDef);
+
+        var newDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "New Definition Inserted Concurrently",
+            ShortName = "INS_C",
+            IsPositive = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act: Run SoftDelete on existing definition and Upsert on new definition in parallel
+        var deleteTask = Task.Run(() => _repository.SoftDeleteAsync(existingDefId, userId));
+        var upsertTask = Task.Run(() => _repository.UpsertCustomAsync(newDef));
+
+        Func<Task> act = async () => await Task.WhenAll(deleteTask, upsertTask);
+
+        // Assert
+        await act.Should().NotThrowAsync();
+
+        var deleteResult = await deleteTask;
+        var (upsertResult, newSortOrder) = await upsertTask;
+
+        deleteResult.Should().BeTrue();
+        upsertResult.Should().NotBeNull();
+
+        // Verify DB State: Old definition is soft-deleted and removed from presets, new definition is active
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var isSoftDeleted = await conn.ExecuteScalarAsync<bool>(
+            "SELECT issoftdeleted FROM public.eventdefinitions WHERE id = @id",
+            new { id = existingDefId });
+
+        isSoftDeleted.Should().BeTrue();
+
+        var activePresetIds = (await conn.QueryAsync<Guid>(
+            "SELECT eventdefinitionid FROM public.usereventpresets WHERE userid = @userId",
+            new { userId })).ToList();
+
+        activePresetIds.Should().ContainSingle()
+            .Which.Should().Be(newDef.Id);
+    }
+
+    /// <summary>
+    /// Verifies that advisory locks scoped to different users/sports do not block each other,
+    /// allowing full parallelism across distinct user sessions.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_DifferentUsers_ShouldNotBlockEachOther()
+    {
+        // Arrange
+        var (_, sportId, user1, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var user2 = $"auth0|user-two-{Guid.NewGuid():N}";
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, 'user2@tta.com', 'User Two', NOW())",
+                new { id = user2 });
+        }
+
+        var defUser1 = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = user1,
+            Name = "User 1 Action",
+            ShortName = "U1A",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var defUser2 = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = user2,
+            Name = "User 2 Action",
+            ShortName = "U2A",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var task1 = Task.Run(() => _repository.UpsertCustomAsync(defUser1));
+        var task2 = Task.Run(() => _repository.UpsertCustomAsync(defUser2));
+
+        Func<Task> act = async () => await Task.WhenAll(task1, task2);
+
+        // Assert
+        await act.Should().NotThrowAsync();
+
+        var (_, sort1) = await task1;
+        var (_, sort2) = await task2;
+
+        // Both should have independent sort order sequence starting from 0
+        sort1.Should().Be(0);
+        sort2.Should().Be(0);
+    }
+
+    #endregion
+
     #region Seed Helpers
 
     private async Task<(Guid MatchId, Guid SportId, string UserId, List<Guid> DefinitionIds)> SeedFullEnvironmentAsync(bool createSystemDefs)
