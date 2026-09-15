@@ -96,11 +96,11 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> returns 
-    /// an empty collection when the specified match does not exist in the database.
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> throws a 
+    /// <see cref="Npgsql.PostgresException" /> when the specified match does not exist in the database.
     /// </summary>
     [Fact]
-    public async Task GetMatchEventDefinitionsAsync_ShouldReturnEmpty_WhenMatchDoesNotExist()
+    public async Task GetMatchEventDefinitionsAsync_ShouldThrowPostgresException_WhenMatchDoesNotExist()
     {
         // Arrange
         var nonExistentMatchId = Guid.NewGuid();
@@ -109,7 +109,8 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         Func<Task> act = async () => await _repository.GetMatchEventDefinitionsAsync(nonExistentMatchId);
 
         // Assert
-        await act.Should().ThrowAsync<Exception>();
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage($"*Match with ID {nonExistentMatchId} not found.*");
     }
 
     /// <summary>
