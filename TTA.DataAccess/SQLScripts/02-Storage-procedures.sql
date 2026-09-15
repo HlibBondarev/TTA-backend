@@ -1517,6 +1517,7 @@ CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
 RETURNS SETOF public.eventdefinitions AS $$
 DECLARE
     v_now TIMESTAMPTZ := NOW();
+    v_rows INT := 0;
 BEGIN
     -- Validation: Owner ID must be provided for custom definitions
     IF p_owner_id IS NULL OR TRIM(p_owner_id) = '' THEN
@@ -1542,7 +1543,7 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Perform upsert on eventdefinitions
+    -- Perform upsert on eventdefinitions with concurrency guard against soft-deleted records
     INSERT INTO public.eventdefinitions (
         id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat
     )
@@ -1552,7 +1553,15 @@ BEGIN
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
         shortname = EXCLUDED.shortname,
-        ispositive = EXCLUDED.ispositive;
+        ispositive = EXCLUDED.ispositive
+    WHERE eventdefinitions.issoftdeleted = FALSE;
+
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+    IF v_rows = 0 THEN
+        RAISE EXCEPTION 'Cannot update or reuse a soft-deleted event definition.'
+            USING ERRCODE = 'P0001';
+    END IF;
 
     -- Automatically add the custom definition into the user's active preset if not already present
     INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
