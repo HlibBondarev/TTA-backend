@@ -284,6 +284,35 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         }
     }
 
+    /// <summary>
+    /// Verifies that <c>POST /api/sports/{sportId}/event-definitions/custom</c> returns HTTP 409 Conflict 
+    /// when attempting to create a custom event definition with an identifier of an existing soft-deleted record.
+    /// </summary>
+    [Fact]
+    public async Task CreateCustomEventDefinition_ShouldReturnConflict_WhenReusingSoftDeletedId()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(sportId, $"Sport_{Guid.NewGuid():N}", "SPT", configId);
+        await SeedUserAsync(TestUserId, "creator@test.com", "Creator User");
+
+        var customDefId = await SeedEventDefinitionAsync(sportId, "Deleted Action", "DEL", isPositive: true, ownerId: TestUserId, isSoftDeleted: true);
+
+        var request = new CreateCustomEventDefinitionRequest(
+            Id: customDefId,
+            Name: "Attempted Reused Action",
+            ShortName: "ARA",
+            IsPositive: false
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{sportId}/event-definitions/custom", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
     #endregion
 
     #region SaveUserEventPreset Tests
@@ -381,7 +410,13 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         await conn.ExecuteAsync(sql, new { id = userId, email, name = displayName });
     }
 
-    private async Task<Guid> SeedEventDefinitionAsync(Guid sportId, string name, string shortName, bool isPositive, string? ownerId)
+    private async Task<Guid> SeedEventDefinitionAsync(
+        Guid sportId,
+        string name,
+        string shortName,
+        bool isPositive,
+        string? ownerId,
+        bool isSoftDeleted = false)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
@@ -389,9 +424,9 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
 
         const string sql = @"
             INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat)
-            VALUES (@id, @sportId, @ownerId, @name, @shortName, @isPositive, false, NOW())";
+            VALUES (@id, @sportId, @ownerId, @name, @shortName, @isPositive, @isSoftDeleted, NOW())";
 
-        await conn.ExecuteAsync(sql, new { id, sportId, ownerId, name, shortName, isPositive });
+        await conn.ExecuteAsync(sql, new { id, sportId, ownerId, name, shortName, isPositive, isSoftDeleted });
         return id;
     }
 

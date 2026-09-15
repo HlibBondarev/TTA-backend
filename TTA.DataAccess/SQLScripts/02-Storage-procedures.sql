@@ -1530,6 +1530,12 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
+    -- Validation: Cannot update or reuse a soft-deleted event definition (preserves historical game events)
+    IF EXISTS (SELECT 1 FROM public.eventdefinitions WHERE id = p_id AND issoftdeleted = TRUE) THEN
+        RAISE EXCEPTION 'Cannot update or reuse a soft-deleted event definition.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
     -- Validation: Ownership check if updating an existing custom definition
     IF EXISTS (SELECT 1 FROM public.eventdefinitions WHERE id = p_id AND ownerid <> p_owner_id) THEN
         RAISE EXCEPTION 'Access denied: You are not the owner of this event definition.'
@@ -1546,8 +1552,7 @@ BEGIN
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
         shortname = EXCLUDED.shortname,
-        ispositive = EXCLUDED.ispositive,
-        issoftdeleted = FALSE;
+        ispositive = EXCLUDED.ispositive;
 
     -- Automatically add the custom definition into the user's active preset if not already present
     INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)

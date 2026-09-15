@@ -105,10 +105,12 @@ public class SportsController(
     /// <response code="201">Returns the created custom event definition.</response>
     /// <response code="400">If the request payload is invalid.</response>
     /// <response code="401">If the user is not authenticated.</response>
+    /// <response code="409">If a business rule is violated (e.g. attempting to modify system default or soft-deleted definitions).</response>
     [HttpPost("{sportId:guid}/event-definitions/custom")]
     [ProducesResponseType(typeof(EventDefinitionResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> CreateCustomEventDefinition(
         [FromRoute] Guid sportId,
         [FromBody] CreateCustomEventDefinitionRequest request,

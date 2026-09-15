@@ -1,8 +1,10 @@
 ﻿using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
+using Npgsql;
 using TTA.BusinessLogic.Features.EventDefinitions.Commands;
 using TTA.BusinessLogic.Features.EventDefinitions.Handlers;
+using TTA.Common.Exceptions;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 
@@ -149,5 +151,36 @@ public class CreateCustomEventDefinitionHandlerTests
 
         // Assert
         _repositoryMock.Verify(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), cancellationToken), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> catches a <see cref="PostgresException"/>
+    /// with SQLSTATE P0001 and throws a < see cref="ConflictException"/ >.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldThrowConflictException_WhenDatabaseRuleFails()
+    {
+        // Arrange
+        var command = new CreateCustomEventDefinitionCommand(
+            Id: Guid.NewGuid(),
+            SportId: Guid.NewGuid(),
+            OwnerId: "user-123",
+            Name: "Custom Action",
+            ShortName: "CA",
+            IsPositive: true
+        );
+
+        var postgresException = new PostgresException("Cannot update or reuse a soft-deleted event definition.", "ERROR", "ERROR", "P0001");
+
+        _repositoryMock
+            .Setup(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(postgresException);
+
+        // Act
+        Func<Task> act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("Cannot update or reuse a soft-deleted event definition.");
     }
 }

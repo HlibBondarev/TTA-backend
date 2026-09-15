@@ -198,6 +198,52 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         result.IsPositive.Should().BeTrue();
     }
 
+    /// < summary >
+    /// Verifies that < see cref="EventDefinitionRepository.UpsertCustomAsync"/ > throws PostgresException (P0001)
+    /// when attempting to reuse an event definition identifier whose existing record has IsSoftDeleted set to true.
+    /// < /summary >
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenReusingSoftDeletedDefinitionId()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var customDefId = Guid.NewGuid();
+        var entity = new EventDefinition
+        {
+            Id = customDefId,
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Original Custom Action",
+            ShortName = "OCA",
+            IsPositive = true,
+            IsSoftDeleted = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(entity);
+        await _repository.SoftDeleteAsync(customDefId, userId);
+
+        var reusedEntity = new EventDefinition
+        {
+            Id = customDefId, // Attempting to reuse soft-deleted ID
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Attempt Reused Action",
+            ShortName = "ARA",
+            IsPositive = false,
+            IsSoftDeleted = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(reusedEntity);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*Cannot update or reuse a soft-deleted event definition*");
+    }
+
     #endregion
 
     #region SoftDeleteAsync Tests
