@@ -60,4 +60,22 @@ public class SaveUserEventPresetRequestValidatorTests
         result.ShouldHaveValidationErrorFor(x => x.EventDefinitionIds)
             .WithErrorMessage("Event definition IDs collection cannot be null.");
     }
+
+    /// <summary>
+    /// Verifies that an error is triggered when the event definition IDs collection contains duplicate values.
+    /// </summary>
+    [Fact]
+    public void Should_Have_Error_When_EventDefinitionIds_Contains_Duplicates()
+    {
+        // Arrange
+        var duplicateId = Guid.NewGuid();
+        var request = new SaveUserEventPresetRequest(new[] { duplicateId, duplicateId });
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldHaveValidationErrorFor(x => x.EventDefinitionIds)
+            .WithErrorMessage("Event definition IDs collection cannot contain duplicate values.");
+    }
 }
