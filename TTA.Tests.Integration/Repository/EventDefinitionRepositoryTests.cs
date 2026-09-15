@@ -115,7 +115,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that GetMatchEventDefinitionsAsync filters out custom definitions 
-    /// owned by other users during match hydration.
+    /// owned by other users during match hydration, even if linked in user presets.
     /// </summary>
     [Fact]
     public async Task GetMatchEventDefinitionsAsync_ShouldExcludeCustomDefinitionsOfOtherUsers()
@@ -132,8 +132,11 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
                 VALUES (@userId, 'other@tta.com', 'Other User', NOW());
 
                 INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, createdat)
-                VALUES (@defId, @sportId, @userId, 'Foreign Action', 'FRG', true, NOW());",
-                new { userId = otherUserId, defId = foreignDefId, sportId });
+                VALUES (@defId, @sportId, @userId, 'Foreign Action', 'FRG', true, NOW());
+
+                INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
+                VALUES (@currentUserId, @defId, 0, NOW());",
+                new { userId = otherUserId, defId = foreignDefId, sportId, currentUserId = userId });
         }
 
         // Act
