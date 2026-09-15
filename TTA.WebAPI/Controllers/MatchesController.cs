@@ -476,10 +476,12 @@ public class MatchesController(
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A collection of event definitions allowed for the match.</returns>
     /// <response code="200">Returns the list of event definitions.</response>
+    /// <response code="404">If the specified match does not exist.</response>
     [AllowAnonymous]
     [HttpGet("{matchId:guid}/event-definitions")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [ProducesResponseType(typeof(IEnumerable<EventDefinitionResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetEventDefinitionsForMatch([FromRoute] Guid matchId, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Retrieving event definitions for match {MatchId}.", matchId);

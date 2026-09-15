@@ -687,6 +687,91 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetEventDefinitionsForMatch"/> 
+    /// excludes soft-deleted event definitions from the response.
+    /// </summary>
+    [Fact]
+    public async Task GetEventDefinitionsForMatch_ShouldExcludeSoftDeletedDefinitions()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC SoftDel");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC SoftDel");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-EVDEF-SD");
+
+        var activeDefId = await SeedEventDefinitionAsync(context.SportId, "Active Action", true);
+        var softDeletedDefId = Guid.NewGuid();
+
+        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat)
+                VALUES (@id, @sportId, NULL, 'Deleted Action', 'DEL', false, true, NOW())",
+                new { id = softDeletedDefId, sportId = context.SportId });
+        }
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/event-definitions");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+
+        result.Should().NotBeNull();
+        var definitions = result!.ToList();
+        definitions.Should().ContainSingle(d => d.Id == activeDefId);
+        definitions.Should().NotContain(d => d.Id == softDeletedDefId);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetEventDefinitionsForMatch"/> 
+    /// excludes custom event definitions created by other users.
+    /// </summary>
+    [Fact]
+    public async Task GetEventDefinitionsForMatch_ShouldExcludeCustomDefinitionsOfOtherUsers()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC OtherUser");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC OtherUser");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-EVDEF-OU");
+
+        var sysDefId = await SeedEventDefinitionAsync(context.SportId, "System Action", true);
+
+        var otherUserId = $"auth0|other-user-{Guid.NewGuid():N}";
+        var foreignCustomDefId = Guid.NewGuid();
+
+        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.users (id, email, displayname, createdat)
+                VALUES (@userId, 'other@example.com', 'Other User', NOW());
+
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat)
+                VALUES (@defId, @sportId, @userId, 'Foreign Action', 'FRG', true, false, NOW());",
+                new { userId = otherUserId, defId = foreignCustomDefId, sportId = context.SportId });
+        }
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/event-definitions");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+
+        result.Should().NotBeNull();
+        var definitions = result!.ToList();
+        definitions.Should().ContainSingle(d => d.Id == sysDefId);
+        definitions.Should().NotContain(d => d.Id == foreignCustomDefId);
+    }
+
     #endregion
 
     #region Game Events Tests
