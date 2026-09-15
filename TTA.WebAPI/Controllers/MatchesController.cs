@@ -448,6 +448,7 @@ public class MatchesController(
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A collection of detailed match responses tracked by the user.</returns>
     [HttpGet("catch")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [ProducesResponseType(typeof(IEnumerable<MatchWithDetailsResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<IEnumerable<MatchWithDetailsResponse>>> GetCatchedMatches(
@@ -477,6 +478,7 @@ public class MatchesController(
     /// <response code="200">Returns the list of event definitions.</response>
     [AllowAnonymous]
     [HttpGet("{matchId:guid}/event-definitions")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [ProducesResponseType(typeof(IEnumerable<EventDefinitionResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetEventDefinitionsForMatch([FromRoute] Guid matchId, CancellationToken cancellationToken)
     {
