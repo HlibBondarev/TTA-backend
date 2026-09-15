@@ -255,6 +255,47 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             .WithMessage("*Cannot update or reuse a soft-deleted event definition*");
     }
 
+    /// < summary >
+    /// Verifies that sequential insertions of custom event definitions for the same user and sport
+    /// dynamically assign incremental preset SortOrder values (0, 1, ...).
+    /// < /summary >
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldAssignIncrementalSortOrder_ForMultipleCustomDefinitions()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var firstDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "First Tactical Block",
+            ShortName = "BLK1",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var secondDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Second Tactical Block",
+            ShortName = "BLK2",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var (_, firstSortOrder) = await _repository.UpsertCustomAsync(firstDef);
+        var (_, secondSortOrder) = await _repository.UpsertCustomAsync(secondDef);
+
+        // Assert
+        firstSortOrder.Should().Be(0);
+        secondSortOrder.Should().Be(1);
+    }
+
     #endregion
 
     #region SoftDeleteAsync Tests

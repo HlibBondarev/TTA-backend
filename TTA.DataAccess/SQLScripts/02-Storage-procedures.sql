@@ -1503,7 +1503,7 @@ END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
  * Upserts a custom user event definition and automatically enables it inside 
- * the user's active preset for the sport.
+ * the user's active preset for the sport with the next available sort order position.
  * Validates ownership and prohibits modifying system default definitions.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
@@ -1518,6 +1518,7 @@ RETURNS SETOF public.eventdefinitions AS $$
 DECLARE
     v_now TIMESTAMPTZ := NOW();
     v_rows INT := 0;
+    v_next_sort_order INT := 0;
 BEGIN
     -- Validation: Owner ID must be provided for custom definitions
     IF p_owner_id IS NULL OR TRIM(p_owner_id) = '' THEN
@@ -1563,9 +1564,15 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
+    -- Calculate the next available sortorder position for this user and sport
+    SELECT COALESCE(MAX(uep.sortorder) + 1, 0) INTO v_next_sort_order
+    FROM public.usereventpresets uep
+    INNER JOIN public.eventdefinitions ed ON uep.eventdefinitionid = ed.id
+    WHERE uep.userid = p_owner_id AND ed.sportid = p_sport_id;
+
     -- Automatically add the custom definition into the user's active preset if not already present
     INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
-    VALUES (p_owner_id, p_id, 0, v_now)
+    VALUES (p_owner_id, p_id, v_next_sort_order, v_now)
     ON CONFLICT (userid, eventdefinitionid) DO NOTHING;
 
     RETURN QUERY
