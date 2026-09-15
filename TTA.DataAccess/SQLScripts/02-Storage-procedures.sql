@@ -1633,6 +1633,9 @@ RETURNS VOID AS $$
 DECLARE
     v_invalid_count INT := 0;
 BEGIN
+    -- 0. Acquire transaction-scoped advisory lock for user and sport context
+    PERFORM pg_advisory_xact_lock(hashtext(p_user_id), hashtext(p_sport_id::text));
+
     -- Validate provided event definition IDs if input array is non-empty
     IF p_event_definition_ids IS NOT NULL AND CARDINALITY(p_event_definition_ids) > 0 THEN
         SELECT COUNT(*) INTO v_invalid_count

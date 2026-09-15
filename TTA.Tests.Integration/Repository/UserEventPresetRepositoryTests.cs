@@ -163,6 +163,39 @@ public class UserEventPresetRepositoryTests : BaseIntegrationTest
             .Where(ex => ex.SqlState == "P0001");
     }
 
+    /// <summary>
+    /// Verifies that concurrent calls to SavePresetAsync for the same user and sport 
+    /// are correctly serialized by Postgres advisory locks without throwing exceptions.
+    /// </summary>
+    [Fact]
+    public async Task SavePresetAsync_ShouldHandleConcurrentUpdates_WithoutRaceConditions()
+    {
+        // Arrange
+        var (userId, sportId, definitionIds) = await SeedPresetEnvironmentAsync(defCount: 2);
+        var preset1 = new[] { definitionIds[0] };
+        var preset2 = new[] { definitionIds[1] };
+
+        // Act & Assert
+        Func<Task> act = async () =>
+        {
+            var task1 = Task.Run(async () =>
+            {
+                var repo = new UserEventPresetRepository(Fixture.ConnectionFactory);
+                await repo.SavePresetAsync(userId, sportId, preset1);
+            });
+
+            var task2 = Task.Run(async () =>
+            {
+                var repo = new UserEventPresetRepository(Fixture.ConnectionFactory);
+                await repo.SavePresetAsync(userId, sportId, preset2);
+            });
+
+            await Task.WhenAll(task1, task2);
+        };
+
+        await act.Should().NotThrowAsync();
+    }
+
     #endregion
 
     #region Seed Helpers
