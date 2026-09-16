@@ -1526,6 +1526,9 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
+    -- Acquire transaction-scoped advisory lock for target definition ID to prevent concurrent creation races
+    PERFORM pg_advisory_xact_lock(hashtext(p_id::text));
+
     -- Acquire transaction-scoped advisory lock for user and sport context
     PERFORM pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_sport_id::text));
 
@@ -1570,7 +1573,7 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Perform upsert on eventdefinitions with concurrency guard against soft-deleted records
+    -- Perform upsert on eventdefinitions with concurrency guard against soft-deleted records and unowned IDs
     INSERT INTO public.eventdefinitions (
         id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat
     )
@@ -1581,7 +1584,7 @@ BEGIN
         name = EXCLUDED.name,
         shortname = EXCLUDED.shortname,
         ispositive = EXCLUDED.ispositive
-    WHERE eventdefinitions.issoftdeleted = FALSE;
+    WHERE eventdefinitions.issoftdeleted = FALSE AND eventdefinitions.ownerid = p_owner_id;
 
     GET DIAGNOSTICS v_rows = ROW_COUNT;
 

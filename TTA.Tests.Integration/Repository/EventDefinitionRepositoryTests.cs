@@ -331,6 +331,56 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         secondSortOrder.Should().Be(1);
     }
 
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> throws PostgresException (P0001)
+    /// when a user attempts to upsert a custom event definition owned by another user.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenUserIsNotOwner()
+    {
+        // Arrange
+        var (_, sportId, ownerUserId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var otherUserId = "other-user-" + Guid.NewGuid().ToString("N")[..8];
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, 'other@example.com', 'Other User', NOW())",
+                new { id = otherUserId });
+        }
+
+        var customDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = ownerUserId,
+            Name = "Original Action",
+            ShortName = "OA",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(customDef);
+
+        // Act: Attempt to modify the same definition ID using a different owner ID
+        var unauthorizedDef = new EventDefinition
+        {
+            Id = customDef.Id,
+            SportId = sportId,
+            OwnerId = otherUserId,
+            Name = "Original Action",
+            ShortName = "OA",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(unauthorizedDef);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .Where(ex => ex.SqlState == "P0001" && ex.MessageText.Contains("Access denied"));
+    }
+
     #endregion
 
     #region SoftDeleteAsync Tests
