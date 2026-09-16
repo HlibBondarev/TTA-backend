@@ -28,24 +28,18 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
-        var created = await connection.QueryFirstOrDefaultAsync<EventDefinition>(new CommandDefinition(
-            SqlStatements.ForEventDefinitions.UpsertCustomEventDefinition,
+        using var multi = await connection.QueryMultipleAsync(new CommandDefinition(
+            SqlStatements.ForEventDefinitions.UpsertCustomEventDefinitionWithSortOrder,
             parameters,
             cancellationToken: cancellationToken));
 
+        var created = await multi.ReadFirstOrDefaultAsync<EventDefinition>();
         if (created == null)
         {
             return (null, 0);
         }
 
-        var presetParameters = new DynamicParameters();
-        presetParameters.Add(UserIdParameter, entity.OwnerId);
-        presetParameters.Add("p_event_definition_id", entity.Id);
-
-        var sortOrder = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
-            SqlStatements.ForUserEventPresets.GetUserEventPresetSortOrder,
-            presetParameters,
-            cancellationToken: cancellationToken));
+        var sortOrder = await multi.ReadSingleOrDefaultAsync<int>();
 
         return (created, sortOrder);
     }

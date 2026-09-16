@@ -412,6 +412,17 @@ public static class SqlStatements
             );";
 
         /// <summary>
+        /// Batched SQL statement to upsert a custom user event definition and retrieve its preset sort order in a single roundtrip.
+        /// </summary>
+        public const string UpsertCustomEventDefinitionWithSortOrder = @"
+            SELECT * FROM public.upsert_custom_event_definition(
+                @p_id, @p_sport_id, @p_owner_id, @p_name, @p_short_name, @p_is_positive
+            );
+            SELECT public.get_user_event_preset_sort_order(
+                @p_owner_id, @p_id
+            );";
+
+        /// <summary>
         /// SQL statement to soft delete a custom user event definition.
         /// </summary>
         public const string SoftDeleteEventDefinition = @"
