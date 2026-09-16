@@ -396,6 +396,40 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         result.Should().BeFalse();
     }
 
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.SoftDeleteAsync"/> returns false when 
+    /// attempting to soft-delete an event definition that has already been soft-deleted.
+    /// </summary>
+    [Fact]
+    public async Task SoftDeleteAsync_ShouldReturnFalse_WhenAlreadySoftDeleted()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var customDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Already Deleted Action",
+            ShortName = "ADA",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(customDef);
+
+        // First call soft-deletes the record and returns true
+        var firstDeleteResult = await _repository.SoftDeleteAsync(customDef.Id, userId);
+        firstDeleteResult.Should().BeTrue();
+
+        // Act: Attempt to soft-delete the same definition a second time
+        var secondDeleteResult = await _repository.SoftDeleteAsync(customDef.Id, userId);
+
+        // Assert: Second attempt must return false as row is no longer active
+        secondDeleteResult.Should().BeFalse();
+    }
+
     #endregion
 
     #region GetAvailableForUserAsync Tests

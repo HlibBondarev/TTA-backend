@@ -1635,7 +1635,7 @@ BEGIN
     -- Set soft delete flag to preserve historical gameevents references
     UPDATE public.eventdefinitions
     SET issoftdeleted = TRUE
-    WHERE id = p_id AND ownerid = p_user_id;
+    WHERE id = p_id AND ownerid = p_user_id AND issoftdeleted = FALSE;
 
     v_deleted := FOUND;
 
