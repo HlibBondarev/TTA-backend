@@ -629,6 +629,48 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         sort2.Should().Be(0);
     }
 
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> throws PostgresException (P0001)
+    /// when attempting to create a custom event definition with a duplicate active name for the same user and sport.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenDuplicateActiveNameExistsForUserAndSport()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var existingDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Duplicate Action Name",
+            ShortName = "ACT1",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(existingDef);
+
+        var duplicateDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Duplicate Action Name", // Duplicate active name
+            ShortName = "ACT2",
+            IsPositive = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(duplicateDef);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*An active custom event definition with this name already exists for the sport.*");
+    }
+
     #endregion
 
     #region Seed Helpers

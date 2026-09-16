@@ -1547,6 +1547,19 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
+    -- Validation: Active name must stay unique per owner and sport
+    IF EXISTS (
+        SELECT 1 FROM public.eventdefinitions
+        WHERE sportid = p_sport_id
+          AND ownerid = p_owner_id
+          AND name = p_name
+          AND issoftdeleted = FALSE
+          AND id <> p_id
+    ) THEN
+        RAISE EXCEPTION 'An active custom event definition with this name already exists for the sport.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
     -- Perform upsert on eventdefinitions with concurrency guard against soft-deleted records
     INSERT INTO public.eventdefinitions (
         id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat

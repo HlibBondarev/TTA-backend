@@ -185,4 +185,40 @@ public class CreateCustomEventDefinitionHandlerTests
         await act.Should().ThrowAsync<ConflictException>()
             .WithMessage("Cannot update or reuse a soft-deleted event definition.");
     }
+
+    /// <summary>
+    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> throws <see cref="ConflictException"/>
+    /// when the underlying repository throws a PostgreSQL P0001 exception due to a duplicate active name.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldThrowConflictException_WhenRepositoryThrowsP0001PostgresException()
+    {
+        // Arrange
+        var command = new CreateCustomEventDefinitionCommand(
+            Id: Guid.NewGuid(),
+            SportId: Guid.NewGuid(),
+            OwnerId: "auth0|test-user",
+            Name: "Duplicate Action",
+            ShortName: "DUP",
+            IsPositive: true
+        );
+
+        var postgresException = new PostgresException(
+            "An active custom event definition with this name already exists for the sport.",
+            "ERROR",
+            "ERROR",
+            "P0001"
+        );
+
+        _repositoryMock
+            .Setup(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(postgresException);
+
+        // Act
+        Func<Task> act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("*An active custom event definition with this name already exists for the sport.*");
+    }
 }
