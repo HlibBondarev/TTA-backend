@@ -192,11 +192,11 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> updates an existing custom event definition
-    /// and returns its current preset sort order.
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> is idempotent when re-posting 
+    /// an existing custom event definition with identical attributes and returns its current preset sort order.
     /// </summary>
     [Fact]
-    public async Task UpsertCustomAsync_ShouldUpdateExistingCustomEventDefinition()
+    public async Task UpsertCustomAsync_ShouldBeIdempotentAndReturnSortOrder_WhenRePostingExistingCustomEventDefinition()
     {
         // Arrange
         var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
@@ -206,15 +206,15 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Id = Guid.NewGuid(),
             SportId = sportId,
             OwnerId = userId,
-            Name = "Initial Name",
-            ShortName = "INIT",
-            IsPositive = false,
+            Name = "Tactical Move",
+            ShortName = "MOVE",
+            IsPositive = true,
             CreatedAt = DateTime.UtcNow
         };
 
         await _repository.UpsertCustomAsync(customDef);
 
-        // Manually set preset sort order to 3 to verify update retrieves existing sort order
+        // Manually set preset sort order to 3 to verify idempotent re-post retrieves existing sort order
         using (var conn = Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.ExecuteAsync(
@@ -222,24 +222,24 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
                 new { userId, defId = customDef.Id });
         }
 
-        var updatedDef = new EventDefinition
+        var rePostedDef = new EventDefinition
         {
-            Id = customDef.Id,
+            Id = customDef.Id, // Same ID
             SportId = sportId,
             OwnerId = userId,
-            Name = "Updated Name",
-            ShortName = "UPD",
+            Name = "Tactical Move", // Identical attributes for idempotency
+            ShortName = "MOVE",
             IsPositive = true,
             CreatedAt = DateTime.UtcNow
         };
 
         // Act
-        var (result, sortOrder) = await _repository.UpsertCustomAsync(updatedDef);
+        var (result, sortOrder) = await _repository.UpsertCustomAsync(rePostedDef);
 
         // Assert
         result.Should().NotBeNull();
-        result!.Name.Should().Be("Updated Name");
-        result.ShortName.Should().Be("UPD");
+        result!.Name.Should().Be("Tactical Move");
+        result.ShortName.Should().Be("MOVE");
         result.IsPositive.Should().BeTrue();
         sortOrder.Should().Be(3);
     }
@@ -669,6 +669,48 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         // Assert
         await act.Should().ThrowAsync<Npgsql.PostgresException>()
             .WithMessage("*An active custom event definition with this name already exists for the sport.*");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> throws PostgresException (P0001)
+    /// when attempting to modify semantic fields (name, shortname, ispositive) of an existing active custom definition.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenModifyingExistingDefinitionAttributes()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var existingDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Initial Name",
+            ShortName = "INIT",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(existingDef);
+
+        var modifiedDef = new EventDefinition
+        {
+            Id = existingDef.Id, // Same ID
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Modified Name", // Attempting to change attribute
+            ShortName = "INIT",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(modifiedDef);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*Modifying existing custom event definition attributes is prohibited.*");
     }
 
     #endregion

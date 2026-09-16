@@ -1547,6 +1547,16 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
+    -- Validation: Existing definition cannot change immutable semantic attributes (name, shortname, ispositive)
+    IF EXISTS (
+        SELECT 1 FROM public.eventdefinitions
+        WHERE id = p_id
+          AND (name <> p_name OR shortname <> p_short_name OR ispositive <> p_is_positive)
+    ) THEN
+        RAISE EXCEPTION 'Modifying existing custom event definition attributes is prohibited. Create a new event definition instead.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
     -- Validation: Active name must stay unique per owner and sport
     IF EXISTS (
         SELECT 1 FROM public.eventdefinitions
