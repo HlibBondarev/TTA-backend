@@ -145,10 +145,12 @@ public class SportsController(
     /// <response code="200">If the preset was successfully saved.</response>
     /// <response code="400">If the request payload is invalid.</response>
     /// <response code="401">If the user is not authenticated.</response>
+    /// <response code="409">If an event definition ID is invalid, soft-deleted, or unauthorized.</response>
     [HttpPut("{sportId:guid}/event-definitions/preset")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> SaveUserEventPreset(
         [FromRoute] Guid sportId,
         [FromBody] SaveUserEventPresetRequest request,

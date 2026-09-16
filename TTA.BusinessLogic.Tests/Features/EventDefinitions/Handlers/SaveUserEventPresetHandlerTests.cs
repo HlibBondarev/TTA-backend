@@ -1,13 +1,16 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Moq;
+using Npgsql;
 using TTA.BusinessLogic.Features.EventDefinitions.Commands;
 using TTA.BusinessLogic.Features.EventDefinitions.Handlers;
+using TTA.Common.Exceptions;
 using TTA.DataAccess.Repository.Api;
 
 namespace TTA.BusinessLogic.Tests.Features.EventDefinitions.Handlers;
 
 /// <summary>
-/// Unit tests for <see cref="SaveUserEventPresetHandler"/>.
+/// Unit tests for < see cref="SaveUserEventPresetHandler" />.
 /// </summary>
 public class SaveUserEventPresetHandlerTests
 {
@@ -73,5 +76,32 @@ public class SaveUserEventPresetHandlerTests
 
         // Assert
         _repositoryMock.Verify(r => r.SavePresetAsync(userId, sportId, eventDefIds, cancellationToken), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="SaveUserEventPresetHandler.Handle"/> catches PostgresException with P0001
+    /// and throws a ConflictException.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldThrowConflictException_WhenPostgresExceptionP0001IsRaised()
+    {
+        // Arrange
+        var userId = "auth0|user123";
+        var sportId = Guid.NewGuid();
+        var eventDefIds = new List<Guid> { Guid.NewGuid() };
+        var command = new SaveUserEventPresetCommand(userId, sportId, eventDefIds);
+
+        var postgresException = new PostgresException("Invalid event definition ID", "ERROR", "ERROR", "P0001");
+
+        _repositoryMock
+            .Setup(r => r.SavePresetAsync(userId, sportId, eventDefIds, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(postgresException);
+
+        // Act
+        Func<Task> act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("Invalid event definition ID");
     }
 }

@@ -398,6 +398,32 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         }
     }
 
+    /// <summary>
+    /// Verifies that <c>PUT /api/sports/{sportId}/event-definitions/preset</c> returns HTTP 409 Conflict 
+    /// when the request contains an invalid, soft-deleted, or unauthorized event definition ID.
+    /// </summary>
+    [Fact]
+    public async Task SaveUserEventPreset_ShouldReturnConflict_WhenEventDefinitionIsInvalidOrUnauthorized()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(sportId, $"Sport_{Guid.NewGuid():N}", "SPT", configId);
+        await SeedUserAsync(TestUserId, "preset.user@test.com", "Preset User");
+
+        var foreignUser = $"auth0|other-user-{Guid.NewGuid():N}";
+        await SeedUserAsync(foreignUser, "other@test.com", "Other User");
+        var foreignDefId = await SeedEventDefinitionAsync(sportId, "Foreign Action", "FRG", isPositive: true, ownerId: foreignUser);
+
+        var request = new SaveUserEventPresetRequest(new[] { foreignDefId });
+
+        // Act
+        var response = await Client.PutAsJsonAsync($"{BaseUrl}/{sportId}/event-definitions/preset", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
     #endregion
 
     #region Helper Seed Methods

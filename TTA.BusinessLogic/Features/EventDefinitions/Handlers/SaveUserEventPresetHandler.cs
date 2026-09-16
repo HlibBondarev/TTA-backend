@@ -1,6 +1,8 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using TTA.BusinessLogic.Features.EventDefinitions.Commands;
+using TTA.Common.Exceptions;
 using TTA.DataAccess.Repository.Api;
 
 namespace TTA.BusinessLogic.Features.EventDefinitions.Handlers;
@@ -30,11 +32,19 @@ public class SaveUserEventPresetHandler(
     {
         _logger.LogInformation("Saving event definition preset for User {UserId} and Sport {SportId}.", request.UserId, request.SportId);
 
-        await _userEventPresetRepository.SavePresetAsync(
-            request.UserId,
-            request.SportId,
-            request.EventDefinitionIds,
-            cancellationToken);
+        try
+        {
+            await _userEventPresetRepository.SavePresetAsync(
+                request.UserId,
+                request.SportId,
+                request.EventDefinitionIds,
+                cancellationToken);
+        }
+        catch (PostgresException ex) when (ex.SqlState == "P0001")
+        {
+            _logger.LogWarning(ex, "Failed to save event definition preset due to invalid or unauthorized definition IDs for User {UserId}.", request.UserId);
+            throw new ConflictException(ex.MessageText, ex);
+        }
 
         _logger.LogInformation("Successfully saved event definition preset for User {UserId} and Sport {SportId}.", request.UserId, request.SportId);
     }
