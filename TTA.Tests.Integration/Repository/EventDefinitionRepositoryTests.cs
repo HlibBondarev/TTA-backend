@@ -713,6 +713,48 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             .WithMessage("*Modifying existing custom event definition attributes is prohibited.*");
     }
 
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> throws PostgresException (P0001)
+    /// when attempting to modify the immutable SportId attribute of an existing custom definition.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenModifyingSportId()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var existingDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Tactical Pass",
+            ShortName = "PASS",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(existingDef);
+
+        var modifiedDef = new EventDefinition
+        {
+            Id = existingDef.Id, // Same ID
+            SportId = Guid.NewGuid(), // Attempting to change immutable SportId
+            OwnerId = userId,
+            Name = "Tactical Pass",
+            ShortName = "PASS",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(modifiedDef);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*Modifying existing custom event definition attributes is prohibited.*");
+    }
+
     #endregion
 
     #region Seed Helpers
