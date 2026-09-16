@@ -446,7 +446,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     #region Concurrency & Advisory Lock Tests
 
     /// <summary>
-    /// Verifies that concurrent calls to <see cref="EventDefinitionRepository.UpsertCustomAsync" /> for the same user and sport 
+    /// Verifies that concurrent calls to <see cref="EventDefinitionRepository.UpsertCustomAsync"/> for the same user and sport 
     /// are properly serialized via PostgreSQL advisory locks, preventing sort order race conditions or database deadlocks.
     /// </summary>
     [Fact]
@@ -477,9 +477,22 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             CreatedAt = DateTime.UtcNow
         };
 
-        // Act: Run both upsert operations concurrently using separate connections managed inside repository methods
-        var task1 = Task.Run(() => _repository.UpsertCustomAsync(firstDef));
-        var task2 = Task.Run(() => _repository.UpsertCustomAsync(secondDef));
+        var startGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Act: Synchronize both upsert operations with a shared start gate to guarantee simultaneous release
+        var task1 = Task.Run(async () =>
+        {
+            await startGate.Task;
+            return await _repository.UpsertCustomAsync(firstDef);
+        });
+
+        var task2 = Task.Run(async () =>
+        {
+            await startGate.Task;
+            return await _repository.UpsertCustomAsync(secondDef);
+        });
+
+        startGate.SetResult(true);
 
         Func<Task> act = async () => await Task.WhenAll(task1, task2);
 
@@ -507,8 +520,8 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that concurrent calls to <see cref="EventDefinitionRepository.UpsertCustomAsync" /> and 
-    /// <see cref="EventDefinitionRepository.SoftDeleteAsync" /> for the same user/sport execute safely in parallel without conflicts.
+    /// Verifies that concurrent calls to <see cref="EventDefinitionRepository.UpsertCustomAsync"/> and 
+    /// <see cref="EventDefinitionRepository.SoftDeleteAsync"/> for the same user/sport execute safely in parallel without conflicts.
     /// </summary>
     [Fact]
     public async Task UpsertAndSoftDelete_ConcurrentOperations_ShouldSerializeWithAdvisoryLockWithoutErrors()
@@ -541,9 +554,22 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             CreatedAt = DateTime.UtcNow
         };
 
-        // Act: Run SoftDelete on existing definition and Upsert on new definition in parallel
-        var deleteTask = Task.Run(() => _repository.SoftDeleteAsync(existingDefId, userId));
-        var upsertTask = Task.Run(() => _repository.UpsertCustomAsync(newDef));
+        var startGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Act: Synchronize SoftDelete and Upsert with a shared start gate
+        var deleteTask = Task.Run(async () =>
+        {
+            await startGate.Task;
+            return await _repository.SoftDeleteAsync(existingDefId, userId);
+        });
+
+        var upsertTask = Task.Run(async () =>
+        {
+            await startGate.Task;
+            return await _repository.UpsertCustomAsync(newDef);
+        });
+
+        startGate.SetResult(true);
 
         Func<Task> act = async () => await Task.WhenAll(deleteTask, upsertTask);
 

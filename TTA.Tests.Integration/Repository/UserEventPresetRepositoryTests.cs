@@ -176,21 +176,26 @@ public class UserEventPresetRepositoryTests : BaseIntegrationTest
         var preset1 = new[] { definitionIds[0] };
         var preset2 = new[] { definitionIds[1] };
 
+        var startGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
         // Act
         Func<Task> act = async () =>
         {
             var task1 = Task.Run(async () =>
             {
+                await startGate.Task;
                 var repo = new UserEventPresetRepository(Fixture.ConnectionFactory);
                 await repo.SavePresetAsync(userId, sportId, preset1);
             });
 
             var task2 = Task.Run(async () =>
             {
+                await startGate.Task;
                 var repo = new UserEventPresetRepository(Fixture.ConnectionFactory);
                 await repo.SavePresetAsync(userId, sportId, preset2);
             });
 
+            startGate.SetResult(true);
             await Task.WhenAll(task1, task2);
         };
 
