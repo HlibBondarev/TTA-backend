@@ -254,7 +254,7 @@ CREATE INDEX ix_matchlineups_playerrosterid ON public.matchlineups (playerroster
 CREATE TABLE eventdefinitions (
     id UUID PRIMARY KEY,
     sportid UUID NOT NULL REFERENCES sports(id) ON DELETE CASCADE,
-    ownerid VARCHAR(64) NULL REFERENCES public.users(id) ON DELETE CASCADE, -- NULL = System default, NOT NULL = Custom user definition
+    ownerid VARCHAR(64) NULL REFERENCES public.users(id) ON DELETE RESTRICT, -- Restricted to preserve historical game events analytics
     name VARCHAR(50) NOT NULL,
     shortname VARCHAR(10) NOT NULL,
     ispositive BOOLEAN NOT NULL,
