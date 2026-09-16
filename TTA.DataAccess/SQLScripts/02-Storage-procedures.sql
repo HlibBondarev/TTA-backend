@@ -1652,8 +1652,8 @@ $$ LANGUAGE plpgsql;
 /**********************************************************************************
  * Atomically clears existing user presets for a specific sport and persists a new 
  * collection of active event definitions with matching array index layout order (sortorder).
- * Validates all supplied eventdefinition IDs against sport scope, active state,
- * and ownership authorization before modifying the database state.
+ * Validates all supplied eventdefinition IDs against duplicate entries, sport scope,
+ * active state, and ownership authorization before modifying the database state.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.save_user_event_preset(
     p_user_id VARCHAR(64),
@@ -1669,6 +1669,15 @@ BEGIN
 
     -- Validate provided event definition IDs if input array is non-empty
     IF p_event_definition_ids IS NOT NULL AND CARDINALITY(p_event_definition_ids) > 0 THEN
+        -- Check for duplicate IDs in the input array
+        IF CARDINALITY(p_event_definition_ids) <> (
+            SELECT COUNT(DISTINCT id)
+            FROM unnest(p_event_definition_ids) AS id
+        ) THEN
+            RAISE EXCEPTION 'Event definition IDs must be unique.'
+                USING ERRCODE = 'P0001';
+        END IF;
+
         SELECT COUNT(*) INTO v_invalid_count
         FROM (
             SELECT DISTINCT id FROM unnest(p_event_definition_ids) AS id

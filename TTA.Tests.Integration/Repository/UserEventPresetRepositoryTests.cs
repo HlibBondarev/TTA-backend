@@ -215,6 +215,25 @@ public class UserEventPresetRepositoryTests : BaseIntegrationTest
             "the final preset state must match exactly preset1 or preset2 without partial row mixing");
     }
 
+    /// <summary>
+    /// Verifies that <see cref="UserEventPresetRepository.SavePresetAsync"/> throws PostgresException (P0001)
+    /// when the input collection contains duplicate event definition identifiers.
+    /// </summary>
+    [Fact]
+    public async Task SavePresetAsync_ShouldThrowException_WhenDuplicateEventDefinitionIdsProvided()
+    {
+        // Arrange
+        var (userId, sportId, eventDefIds) = await SeedPresetEnvironmentAsync(defCount: 1);
+        var duplicateIds = new[] { eventDefIds[0], eventDefIds[0] };
+
+        // Act
+        Func<Task> act = async () => await _repository.SavePresetAsync(userId, sportId, duplicateIds);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .Where(ex => ex.SqlState == "P0001" && ex.MessageText.Contains("Event definition IDs must be unique"));
+    }
+
     #endregion
 
     #region Seed Helpers
