@@ -148,4 +148,48 @@ public class CreateCustomEventDefinitionRequestValidatorTests
         result.ShouldHaveValidationErrorFor(x => x.ShortName)
             .WithErrorMessage("Short name must not exceed 10 characters.");
     }
+
+    /// <summary>
+    /// Verifies that no validation error is triggered when the name is exactly at the maximum allowed length of 50 characters.
+    /// </summary>
+    [Fact]
+    public void Should_Not_Have_Error_When_Name_Is_At_Maximum_Length()
+    {
+        // Arrange
+        var maxName = new string('A', 50);
+        var request = new CreateCustomEventDefinitionRequest(
+            Id: Guid.NewGuid(),
+            Name: maxName,
+            ShortName: "CTO",
+            IsPositive: true
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldNotHaveValidationErrorFor(x => x.Name);
+    }
+
+    /// <summary>
+    /// Verifies that no validation error is triggered when the short name is exactly at the maximum allowed length of 10 characters.
+    /// </summary>
+    [Fact]
+    public void Should_Not_Have_Error_When_ShortName_Is_At_Maximum_Length()
+    {
+        // Arrange
+        var maxShortName = new string('A', 10);
+        var request = new CreateCustomEventDefinitionRequest(
+            Id: Guid.NewGuid(),
+            Name: "Custom Timeout",
+            ShortName: maxShortName,
+            IsPositive: true
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldNotHaveValidationErrorFor(x => x.ShortName);
+    }
 }
