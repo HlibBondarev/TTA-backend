@@ -193,6 +193,28 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         }
     }
 
+    /// <summary>
+    /// Verifies that <see cref="TTA.WebAPI.Controllers.SportsController.GetAvailableEventDefinitions"/> 
+    /// returns Response-Cache suppression headers (Cache-Control: no-store) in the HTTP response.
+    /// </summary>
+    [Fact]
+    public async Task GetAvailableEventDefinitions_ShouldIncludeNoStoreCacheHeader_WhenAuthenticated()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(sportId, $"Sport_{Guid.NewGuid():N}", "SPT", configId);
+        await SeedUserAsync(TestUserId, "user@test.com", "Test User");
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{sportId}/event-definitions");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Headers.CacheControl.Should().NotBeNull();
+        response.Headers.CacheControl!.NoStore.Should().BeTrue();
+    }
+
     #endregion
 
     #region CreateCustomEventDefinition Tests

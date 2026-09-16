@@ -81,6 +81,7 @@ public class SportsController(
     /// <response code="200">Returns the collection of available event definitions.</response>
     /// <response code="401">If the user is not authenticated.</response>
     [HttpGet("{sportId:guid}/event-definitions")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [ProducesResponseType(typeof(IEnumerable<EventDefinitionResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> GetAvailableEventDefinitions([FromRoute] Guid sportId, CancellationToken cancellationToken)
