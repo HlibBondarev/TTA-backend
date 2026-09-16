@@ -164,8 +164,9 @@ public class UserEventPresetRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that concurrent calls to SavePresetAsync for the same user and sport 
-    /// are correctly serialized by Postgres advisory locks without throwing exceptions.
+    /// Verifies that concurrent calls to <see cref="UserEventPresetRepository.SavePresetAsync"/> for the same user and sport 
+    /// are correctly serialized by Postgres advisory locks without throwing exceptions, leaving the final preset state matching 
+    /// exactly one of the requested preset collections.
     /// </summary>
     [Fact]
     public async Task SavePresetAsync_ShouldHandleConcurrentUpdates_WithoutRaceConditions()
@@ -175,7 +176,7 @@ public class UserEventPresetRepositoryTests : BaseIntegrationTest
         var preset1 = new[] { definitionIds[0] };
         var preset2 = new[] { definitionIds[1] };
 
-        // Act & Assert
+        // Act
         Func<Task> act = async () =>
         {
             var task1 = Task.Run(async () =>
@@ -193,7 +194,20 @@ public class UserEventPresetRepositoryTests : BaseIntegrationTest
             await Task.WhenAll(task1, task2);
         };
 
+        // Assert: Ensure execution completes without exceptions
         await act.Should().NotThrowAsync();
+
+        // Assert: Verify database integrity (final state must strictly equal preset1 OR preset2)
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var actualPresetDefIds = (await conn.QueryAsync<Guid>(
+            "SELECT eventdefinitionid FROM public.usereventpresets WHERE userid = @userId ORDER BY sortorder ASC",
+            new { userId })).ToList();
+
+        var matchesPreset1 = actualPresetDefIds.SequenceEqual(preset1);
+        var matchesPreset2 = actualPresetDefIds.SequenceEqual(preset2);
+
+        (matchesPreset1 || matchesPreset2).Should().BeTrue(
+            "the final preset state must match exactly preset1 or preset2 without partial row mixing");
     }
 
     #endregion
