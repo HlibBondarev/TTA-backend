@@ -66,7 +66,7 @@ public class GetEventDefinitionsForMatchHandlerTests
                 ShortName: "CTTA",
                 IsPositive: true,
                 IsCustom: true,
-                IsEnabled: true,
+                IsEnabled: false, // Configured IsEnabled to false for metadata assertion coverage
                 SortOrder: 2
             )
         };
@@ -87,8 +87,13 @@ public class GetEventDefinitionsForMatchHandlerTests
 
         list[0].Name.Should().Be("Goal");
         list[0].IsCustom.Should().BeFalse();
+        list[0].IsEnabled.Should().BeTrue();
+        list[0].SortOrder.Should().Be(1);
+
         list[1].Name.Should().Be("Custom TTA");
         list[1].IsCustom.Should().BeTrue();
+        list[1].IsEnabled.Should().BeFalse();
+        list[1].SortOrder.Should().Be(2);
 
         _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
         _eventDefinitionRepositoryMock.Verify(r => r.GetMatchEventDefinitionsAsync(matchId, userId, It.IsAny<CancellationToken>()), Times.Once);
