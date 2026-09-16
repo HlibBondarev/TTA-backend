@@ -104,4 +104,29 @@ public class SaveUserEventPresetHandlerTests
         await act.Should().ThrowAsync<ConflictException>()
             .WithMessage("Invalid event definition ID");
     }
+
+    /// <summary>
+    /// Verifies that <see cref="SaveUserEventPresetHandler.Handle"/> delegates persistence to the repository 
+    /// exactly once with matching parameters when the command contains an empty collection of event definition IDs.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldCallSavePresetAsync_WhenEventDefinitionIdsIsEmpty()
+    {
+        // Arrange
+        var userId = "auth0|user123";
+        var sportId = Guid.NewGuid();
+        var emptyEventDefIds = new List<Guid>();
+
+        var command = new SaveUserEventPresetCommand(userId, sportId, emptyEventDefIds);
+
+        _repositoryMock
+            .Setup(r => r.SavePresetAsync(userId, sportId, emptyEventDefIds, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        _repositoryMock.Verify(r => r.SavePresetAsync(userId, sportId, emptyEventDefIds, It.IsAny<CancellationToken>()), Times.Once);
+    }
 }
