@@ -174,6 +174,7 @@ public static class Startup
         services.AddScoped<IEventDefinitionRepository, EventDefinitionRepository>();
         services.AddScoped<ISportRepository, SportRepository>();
         services.AddScoped<ISportConfigurationRepository, SportConfigurationRepository>();
+        services.AddScoped<IUserEventPresetRepository, UserEventPresetRepository>();
 
         services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
 

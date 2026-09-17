@@ -448,6 +448,7 @@ public class MatchesController(
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A collection of detailed match responses tracked by the user.</returns>
     [HttpGet("catch")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [ProducesResponseType(typeof(IEnumerable<MatchWithDetailsResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<ActionResult<IEnumerable<MatchWithDetailsResponse>>> GetCatchedMatches(
@@ -469,19 +470,24 @@ public class MatchesController(
     // ==========================================================================================
 
     /// <summary>
-    /// Retrieves all game event definitions for the sport associated with a specific match.
+    /// Retrieves active game event definitions for the sport associated with a specific match.
     /// </summary>
     /// <param name="matchId">The unique identifier of the match.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A collection of event definitions allowed for the match.</returns>
-    /// <response code="200">Returns the list of event definitions (or an empty list if none exist/match not found).</response>
+    /// <response code="200">Returns the list of event definitions.</response>
+    /// <response code="404">If the specified match does not exist.</response>
     [AllowAnonymous]
-    [HttpGet("{matchId:guid}/eventdefinitions")]
-    [ProducesResponseType(typeof(IEnumerable<EventDefinitionForMatchResponse>), StatusCodes.Status200OK)]
+    [HttpGet("{matchId:guid}/event-definitions")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [ProducesResponseType(typeof(IEnumerable<EventDefinitionResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetEventDefinitionsForMatch([FromRoute] Guid matchId, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Retrieving event definitions for match {MatchId}.", matchId);
-        var result = await _mediator.Send(new GetEventDefinitionsForMatchQuery(matchId), cancellationToken);
+
+        string? userId = User.Identity?.IsAuthenticated == true ? this.GetUserId(_auth0Settings) : null;
+        var result = await _mediator.Send(new GetEventDefinitionsForMatchQuery(matchId, userId), cancellationToken);
 
         return Ok(result);
     }

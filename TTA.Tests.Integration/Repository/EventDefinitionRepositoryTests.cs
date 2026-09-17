@@ -1,21 +1,23 @@
 ﻿using Dapper;
 using FluentAssertions;
 using System.Data.Common;
+using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
 
 namespace TTA.Tests.Integration.Repository;
 
 /// <summary>
-/// Integration tests for the <see cref="EventDefinitionRepository"/>.
-/// Validates data access logic and PostgreSQL storage function integration for retrieving match event definitions.
+/// Integration tests for the <see cref="EventDefinitionRepository" />.
+/// Validates data access logic and PostgreSQL storage function integration for event definitions, user presets, and soft-delete operations.
 /// </summary>
 public class EventDefinitionRepositoryTests : BaseIntegrationTest
 {
+    private static readonly int[] ExpectedSortOrders = [0, 1];
     private readonly EventDefinitionRepository _repository;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="EventDefinitionRepositoryTests"/> class.
+    /// Initializes a new instance of the <see cref="EventDefinitionRepositoryTests" /> class.
     /// </summary>
     /// <param name="fixture">The shared database fixture.</param>
     public EventDefinitionRepositoryTests(DatabaseFixture fixture) : base(fixture)
@@ -23,17 +25,17 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         _repository = new EventDefinitionRepository(fixture.ConnectionFactory);
     }
 
-    #region Integration Tests
+    #region GetMatchEventDefinitionsAsync Tests
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync"/> returns 
-    /// all event definitions associated with the sport of the specified match.
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> returns 
+    /// system default event definitions when no user-specific preset is configured.
     /// </summary>
     [Fact]
-    public async Task GetMatchEventDefinitionsAsync_ShouldReturnEventDefinitions_WhenMatchAndDefinitionsExist()
+    public async Task GetMatchEventDefinitionsAsync_ShouldReturnDefaultEventDefinitions_WhenMatchAndSystemDefinitionsExist()
     {
         // Arrange
-        var (matchId, sportId, definitionIds) = await SeedEventDefinitionEnvironmentAsync(createDefinitions: true);
+        var (matchId, sportId, _, definitionIds) = await SeedFullEnvironmentAsync(createSystemDefs: true);
 
         // Act
         var definitions = await _repository.GetMatchEventDefinitionsAsync(matchId);
@@ -42,19 +44,49 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         var result = definitions.ToList();
         result.Should().NotBeNull();
         result.Should().HaveCount(definitionIds.Count);
-        result.Should().OnlyContain(d => d.SportId == sportId);
+        result.Should().OnlyContain(d => d.SportId == sportId && !d.IsCustom && d.IsEnabled);
         result.Select(d => d.Id).Should().BeEquivalentTo(definitionIds);
     }
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync"/> returns 
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> returns 
+    /// active user preset definitions when a valid user identifier is provided.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchEventDefinitionsAsync_ShouldReturnUserPresetDefinitions_WhenUserPresetExists()
+    {
+        // Arrange
+        var (matchId, sportId, userId, definitionIds) = await SeedFullEnvironmentAsync(createSystemDefs: true);
+
+        // Create active user preset for def1 only
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat) 
+                VALUES (@userId, @defId, 0, NOW())",
+                new { userId, defId = definitionIds[0] });
+        }
+
+        // Act
+        var definitions = await _repository.GetMatchEventDefinitionsAsync(matchId, userId);
+
+        // Assert
+        var result = definitions.ToList();
+        result.Should().NotBeNull();
+        result.Should().HaveCount(1);
+        result[0].Id.Should().Be(definitionIds[0]);
+        result[0].IsEnabled.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> returns 
     /// an empty collection when no event definitions exist for the match's sport.
     /// </summary>
     [Fact]
     public async Task GetMatchEventDefinitionsAsync_ShouldReturnEmpty_WhenNoDefinitionsExistForSport()
     {
         // Arrange
-        var (matchId, _, _) = await SeedEventDefinitionEnvironmentAsync(createDefinitions: false);
+        var (matchId, _, _, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
 
         // Act
         var definitions = await _repository.GetMatchEventDefinitionsAsync(matchId);
@@ -65,30 +97,780 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync"/> returns 
-    /// an empty collection when the specified match does not exist in the database.
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> throws a 
+    /// <see cref="Npgsql.PostgresException" /> when the specified match does not exist in the database.
     /// </summary>
     [Fact]
-    public async Task GetMatchEventDefinitionsAsync_ShouldReturnEmpty_WhenMatchDoesNotExist()
+    public async Task GetMatchEventDefinitionsAsync_ShouldThrowPostgresException_WhenMatchDoesNotExist()
     {
         // Arrange
         var nonExistentMatchId = Guid.NewGuid();
 
         // Act
-        var definitions = await _repository.GetMatchEventDefinitionsAsync(nonExistentMatchId);
+        Func<Task> act = async () => await _repository.GetMatchEventDefinitionsAsync(nonExistentMatchId);
 
         // Assert
-        definitions.Should().NotBeNull();
-        definitions.Should().BeEmpty();
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage($"*Match with ID {nonExistentMatchId} not found.*");
+    }
+
+    /// <summary>
+    /// Verifies that GetMatchEventDefinitionsAsync filters out custom definitions 
+    /// owned by other users during match hydration, even if linked in user presets.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchEventDefinitionsAsync_ShouldExcludeCustomDefinitionsOfOtherUsers()
+    {
+        // Arrange
+        var (matchId, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: true);
+        var otherUserId = $"auth0|other-user-{Guid.NewGuid():N}";
+        var foreignDefId = Guid.NewGuid();
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.users (id, email, displayname, createdat) 
+                VALUES (@userId, 'other@tta.com', 'Other User', NOW());
+
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, createdat)
+                VALUES (@defId, @sportId, @userId, 'Foreign Action', 'FRG', true, NOW());
+
+                INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
+                VALUES (@currentUserId, @defId, 0, NOW());",
+                new { userId = otherUserId, defId = foreignDefId, sportId, currentUserId = userId });
+        }
+
+        // Act
+        var definitions = await _repository.GetMatchEventDefinitionsAsync(matchId, userId);
+
+        // Assert
+        definitions.Should().NotContain(d => d.Id == foreignDefId);
+    }
+
+    #endregion
+
+    #region UpsertCustomAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> successfully creates 
+    /// a new custom event definition entity and automatically registers it in user presets.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldInsertNewCustomEventDefinition_AndAddToPresets()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var customDefinition = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Custom Tactical Block",
+            ShortName = "C-BLK",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var (created, sortOrder) = await _repository.UpsertCustomAsync(customDefinition);
+
+        // Assert
+        created.Should().NotBeNull();
+        created!.Id.Should().Be(customDefinition.Id);
+        created.Name.Should().Be("Custom Tactical Block");
+        created.OwnerId.Should().Be(userId);
+        sortOrder.Should().Be(0);
+
+        // Verify database state: user preset entry should exist
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var presetCount = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM public.usereventpresets WHERE userid = @userId AND eventdefinitionid = @defId",
+            new { userId, defId = customDefinition.Id });
+
+        presetCount.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> is idempotent when re-posting 
+    /// an existing custom event definition with identical attributes and returns its current preset sort order.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldBeIdempotentAndReturnSortOrder_WhenRePostingExistingCustomEventDefinition()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var customDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Tactical Move",
+            ShortName = "MOVE",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(customDef);
+
+        // Manually set preset sort order to 3 to verify idempotent re-post retrieves existing sort order
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "UPDATE public.usereventpresets SET sortorder = 3 WHERE userid = @userId AND eventdefinitionid = @defId",
+                new { userId, defId = customDef.Id });
+        }
+
+        var rePostedDef = new EventDefinition
+        {
+            Id = customDef.Id, // Same ID
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Tactical Move", // Identical attributes for idempotency
+            ShortName = "MOVE",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var (result, sortOrder) = await _repository.UpsertCustomAsync(rePostedDef);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Name.Should().Be("Tactical Move");
+        result.ShortName.Should().Be("MOVE");
+        result.IsPositive.Should().BeTrue();
+        sortOrder.Should().Be(3);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> throws PostgresException (P0001)
+    /// when attempting to reuse an event definition identifier whose existing record has IsSoftDeleted set to true.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenReusingSoftDeletedDefinitionId()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var customDefId = Guid.NewGuid();
+        var entity = new EventDefinition
+        {
+            Id = customDefId,
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Original Custom Action",
+            ShortName = "OCA",
+            IsPositive = true,
+            IsSoftDeleted = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(entity);
+        await _repository.SoftDeleteAsync(customDefId, userId);
+
+        var reusedEntity = new EventDefinition
+        {
+            Id = customDefId, // Attempting to reuse soft-deleted ID
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Attempt Reused Action",
+            ShortName = "ARA",
+            IsPositive = false,
+            IsSoftDeleted = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(reusedEntity);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*Cannot update or reuse a soft-deleted event definition*");
+    }
+
+    /// < summary >
+    /// Verifies that sequential insertions of custom event definitions for the same user and sport
+    /// dynamically assign incremental preset SortOrder values (0, 1, ...).
+    /// < /summary >
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldAssignIncrementalSortOrder_ForMultipleCustomDefinitions()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var firstDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "First Tactical Block",
+            ShortName = "BLK1",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var secondDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Second Tactical Block",
+            ShortName = "BLK2",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var (_, firstSortOrder) = await _repository.UpsertCustomAsync(firstDef);
+        var (_, secondSortOrder) = await _repository.UpsertCustomAsync(secondDef);
+
+        // Assert
+        firstSortOrder.Should().Be(0);
+        secondSortOrder.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> throws PostgresException (P0001)
+    /// when a user attempts to upsert a custom event definition owned by another user.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenUserIsNotOwner()
+    {
+        // Arrange
+        var (_, sportId, ownerUserId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var otherUserId = "other-user-" + Guid.NewGuid().ToString("N")[..8];
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, 'other@example.com', 'Other User', NOW())",
+                new { id = otherUserId });
+        }
+
+        var customDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = ownerUserId,
+            Name = "Original Action",
+            ShortName = "OA",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(customDef);
+
+        // Act: Attempt to modify the same definition ID using a different owner ID
+        var unauthorizedDef = new EventDefinition
+        {
+            Id = customDef.Id,
+            SportId = sportId,
+            OwnerId = otherUserId,
+            Name = "Original Action",
+            ShortName = "OA",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(unauthorizedDef);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .Where(ex => ex.SqlState == "P0001" && ex.MessageText.Contains("Access denied"));
+    }
+
+    #endregion
+
+    #region SoftDeleteAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.SoftDeleteAsync" /> sets <c>issoftdeleted = TRUE</c> 
+    /// for a user-owned custom definition and removes it from active presets.
+    /// </summary>
+    [Fact]
+    public async Task SoftDeleteAsync_ShouldSoftDeleteCustomEventDefinition_AndRemoveFromPresets()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var customDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Definition To Delete",
+            ShortName = "DEL",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(customDef);
+
+        // Act
+        var deleted = await _repository.SoftDeleteAsync(customDef.Id, userId);
+
+        // Assert
+        deleted.Should().BeTrue();
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var isSoftDeleted = await conn.ExecuteScalarAsync<bool>(
+            "SELECT issoftdeleted FROM public.eventdefinitions WHERE id = @id",
+            new { id = customDef.Id });
+
+        isSoftDeleted.Should().BeTrue();
+
+        var presetCount = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM public.usereventpresets WHERE eventdefinitionid = @id",
+            new { id = customDef.Id });
+
+        presetCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.SoftDeleteAsync" /> returns false when 
+    /// trying to delete a non-existent definition or one not owned by the specified user.
+    /// </summary>
+    [Fact]
+    public async Task SoftDeleteAsync_ShouldReturnFalse_WhenDefinitionNotFoundOrNotOwnedByUser()
+    {
+        // Arrange
+        var (_, _, userId, definitionIds) = await SeedFullEnvironmentAsync(createSystemDefs: true);
+
+        // System default definitions (ownerid IS NULL) cannot be soft-deleted by user
+        // Act
+        var result = await _repository.SoftDeleteAsync(definitionIds[0], userId);
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.SoftDeleteAsync"/> returns false when 
+    /// attempting to soft-delete an event definition that has already been soft-deleted.
+    /// </summary>
+    [Fact]
+    public async Task SoftDeleteAsync_ShouldReturnFalse_WhenAlreadySoftDeleted()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var customDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Already Deleted Action",
+            ShortName = "ADA",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(customDef);
+
+        // First call soft-deletes the record and returns true
+        var firstDeleteResult = await _repository.SoftDeleteAsync(customDef.Id, userId);
+        firstDeleteResult.Should().BeTrue();
+
+        // Act: Attempt to soft-delete the same definition a second time
+        var secondDeleteResult = await _repository.SoftDeleteAsync(customDef.Id, userId);
+
+        // Assert: Second attempt must return false as row is no longer active
+        secondDeleteResult.Should().BeFalse();
+    }
+
+    #endregion
+
+    #region GetAvailableForUserAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.GetAvailableForUserAsync" /> returns system default
+    /// and user custom event definitions enriched with layout ordering and preset enablement metadata.
+    /// </summary>
+    [Fact]
+    public async Task GetAvailableForUserAsync_ShouldReturnSystemAndCustomDefinitions_EnrichedWithPresetState()
+    {
+        // Arrange
+        var (_, sportId, userId, systemDefIds) = await SeedFullEnvironmentAsync(createSystemDefs: true);
+
+        var customDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Custom Tactical Move",
+            ShortName = "CTM",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(customDef);
+
+        // Act
+        var available = await _repository.GetAvailableForUserAsync(userId, sportId);
+
+        // Assert
+        var list = available.ToList();
+        list.Should().NotBeNull();
+        list.Should().HaveCount(systemDefIds.Count + 1);
+
+        var customItem = list.FirstOrDefault(x => x.Id == customDef.Id);
+        customItem.Should().NotBeNull();
+        customItem!.IsCustom.Should().BeTrue();
+        customItem.IsEnabled.Should().BeTrue(); // Automatically enabled on creation
+
+        var systemItem = list.FirstOrDefault(x => x.Id == systemDefIds[0]);
+        systemItem.Should().NotBeNull();
+        systemItem!.IsCustom.Should().BeFalse();
+    }
+
+    #endregion
+
+    #region Concurrency & Advisory Lock Tests
+
+    /// <summary>
+    /// Verifies that concurrent calls to <see cref="EventDefinitionRepository.UpsertCustomAsync"/> for the same user and sport 
+    /// are properly serialized via PostgreSQL advisory locks, preventing sort order race conditions or database deadlocks.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ConcurrentCallsSameUserAndSport_ShouldSerializeAndAssignSequentialSortOrders()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var firstDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Concurrent Action A",
+            ShortName = "ACT_A",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var secondDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Concurrent Action B",
+            ShortName = "ACT_B",
+            IsPositive = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var startGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Act: Synchronize both upsert operations with a shared start gate to guarantee simultaneous release
+        var task1 = Task.Run(async () =>
+        {
+            await startGate.Task;
+            return await _repository.UpsertCustomAsync(firstDef);
+        });
+
+        var task2 = Task.Run(async () =>
+        {
+            await startGate.Task;
+            return await _repository.UpsertCustomAsync(secondDef);
+        });
+
+        startGate.SetResult(true);
+
+        Func<Task> act = async () => await Task.WhenAll(task1, task2);
+
+        // Assert: Both tasks should execute without deadlocks or Postgres exceptions
+        await act.Should().NotThrowAsync();
+
+        var (created1, sortOrder1) = await task1;
+        var (created2, sortOrder2) = await task2;
+
+        created1.Should().NotBeNull();
+        created2.Should().NotBeNull();
+
+        // One must be 0, the other must be 1 (order depending on lock acquisition sequence)
+        var sortOrders = new[] { sortOrder1, sortOrder2 };
+        sortOrders.Should().BeEquivalentTo(ExpectedSortOrders);
+
+        // Verify database state: User presets table must have exactly 2 entries with unique sort orders (0 and 1)
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var presets = (await conn.QueryAsync<(Guid EventDefinitionId, int SortOrder)>(
+            "SELECT eventdefinitionid, sortorder FROM public.usereventpresets WHERE userid = @userId ORDER BY sortorder ASC",
+            new { userId })).ToList();
+
+        presets.Should().HaveCount(2);
+        presets.Select(p => p.SortOrder).Should().BeEquivalentTo(ExpectedSortOrders);
+    }
+
+    /// <summary>
+    /// Verifies that concurrent calls to <see cref="EventDefinitionRepository.UpsertCustomAsync"/> and 
+    /// <see cref="EventDefinitionRepository.SoftDeleteAsync"/> for the same user/sport execute safely in parallel without conflicts.
+    /// </summary>
+    [Fact]
+    public async Task UpsertAndSoftDelete_ConcurrentOperations_ShouldSerializeWithAdvisoryLockWithoutErrors()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var existingDefId = Guid.NewGuid();
+        var initialDef = new EventDefinition
+        {
+            Id = existingDefId,
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Definition To Delete Concurrently",
+            ShortName = "DEL_C",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(initialDef);
+
+        var newDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "New Definition Inserted Concurrently",
+            ShortName = "INS_C",
+            IsPositive = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var startGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Act: Synchronize SoftDelete and Upsert with a shared start gate
+        var deleteTask = Task.Run(async () =>
+        {
+            await startGate.Task;
+            return await _repository.SoftDeleteAsync(existingDefId, userId);
+        });
+
+        var upsertTask = Task.Run(async () =>
+        {
+            await startGate.Task;
+            return await _repository.UpsertCustomAsync(newDef);
+        });
+
+        startGate.SetResult(true);
+
+        Func<Task> act = async () => await Task.WhenAll(deleteTask, upsertTask);
+
+        // Assert
+        await act.Should().NotThrowAsync();
+
+        var deleteResult = await deleteTask;
+        var (upsertResult, newSortOrder) = await upsertTask;
+
+        deleteResult.Should().BeTrue();
+        upsertResult.Should().NotBeNull();
+
+        // Verify DB State: Old definition is soft-deleted and removed from presets, new definition is active
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var isSoftDeleted = await conn.ExecuteScalarAsync<bool>(
+            "SELECT issoftdeleted FROM public.eventdefinitions WHERE id = @id",
+            new { id = existingDefId });
+
+        isSoftDeleted.Should().BeTrue();
+
+        var activePresetIds = (await conn.QueryAsync<Guid>(
+            "SELECT eventdefinitionid FROM public.usereventpresets WHERE userid = @userId",
+            new { userId })).ToList();
+
+        activePresetIds.Should().ContainSingle()
+            .Which.Should().Be(newDef.Id);
+    }
+
+    /// <summary>
+    /// Verifies that advisory locks scoped to different users/sports do not block each other,
+    /// allowing full parallelism across distinct user sessions.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_DifferentUsers_ShouldNotBlockEachOther()
+    {
+        // Arrange
+        var (_, sportId, user1, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var user2 = $"auth0|user-two-{Guid.NewGuid():N}";
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, 'user2@tta.com', 'User Two', NOW())",
+                new { id = user2 });
+        }
+
+        var defUser1 = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = user1,
+            Name = "User 1 Action",
+            ShortName = "U1A",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var defUser2 = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = user2,
+            Name = "User 2 Action",
+            ShortName = "U2A",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var task1 = Task.Run(() => _repository.UpsertCustomAsync(defUser1));
+        var task2 = Task.Run(() => _repository.UpsertCustomAsync(defUser2));
+
+        Func<Task> act = async () => await Task.WhenAll(task1, task2);
+
+        // Assert
+        await act.Should().NotThrowAsync();
+
+        var (_, sort1) = await task1;
+        var (_, sort2) = await task2;
+
+        // Both should have independent sort order sequence starting from 0
+        sort1.Should().Be(0);
+        sort2.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> throws PostgresException (P0001)
+    /// when attempting to create a custom event definition with a duplicate active name for the same user and sport.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenDuplicateActiveNameExistsForUserAndSport()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var existingDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Duplicate Action Name",
+            ShortName = "ACT1",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(existingDef);
+
+        var duplicateDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Duplicate Action Name", // Duplicate active name
+            ShortName = "ACT2",
+            IsPositive = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(duplicateDef);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*An active custom event definition with this name already exists for the sport.*");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> throws PostgresException (P0001)
+    /// when attempting to modify semantic fields (name, shortname, ispositive) of an existing active custom definition.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenModifyingExistingDefinitionAttributes()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var existingDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Initial Name",
+            ShortName = "INIT",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(existingDef);
+
+        var modifiedDef = new EventDefinition
+        {
+            Id = existingDef.Id, // Same ID
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Modified Name", // Attempting to change attribute
+            ShortName = "INIT",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(modifiedDef);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*Modifying existing custom event definition attributes is prohibited.*");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> throws PostgresException (P0001)
+    /// when attempting to modify the immutable SportId attribute of an existing custom definition.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenModifyingSportId()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var existingDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Tactical Pass",
+            ShortName = "PASS",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(existingDef);
+
+        var modifiedDef = new EventDefinition
+        {
+            Id = existingDef.Id, // Same ID
+            SportId = Guid.NewGuid(), // Attempting to change immutable SportId
+            OwnerId = userId,
+            Name = "Tactical Pass",
+            ShortName = "PASS",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(modifiedDef);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*Modifying existing custom event definition attributes is prohibited.*");
     }
 
     #endregion
 
     #region Seed Helpers
 
-    private async Task<(Guid MatchId, Guid SportId, List<Guid> DefinitionIds)> SeedEventDefinitionEnvironmentAsync(bool createDefinitions)
+    private async Task<(Guid MatchId, Guid SportId, string UserId, List<Guid> DefinitionIds)> SeedFullEnvironmentAsync(bool createSystemDefs)
     {
-        // Cast IDbConnection to DbConnection to support asynchronous transactions
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
@@ -148,16 +930,16 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         // 4. Event Definitions Setup
         var definitionIds = new List<Guid>();
 
-        if (createDefinitions)
+        if (createSystemDefs)
         {
             var def1 = Guid.NewGuid();
             var def2 = Guid.NewGuid();
 
             await conn.ExecuteAsync(@"
-                INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat)
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, createdat)
                 VALUES 
-                (@id1, @sid, 'Goal', 'G', true, NOW()),
-                (@id2, @sid, 'Foul', 'F', false, NOW())",
+                (@id1, @sid, NULL, 'Goal', 'G', true, NOW()),
+                (@id2, @sid, NULL, 'Foul', 'F', false, NOW())",
                 new { id1 = def1, id2 = def2, sid = sportId },
                 transaction: transaction);
 
@@ -194,7 +976,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         await transaction.CommitAsync();
 
-        return (matchId, sportId, definitionIds);
+        return (matchId, sportId, userId, definitionIds);
     }
 
     #endregion

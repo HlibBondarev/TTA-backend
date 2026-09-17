@@ -254,11 +254,41 @@ CREATE INDEX ix_matchlineups_playerrosterid ON public.matchlineups (playerroster
 CREATE TABLE eventdefinitions (
     id UUID PRIMARY KEY,
     sportid UUID NOT NULL REFERENCES sports(id) ON DELETE CASCADE,
+    ownerid VARCHAR(64) NULL REFERENCES public.users(id) ON DELETE RESTRICT, -- Restricted to preserve historical game events analytics
     name VARCHAR(50) NOT NULL,
     shortname VARCHAR(10) NOT NULL,
     ispositive BOOLEAN NOT NULL,
+    issoftdeleted BOOLEAN NOT NULL DEFAULT FALSE, -- Soft delete flag to preserve historical game events analytics
     createdat TIMESTAMPTZ NOT NULL
 );
+
+-- Partial unique index for active system event definitions (per sport)
+CREATE UNIQUE INDEX uix_eventdefinitions_system_active_name 
+ON eventdefinitions (sportid, name) 
+WHERE (ownerid IS NULL AND issoftdeleted = FALSE);
+
+-- Partial unique index for active custom user event definitions (per sport and owner)
+CREATE UNIQUE INDEX uix_eventdefinitions_custom_active_name 
+ON eventdefinitions (sportid, ownerid, name) 
+WHERE (ownerid IS NOT NULL AND issoftdeleted = FALSE);
+
+-- Index to optimize lookups by owner and soft-delete state
+CREATE INDEX ix_eventdefinitions_owner_active 
+ON eventdefinitions (sportid, ownerid) 
+WHERE (issoftdeleted = FALSE);
+
+-- Table storing active enabled TTA choices and custom layout order per user
+CREATE TABLE usereventpresets (
+    userid VARCHAR(64) NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    eventdefinitionid UUID NOT NULL REFERENCES public.eventdefinitions(id) ON DELETE CASCADE,
+    sortorder INT NOT NULL DEFAULT 0,
+    createdat TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    
+    PRIMARY KEY (userid, eventdefinitionid)
+);
+
+-- Performance index for rapid user preset lookups
+CREATE INDEX ix_usereventpresets_userid ON usereventpresets (userid);
 
 CREATE TABLE timeanchors (
     id UUID PRIMARY KEY,
