@@ -234,9 +234,87 @@ public class UserEventPresetRepositoryTests : BaseIntegrationTest
             .Where(ex => ex.SqlState == "P0001" && ex.MessageText.Contains("Event definition IDs must be unique"));
     }
 
+    /// <summary>
+    /// Verifies that <see cref="UserEventPresetRepository.SavePresetAsync"/> only modifies presets for the specified sport,
+    /// leaving preset records for other sports belonging to the same user completely untouched.
+    /// </summary>
+    [Fact]
+    public async Task SavePresetAsync_ShouldIsolatePresetsBySport_WhenUserHasPresetsInMultipleSports()
+    {
+        // Arrange
+        var (userId, sportIdA, eventDefIdsA) = await SeedPresetEnvironmentAsync(defCount: 2);
+        var (sportIdB, eventDefIdsB) = await SeedAdditionalSportForUserAsync(userId, defCount: 2);
+
+        // Save initial presets for both sports
+        await _repository.SavePresetAsync(userId, sportIdA, eventDefIdsA);
+        await _repository.SavePresetAsync(userId, sportIdB, eventDefIdsB);
+
+        // Act: Overwrite preset for sport A with a new single-item layout
+        var updatedDefIdsA = new[] { eventDefIdsA[1] };
+        await _repository.SavePresetAsync(userId, sportIdA, updatedDefIdsA);
+
+        // Assert: Verify sport B presets remain completely untouched with original IDs and sort order
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var presetsSportB = (await conn.QueryAsync<PresetRecord>(@"
+            SELECT uep.userid, uep.eventdefinitionid, uep.sortorder 
+            FROM public.usereventpresets uep
+            INNER JOIN public.eventdefinitions ed ON uep.eventdefinitionid = ed.id
+            WHERE uep.userid = @userId AND ed.sportid = @sportIdB
+            ORDER BY uep.sortorder ASC",
+            new { userId, sportIdB })).ToList();
+
+        presetsSportB.Should().HaveCount(2);
+
+        presetsSportB[0].EventDefinitionId.Should().Be(eventDefIdsB[0]);
+        presetsSportB[0].SortOrder.Should().Be(0);
+
+        presetsSportB[1].EventDefinitionId.Should().Be(eventDefIdsB[1]);
+        presetsSportB[1].SortOrder.Should().Be(1);
+    }
+
     #endregion
 
     #region Seed Helpers
+
+    private async Task<(Guid SportId, List<Guid> EventDefIds)> SeedAdditionalSportForUserAsync(string userId, int defCount)
+    {
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var shortName = $"S_{sportId:N}"[..10];
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@id, @name, @shortname, @configId)",
+            new { id = sportId, name = $"Sport_{sportId:N}", shortname = shortName, configId },
+            transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
+            VALUES (@id, @sid, false, 2, 45, '105x68', 25, 11)",
+            new { id = configId, sid = sportId },
+            transaction: transaction);
+
+        var eventDefIds = new List<Guid>();
+        for (int i = 0; i < defCount; i++)
+        {
+            var defId = Guid.NewGuid();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, createdat)
+                VALUES (@id, @sid, NULL, @name, @shortName, true, NOW())",
+                new { id = defId, sid = sportId, name = $"Event_{i}_{defId:N}", shortName = $"E{i}" },
+                transaction: transaction);
+
+            eventDefIds.Add(defId);
+        }
+
+        await transaction.CommitAsync();
+
+        return (sportId, eventDefIds);
+    }
 
     private async Task<(string UserId, Guid SportId, List<Guid> EventDefIds)> SeedPresetEnvironmentAsync(int defCount)
     {
