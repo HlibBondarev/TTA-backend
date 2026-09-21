@@ -204,6 +204,37 @@ public class UserSynchronizationMiddlewareTests
     }
 
     /// <summary>
+    /// Verifies that display names with surrogate pairs (emojis) are correctly counted by Unicode scalar values (runes) and not split across surrogate boundaries.
+    /// </summary>
+    [Fact]
+    public async Task InvokeAsync_ShouldHandleUnicodeSurrogatePairsAndEmojisCorrectly()
+    {
+        // Arrange
+        var context = new DefaultHttpContext();
+        // "😀😁😂" contains 3 runes (Unicode scalar values), which satisfy MinDisplayNameLength = 3
+        var claims = new[]
+        {
+            new Claim("sub", "auth0|unicode_123"),
+            new Claim(ClaimTypes.Email, "unicode@example.com"),
+            new Claim(ClaimTypes.Name, "😀😁😂")
+        };
+        var identity = new ClaimsIdentity(claims, "TestAuth");
+        context.User = new ClaimsPrincipal(identity);
+
+        var middleware = CreateMiddleware();
+
+        // Act
+        await middleware.InvokeAsync(context, _userRepositoryMock.Object, _auth0Settings);
+
+        // Assert
+        _userRepositoryMock.Verify(
+            r => r.UpsertAsync(
+                It.Is<User>(u => u.DisplayName == "😀😁😂"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
     /// Verifies that concurrent in-flight requests for the same user only trigger a single database upsert.
     /// </summary>
     [Fact]
