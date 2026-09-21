@@ -218,18 +218,32 @@ public class UserSynchronizationMiddlewareTests
             new Claim(ClaimTypes.Name, "Concurrent User")
         };
 
+        var upsertCompletion = new TaskCompletionSource<(User User, bool IsInserted)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _userRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .Returns(upsertCompletion.Task);
+
         var middleware = CreateMiddleware();
 
-        // Simulate 5 concurrent requests from the same user on cold cache
+        // Act - Spawn 5 concurrent requests from the same user on cold cache
         var tasks = Enumerable.Range(0, 5).Select(_ =>
         {
-            var context = new DefaultHttpContext();
-            var identity = new ClaimsIdentity(claims, "TestAuth");
-            context.User = new ClaimsPrincipal(identity);
+            var context = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuth"))
+            };
             return middleware.InvokeAsync(context, _userRepositoryMock.Object, _auth0Settings);
-        });
+        }).ToArray();
 
-        // Act
+        // Verify that exactly 1 database upsert was triggered while in-flight requests are blocked
+        _userRepositoryMock.Verify(
+            r => r.UpsertAsync(It.Is<User>(u => u.Id == userId), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Unblock upsert and wait for all concurrent requests to complete
+        upsertCompletion.SetResult((new User { Id = userId }, true));
         await Task.WhenAll(tasks);
 
         // Assert
