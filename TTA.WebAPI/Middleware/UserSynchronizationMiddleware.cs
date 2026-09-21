@@ -38,8 +38,9 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
         {
             var ns = auth0Settings.Namespace;
 
-            var userId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                ?? user.FindFirst(IdentityResourceClaimsTypes.Sub)?.Value;
+            var userId = FirstNonBlank(
+                user.FindFirst(ClaimTypes.NameIdentifier)?.Value,
+                user.FindFirst(IdentityResourceClaimsTypes.Sub)?.Value);
 
             if (!string.IsNullOrEmpty(userId))
             {
@@ -47,12 +48,13 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
 
                 if (!cache.TryGetValue(cacheKey, out _))
                 {
-                    var email = user.FindFirst($"{ns}{IdentityResourceClaimsTypes.Email}")?.Value
-                        ?? user.FindFirst(ClaimTypes.Email)?.Value
-                        ?? string.Empty;
+                    var email = FirstNonBlank(
+                        user.FindFirst($"{ns}{IdentityResourceClaimsTypes.Email}")?.Value,
+                        user.FindFirst(ClaimTypes.Email)?.Value) ?? string.Empty;
 
-                    var rawDisplayName = user.FindFirst($"{ns}display_name")?.Value
-                        ?? user.FindFirst(ClaimTypes.Name)?.Value;
+                    var rawDisplayName = FirstNonBlank(
+                        user.FindFirst($"{ns}display_name")?.Value,
+                        user.FindFirst(ClaimTypes.Name)?.Value);
 
                     var displayName = ResolveValidDisplayName(rawDisplayName, email, userId);
 
@@ -75,6 +77,14 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
         }
 
         await next(context);
+    }
+
+    /// <summary>
+    /// Returns the first non-null and non-whitespace string from the provided candidates.
+    /// </summary>
+    private static string? FirstNonBlank(params string?[] values)
+    {
+        return values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
     }
 
     /// <summary>

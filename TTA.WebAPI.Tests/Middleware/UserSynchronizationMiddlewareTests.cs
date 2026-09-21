@@ -169,4 +169,37 @@ public class UserSynchronizationMiddlewareTests
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
+
+    /// <summary>
+    /// Verifies that blank claims (empty string or whitespace) correctly fall back to subsequent non-blank claims.
+    /// </summary>
+    [Fact]
+    public async Task InvokeAsync_ShouldSkipBlankClaims_AndUseFirstNonBlankValue()
+    {
+        // Arrange
+        var context = new DefaultHttpContext();
+        var claims = new[]
+        {
+            new Claim("https://tta.com/email", "   "), // Blank custom claim
+            new Claim(ClaimTypes.Email, "valid@example.com"),
+            new Claim("https://tta.com/display_name", ""), // Blank custom claim
+            new Claim(ClaimTypes.Name, "Valid Name"),
+            new Claim(ClaimTypes.NameIdentifier, "  "), // Blank claim
+            new Claim("sub", "auth0|888888")
+        };
+        var identity = new ClaimsIdentity(claims, "TestAuth");
+        context.User = new ClaimsPrincipal(identity);
+
+        var middleware = CreateMiddleware();
+
+        // Act
+        await middleware.InvokeAsync(context, _userRepositoryMock.Object, _auth0Settings);
+
+        // Assert
+        _userRepositoryMock.Verify(
+            r => r.UpsertAsync(
+                It.Is<User>(u => u.Id == "auth0|888888" && u.Email == "valid@example.com" && u.DisplayName == "Valid Name"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 }
