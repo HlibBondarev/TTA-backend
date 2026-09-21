@@ -139,4 +139,34 @@ public class UserSynchronizationMiddlewareTests
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
+
+    /// <summary>
+    /// Verifies that when display name and email are invalid or under 3 characters, the middleware falls back to userId or default string to satisfy database constraints.
+    /// </summary>
+    [Fact]
+    public async Task InvokeAsync_ShouldFallbackToUserIdOrDefault_WhenDisplayNameAndEmailAreTooShort()
+    {
+        // Arrange
+        var context = new DefaultHttpContext();
+        var claims = new[]
+        {
+            new Claim("sub", "auth0|777777"),
+            new Claim(ClaimTypes.Email, "a"), // Invalid length (< 3)
+            new Claim(ClaimTypes.Name, "ab")  // Invalid length (< 3)
+        };
+        var identity = new ClaimsIdentity(claims, "TestAuth");
+        context.User = new ClaimsPrincipal(identity);
+
+        var middleware = CreateMiddleware();
+
+        // Act
+        await middleware.InvokeAsync(context, _userRepositoryMock.Object, _auth0Settings);
+
+        // Assert
+        _userRepositoryMock.Verify(
+            r => r.UpsertAsync(
+                It.Is<User>(u => u.Id == "auth0|777777" && u.DisplayName == "auth0|777777"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 }

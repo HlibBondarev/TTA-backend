@@ -15,6 +15,9 @@ namespace TTA.WebAPI.Middleware;
 public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache cache)
 {
     private static readonly TimeSpan CacheSlidingExpiration = TimeSpan.FromMinutes(10);
+    private const int MinDisplayNameLength = 3;
+    private const int MaxDisplayNameLength = 50;
+    private const string DefaultFallbackDisplayName = "User";
 
     /// <summary>
     /// Executes the middleware to inspect the authenticated user's claims and synchronize their profile with the database on cache miss.
@@ -51,10 +54,7 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
                     var rawDisplayName = user.FindFirst($"{ns}display_name")?.Value
                         ?? user.FindFirst(ClaimTypes.Name)?.Value;
 
-                    // Fallback to email if display name is missing, empty, or shorter than 3 characters (database constraint check)
-                    var displayName = !string.IsNullOrWhiteSpace(rawDisplayName) && rawDisplayName.Trim().Length >= 3
-                        ? rawDisplayName.Trim()
-                        : email;
+                    var displayName = ResolveValidDisplayName(rawDisplayName, email, userId);
 
                     var userEntity = new User
                     {
@@ -75,5 +75,30 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
         }
 
         await next(context);
+    }
+
+    /// <summary>
+    /// Resolves a display name satisfying database constraints (length between 3 and 50 characters).
+    /// Cascades through rawDisplayName, email, userId, and default fallback string.
+    /// </summary>
+    private static string ResolveValidDisplayName(string? rawDisplayName, string email, string userId)
+    {
+        var candidates = new[] { rawDisplayName, email, userId, DefaultFallbackDisplayName };
+
+        foreach (var candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                var trimmed = candidate.Trim();
+                if (trimmed.Length >= MinDisplayNameLength)
+                {
+                    return trimmed.Length > MaxDisplayNameLength
+                        ? trimmed[..MaxDisplayNameLength]
+                        : trimmed;
+                }
+            }
+        }
+
+        return DefaultFallbackDisplayName;
     }
 }
