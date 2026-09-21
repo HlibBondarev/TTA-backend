@@ -187,8 +187,58 @@ public class CreateCustomEventDefinitionHandlerTests
     }
 
     /// <summary>
+    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> succeeds when creating a custom 
+    /// event definition with the same name as an existing definition for the same owner, but with an opposite IsPositive flag.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldCreateAndReturnEventDefinitionResponse_WhenOppositeIsPositiveCustomDefinitionExists()
+    {
+        // Arrange
+        var command = new CreateCustomEventDefinitionCommand(
+            Id: Guid.NewGuid(),
+            SportId: Guid.NewGuid(),
+            OwnerId: "auth0|user123",
+            Name: "Foul",
+            ShortName: "FOL-P",
+            IsPositive: true); // Positive "Foul" (e.g. Foul drawn)
+
+        var createdEntity = new EventDefinition
+        {
+            Id = command.Id,
+            SportId = command.SportId,
+            OwnerId = command.OwnerId,
+            Name = command.Name,
+            ShortName = command.ShortName,
+            IsPositive = command.IsPositive,
+            IsSoftDeleted = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        const int expectedSortOrder = 4;
+
+        _repositoryMock
+            .Setup(r => r.UpsertCustomAsync(It.Is<EventDefinition>(e =>
+                e.Id == command.Id &&
+                e.Name == "Foul" &&
+                e.IsPositive == true), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((createdEntity, expectedSortOrder));
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Id.Should().Be(command.Id);
+        result.Name.Should().Be("Foul");
+        result.IsPositive.Should().BeTrue();
+        result.SortOrder.Should().Be(expectedSortOrder);
+
+        _repositoryMock.Verify(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
     /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> throws <see cref="ConflictException"/>
-    /// when the underlying repository throws a PostgreSQL P0001 exception due to a duplicate active name.
+    /// when the underlying repository throws a PostgreSQL P0001 exception due to a duplicate active name and positivity.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldThrowConflictException_WhenRepositoryThrowsP0001PostgresException()
@@ -204,7 +254,7 @@ public class CreateCustomEventDefinitionHandlerTests
         );
 
         var postgresException = new PostgresException(
-            "An active custom event definition with this name already exists for the sport.",
+            "An active custom event definition with this name and positivity already exists for the sport.",
             "ERROR",
             "ERROR",
             "P0001"
@@ -219,6 +269,6 @@ public class CreateCustomEventDefinitionHandlerTests
 
         // Assert
         await act.Should().ThrowAsync<ConflictException>()
-            .WithMessage("*An active custom event definition with this name already exists for the sport.*");
+            .WithMessage("*An active custom event definition with this name and positivity already exists for the sport.*");
     }
 }

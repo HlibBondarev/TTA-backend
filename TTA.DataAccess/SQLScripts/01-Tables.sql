@@ -262,14 +262,14 @@ CREATE TABLE eventdefinitions (
     createdat TIMESTAMPTZ NOT NULL
 );
 
--- Partial unique index for active system event definitions (per sport)
+-- Partial unique index for active system event definitions (per sport and positivity)
 CREATE UNIQUE INDEX uix_eventdefinitions_system_active_name 
-ON eventdefinitions (sportid, name) 
+ON eventdefinitions (sportid, name, ispositive) 
 WHERE (ownerid IS NULL AND issoftdeleted = FALSE);
 
--- Partial unique index for active custom user event definitions (per sport and owner)
+-- Partial unique index for active custom user event definitions (per sport, owner, and positivity)
 CREATE UNIQUE INDEX uix_eventdefinitions_custom_active_name 
-ON eventdefinitions (sportid, ownerid, name) 
+ON eventdefinitions (sportid, ownerid, name, ispositive) 
 WHERE (ownerid IS NOT NULL AND issoftdeleted = FALSE);
 
 -- Index to optimize lookups by owner and soft-delete state
