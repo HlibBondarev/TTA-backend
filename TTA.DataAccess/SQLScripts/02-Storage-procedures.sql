@@ -1091,11 +1091,11 @@ BEGIN
         VALUES (v_position_id, p_sport_id, 'Universal', 'UNI');
     END IF;
     
-    -- 7. Bulk-register up to rosterlimit players for HOME SQUAD
+   -- 7. Bulk-register up to rosterlimit players for HOME SQUAD
     WITH ranked_players AS (
         SELECT 
             p.id AS player_id,
-            ROW_NUMBER() OVER (ORDER BY CAST(p.lastname AS INT), p.id) AS rn
+            ROW_NUMBER() OVER (ORDER BY p.lastname::NUMERIC, p.id) AS rn
         FROM public.players p
         WHERE p.homeclubid = v_club_id 
           AND p.firstname = 'Home Player'
@@ -1118,7 +1118,7 @@ BEGIN
     WITH ranked_players AS (
         SELECT 
             p.id AS player_id,
-            ROW_NUMBER() OVER (ORDER BY CAST(p.lastname AS INT), p.id) AS rn
+            ROW_NUMBER() OVER (ORDER BY p.lastname::NUMERIC, p.id) AS rn
         FROM public.players p
         WHERE p.homeclubid = v_club_id 
           AND p.firstname = 'Guest Player'
