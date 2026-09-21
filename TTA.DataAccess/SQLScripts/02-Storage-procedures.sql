@@ -1097,7 +1097,9 @@ BEGIN
             p.id AS player_id,
             ROW_NUMBER() OVER (ORDER BY CAST(p.lastname AS INT), p.id) AS rn
         FROM public.players p
-        WHERE p.homeclubid = v_club_id AND p.firstname = 'Home Player'
+        WHERE p.homeclubid = v_club_id 
+          AND p.firstname = 'Home Player'
+          AND p.lastname ~ '^[0-9]+$'
     )
     INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, number, positionid, createdat)
     SELECT 
@@ -1118,7 +1120,9 @@ BEGIN
             p.id AS player_id,
             ROW_NUMBER() OVER (ORDER BY CAST(p.lastname AS INT), p.id) AS rn
         FROM public.players p
-        WHERE p.homeclubid = v_club_id AND p.firstname = 'Guest Player'
+        WHERE p.homeclubid = v_club_id 
+          AND p.firstname = 'Guest Player'
+          AND p.lastname ~ '^[0-9]+$'
     )
     INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, number, positionid, createdat)
     SELECT 
