@@ -237,4 +237,31 @@ public class UserSynchronizationMiddlewareTests
             r => r.UpsertAsync(It.Is<User>(u => u.Id == userId), It.IsAny<CancellationToken>()),
             Times.Once);
     }
+
+    /// <summary>
+    /// Verifies that user lock entries are safely cleaned up from the lock dictionary once all requests complete.
+    /// </summary>
+    [Fact]
+    public async Task InvokeAsync_ShouldCleanupUserLockEntry_WhenRequestCompletes()
+    {
+        // Arrange
+        var userId = "auth0|cleanup_test_123";
+        var context = new DefaultHttpContext();
+        var claims = new[]
+        {
+            new Claim("sub", userId),
+            new Claim(ClaimTypes.Email, "cleanup@example.com"),
+            new Claim(ClaimTypes.Name, "Cleanup User")
+        };
+        var identity = new ClaimsIdentity(claims, "TestAuth");
+        context.User = new ClaimsPrincipal(identity);
+
+        var middleware = CreateMiddleware();
+
+        // Act
+        await middleware.InvokeAsync(context, _userRepositoryMock.Object, _auth0Settings);
+
+        // Assert
+        UserSynchronizationMiddleware.UserLocks.ContainsKey(userId).Should().BeFalse();
+    }
 }
