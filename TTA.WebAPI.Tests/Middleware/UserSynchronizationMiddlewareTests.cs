@@ -264,4 +264,58 @@ public class UserSynchronizationMiddlewareTests
         // Assert
         UserSynchronizationMiddleware.UserLocks.ContainsKey(userId).Should().BeFalse();
     }
+
+    /// <summary>
+    /// Verifies that when a waiting request is canceled via CancellationToken, the lock's reference count is still decremented and the dictionary entry cleaned up.
+    /// </summary>
+    [Fact]
+    public async Task InvokeAsync_ShouldCleanupUserLockEntry_WhenWaitingRequestIsCancelled()
+    {
+        // Arrange
+        var userId = "auth0|cancel_test_123";
+        var claims = new[]
+        {
+            new Claim("sub", userId),
+            new Claim(ClaimTypes.Email, "cancel@example.com"),
+            new Claim(ClaimTypes.Name, "Cancel User")
+        };
+
+        var tcs = new TaskCompletionSource<(User User, bool IsInserted)>();
+        _userRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .Returns(tcs.Task);
+
+        var middleware = CreateMiddleware();
+
+        // Active request holding the lock
+        var activeContext = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuth"))
+        };
+        var activeTask = middleware.InvokeAsync(activeContext, _userRepositoryMock.Object, _auth0Settings);
+
+        // Waiting request that gets cancelled
+        using var cts = new CancellationTokenSource();
+        var waitingContext = new DefaultHttpContext
+        {
+            RequestAborted = cts.Token,
+            User = new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuth"))
+        };
+
+        var waitingTask = middleware.InvokeAsync(waitingContext, _userRepositoryMock.Object, _auth0Settings);
+
+        // Cancel waiting request while blocked on WaitAsync
+        cts.Cancel();
+
+        // Waiting task should throw OperationCanceledException
+        var act = async () => await waitingTask;
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // Unblock and complete the active request
+        tcs.SetResult((new User { Id = userId }, true));
+        await activeTask;
+
+        // Assert
+        UserSynchronizationMiddleware.UserLocks.ContainsKey(userId).Should().BeFalse();
+    }
 }

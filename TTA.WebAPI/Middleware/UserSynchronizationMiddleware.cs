@@ -71,10 +71,12 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
                         lockEntry.RefCount++;
                     }
 
-                    await lockEntry.Semaphore.WaitAsync(context.RequestAborted);
-
+                    var lockAcquired = false;
                     try
                     {
+                        await lockEntry.Semaphore.WaitAsync(context.RequestAborted);
+                        lockAcquired = true;
+
                         // Double-checked locking to avoid redundant DB upserts during concurrent request bursts
                         if (!cache.TryGetValue(cacheKey, out _))
                         {
@@ -106,7 +108,10 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
                     }
                     finally
                     {
-                        lockEntry.Semaphore.Release();
+                        if (lockAcquired)
+                        {
+                            lockEntry.Semaphore.Release();
+                        }
 
                         lock (UserLocks)
                         {
