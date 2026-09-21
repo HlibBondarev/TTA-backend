@@ -741,10 +741,10 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> throws PostgresException (P0001)
-    /// when attempting to create a custom event definition with a duplicate active name for the same user and sport.
+    /// when attempting to create a custom event definition with a duplicate active name and same IsPositive flag for the same user and sport.
     /// </summary>
     [Fact]
-    public async Task UpsertCustomAsync_ShouldThrowException_WhenDuplicateActiveNameExistsForUserAndSport()
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenDuplicateActiveNameAndPositivityExistsForUserAndSport()
     {
         // Arrange
         var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
@@ -767,9 +767,9 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Id = Guid.NewGuid(),
             SportId = sportId,
             OwnerId = userId,
-            Name = "Duplicate Action Name", // Duplicate active name
+            Name = "Duplicate Action Name", // Identical active name
             ShortName = "ACT2",
-            IsPositive = false,
+            IsPositive = true, // Identical IsPositive flag -> should fail
             CreatedAt = DateTime.UtcNow
         };
 
@@ -778,7 +778,54 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         // Assert
         await act.Should().ThrowAsync<Npgsql.PostgresException>()
-            .WithMessage("*An active custom event definition with this name already exists for the sport.*");
+            .WithMessage("*An active custom event definition with this name and positivity already exists for the sport.*");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> successfully creates a custom event 
+    /// definition sharing an identical name with an existing active definition for the same user/sport when IsPositive differs.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldSucceed_WhenDuplicateNameHasDifferentIsPositive()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var positiveDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Foul",
+            ShortName = "FOL-P",
+            IsPositive = true, // Positive Foul
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var negativeDef = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Foul", // Same name
+            ShortName = "FOL-N",
+            IsPositive = false, // Opposite IsPositive -> allowed
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var (createdPositive, sortOrder1) = await _repository.UpsertCustomAsync(positiveDef);
+        var (createdNegative, sortOrder2) = await _repository.UpsertCustomAsync(negativeDef);
+
+        // Assert
+        createdPositive.Should().NotBeNull();
+        createdNegative.Should().NotBeNull();
+        createdPositive!.Name.Should().Be("Foul");
+        createdNegative!.Name.Should().Be("Foul");
+        createdPositive.IsPositive.Should().BeTrue();
+        createdNegative.IsPositive.Should().BeFalse();
+        sortOrder1.Should().Be(0);
+        sortOrder2.Should().Be(1);
     }
 
     /// <summary>

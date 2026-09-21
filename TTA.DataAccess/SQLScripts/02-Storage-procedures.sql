@@ -1560,16 +1560,17 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Validation: Active name must stay unique per owner and sport
+    -- Validation: Active name + ispositive combination must stay unique per owner and sport
     IF EXISTS (
         SELECT 1 FROM public.eventdefinitions
         WHERE sportid = p_sport_id
           AND ownerid = p_owner_id
           AND name = p_name
+          AND ispositive = p_is_positive
           AND issoftdeleted = FALSE
           AND id <> p_id
     ) THEN
-        RAISE EXCEPTION 'An active custom event definition with this name already exists for the sport.'
+        RAISE EXCEPTION 'An active custom event definition with this name and positivity already exists for the sport.'
             USING ERRCODE = 'P0001';
     END IF;
 
