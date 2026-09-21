@@ -79,26 +79,19 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
 
     /// <summary>
     /// Resolves a display name satisfying database constraints (length between 3 and 50 characters).
-    /// Cascades through rawDisplayName, email, userId, and default fallback string.
+    /// Cascades through rawDisplayName, email, userId, and default fallback string using LINQ filtering.
     /// </summary>
     private static string ResolveValidDisplayName(string? rawDisplayName, string email, string userId)
     {
         var candidates = new[] { rawDisplayName, email, userId, DefaultFallbackDisplayName };
 
-        foreach (var candidate in candidates)
-        {
-            if (!string.IsNullOrWhiteSpace(candidate))
-            {
-                var trimmed = candidate.Trim();
-                if (trimmed.Length >= MinDisplayNameLength)
-                {
-                    return trimmed.Length > MaxDisplayNameLength
-                        ? trimmed[..MaxDisplayNameLength]
-                        : trimmed;
-                }
-            }
-        }
+        var selected = candidates
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
+            .Select(candidate => candidate!.Trim())
+            .FirstOrDefault(candidate => candidate.Length >= MinDisplayNameLength) ?? DefaultFallbackDisplayName;
 
-        return DefaultFallbackDisplayName;
+        return selected.Length > MaxDisplayNameLength
+            ? selected[..MaxDisplayNameLength]
+            : selected;
     }
 }
