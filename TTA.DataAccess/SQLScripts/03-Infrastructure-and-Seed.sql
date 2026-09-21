@@ -58,35 +58,41 @@ BEGIN
 
     -- Standard Water Polo Configuration
     INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
-    VALUES (wp_config_id, wp_sport_id, true, 4, 8, '30x20m', 15, 13, 7)
+    VALUES (wp_config_id, wp_sport_id, true, 4, 8, '25x20 sq.m.', 15, 13, 7)
     ON CONFLICT DO NOTHING;
 
-    -- Alternative Water Polo Configuration (Smaller field 25x15m, 6 active players)
+    -- Alternative Water Polo Configuration (Smaller field 25x15 sq.m., 6 active players)
     INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
-    VALUES (wp_config_alt_id, wp_sport_id, true, 4, 7, '25x15m', 13, 11, 6)
+    VALUES (wp_config_alt_id, wp_sport_id, true, 4, 7, '25x15 sq.m.', 13, 11, 6)
     ON CONFLICT DO NOTHING;
 
     -- Water Polo Event Definitions
     INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat) VALUES 
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f81', wp_sport_id, NULL, 'Goal', 'GOAL', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82', wp_sport_id, NULL, 'Assist', 'ASST', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f83', wp_sport_id, NULL, 'Sprint Won', 'SPR+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f84', wp_sport_id, NULL, 'Exclusion Earned', 'EXCL+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f85', wp_sport_id, NULL, 'Penalty Earned', 'PEN+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f86', wp_sport_id, NULL, 'Steal', 'STL', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f87', wp_sport_id, NULL, 'Shot Saved', 'SAVE', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f88', wp_sport_id, NULL, 'Block', 'BLK', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f89', wp_sport_id, NULL, 'Shot Missed', 'MISS', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f90', wp_sport_id, NULL, 'Turnover', 'T-OVER', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f91', wp_sport_id, NULL, 'Exclusion Received', 'EXCL-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f92', wp_sport_id, NULL, 'Penalty Committed', 'PEN-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f93', wp_sport_id, NULL, 'Sprint Lost', 'SPR-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f94', wp_sport_id, NULL, 'Critical Foul', 'C-FOUL', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f95', wp_sport_id, NULL, 'Bad Goal Conceded', 'B-GOAL', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f96', wp_sport_id, NULL, 'Tactical Error', 'T-ERR', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f97', wp_sport_id, NULL, 'Defensive Transition Failure', 'D-TRANS', false, false, NOW())
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f51', wp_sport_id, NULL, 'Goal', 'GOAL+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f52', wp_sport_id, NULL, 'Assist', 'ASST+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f53', wp_sport_id, NULL, 'Sprint', 'SPR+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f54', wp_sport_id, NULL, 'Exclusion', 'EXCL+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f55', wp_sport_id, NULL, 'Penalty', 'PEN+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f56', wp_sport_id, NULL, 'Steal', 'STL+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57', wp_sport_id, NULL, 'Shot Saved', 'SAVE+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f58', wp_sport_id, NULL, 'Block', 'BLOK', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f59', wp_sport_id, NULL, 'Turnover', 'T-OVER+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f60', wp_sport_id, NULL, 'Defensive Transition', 'D-TRANS+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', wp_sport_id, NULL, 'Offensive Transition', 'O-TRANS+', true, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', wp_sport_id, NULL, 'Shot Missed', 'MISS-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', wp_sport_id, NULL, 'Turnover', 'T-OVER-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', wp_sport_id, NULL, 'Exclusion', 'EXCL-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', wp_sport_id, NULL, 'Penalty', 'PEN-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', wp_sport_id, NULL, 'Sprint', 'SPR-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f67', wp_sport_id, NULL, 'Critical Foul', 'C-FOUL-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f68', wp_sport_id, NULL, 'Blocked shot', 'B-SHOT-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f69', wp_sport_id, NULL, 'Tactical Error', 'T-ERR-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70', wp_sport_id, NULL, 'Defensive Transition', 'D-TRANS-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f71', wp_sport_id, NULL, 'Offensive Transition', 'O-TRANS-', false, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f72', wp_sport_id, NULL, 'Steal', 'STL-', false, false, NOW())
     ON CONFLICT DO NOTHING;
 
+    /*
     -- B. FOOTBALL SEEDING
     INSERT INTO sports (id, name, shortname, defaultconfigid) 
     VALUES (fb_sport_id, 'Football', 'FB', fb_config_id)
@@ -100,7 +106,7 @@ BEGIN
     ON CONFLICT DO NOTHING;
 
     INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
-    VALUES (fb_config_id, fb_sport_id, false, 2, 45, '105x68m', 23, 18, 11)
+    VALUES (fb_config_id, fb_sport_id, false, 2, 45, '105x68 sq.m.', 23, 18, 11)
     ON CONFLICT DO NOTHING;
 
     INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat) VALUES 
@@ -126,7 +132,7 @@ BEGIN
     ON CONFLICT DO NOTHING;
 
     INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
-    VALUES (bb_config_id, bb_sport_id, true, 4, 10, '28x15m', 12, 12, 5)
+    VALUES (bb_config_id, bb_sport_id, true, 4, 10, '28x15 sq.m.', 12, 12, 5)
     ON CONFLICT DO NOTHING;
 
     INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat) VALUES 
@@ -137,6 +143,7 @@ BEGIN
     ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b85', bb_sport_id, NULL, 'Turnover', 'TO', false, false, NOW()),
     ('8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b86', bb_sport_id, NULL, 'Personal Foul', 'PF', false, false, NOW())
     ON CONFLICT DO NOTHING;
+    */
 
 END $$;
 
@@ -182,25 +189,39 @@ BEGIN
 
 END $$;
 
--- ==========================================
--- 5. PLAYERS (50 Static Club Players)
--- ==========================================
+-- ======================================================
+-- 5. PLAYERS (100 Home + 100 Guest Static Club Players)
+-- ======================================================
 
 DO $$ 
 DECLARE 
     v_tta_club_id uuid := '11111111-1111-1111-1111-000000000001';
 BEGIN
+    -- 100 Home Players
     INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
     SELECT 
-        ('44444444-4444-4444-4444-' || LPAD(i::text, 12, '0'))::UUID AS id,
+        ('44444444-4444-4444-1111-' || LPAD(i::text, 12, '0'))::UUID AS id,
         v_tta_club_id AS homeclubid,
-        'Player' AS firstname,
+        'Home Player' AS firstname,
         i::text AS lastname,
         '2011-01-01'::DATE AS birthdate,
         0 AS gender,
         NOW() AS createdat
-    FROM generate_series(1, 50) AS i
+    FROM generate_series(1, 100) AS i
     ON CONFLICT DO NOTHING;
 
-    RAISE NOTICE 'Seed for 50 static players in TTA Training Club completed successfully.';
+    -- 100 Guest Players
+    INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+    SELECT 
+        ('44444444-4444-4444-2222-' || LPAD(i::text, 12, '0'))::UUID AS id,
+        v_tta_club_id AS homeclubid,
+        'Guest Player' AS firstname,
+        i::text AS lastname,
+        '2011-01-01'::DATE AS birthdate,
+        0 AS gender,
+        NOW() AS createdat
+    FROM generate_series(1, 100) AS i
+    ON CONFLICT DO NOTHING;
+
+    RAISE NOTICE 'Seed for 100 Home and 100 Guest static players in TTA Training Club completed successfully.';
 END $$;

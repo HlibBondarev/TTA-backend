@@ -200,13 +200,19 @@ public class MatchRepositoryTests : BaseIntegrationTest
             new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
 
         // 3. Seed players for the default club so that create_quick_match function can register them into rosters
-        for (int i = 1; i <= 6; i++)
+        for (int i = 1; i <= 3; i++)
         {
             await conn.ExecuteAsync(@"
                 INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
-                VALUES (@id, @clubId, @fn, 'Test', '2000-01-01', 0, NOW())
+                VALUES (@id, @clubId, 'Home Player', @ln, '2000-01-01', 0, NOW())
                 ON CONFLICT DO NOTHING;",
-                new { id = Guid.NewGuid(), clubId = defaultClubId, fn = $"Player_{i}" }, transaction: transaction);
+                new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() }, transaction: transaction);
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+                VALUES (@id, @clubId, 'Guest Player', @ln, '2000-01-01', 0, NOW())
+                ON CONFLICT DO NOTHING;",
+                new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() }, transaction: transaction);
         }
 
         // 4. Seed sport and sport configuration (setting rosterlimit = 3 for clear testing)
@@ -337,14 +343,17 @@ public class MatchRepositoryTests : BaseIntegrationTest
         Guid targetLineupId = matchLineupId;
         if (targetLineupId == Guid.Empty)
         {
-            var rosterId = await conn.ExecuteScalarAsync<Guid>(
-                "SELECT id FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+            var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+                "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
                 new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+            Guid rosterId = rosterData.id;
+            Guid positionId = rosterData.positionid;
 
             targetLineupId = Guid.NewGuid();
             await conn.ExecuteAsync(
-                "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number) VALUES (@id, @mId, @rId, 10)",
-                new { id = targetLineupId, mId = match.Id, rId = rosterId });
+                "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 10, @posId)",
+                new { id = targetLineupId, mId = match.Id, rId = rosterId, posId = positionId });
         }
 
         // 3. Seed Player Presence (full 10 minutes duration -> 100% play percentage)
@@ -394,17 +403,20 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await conn.OpenAsync();
 
         // 1. Fetch or create a match lineup ID for the Home team
-        var rosterId = await conn.ExecuteScalarAsync<Guid>(
-            "SELECT id FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+        var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+            "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
             new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+        Guid rosterId = rosterData.id;
+        Guid positionId = rosterData.positionid;
 
         var targetLineupId = Guid.NewGuid();
         await conn.ExecuteAsync(
-            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number) VALUES (@id, @mId, @rId, 99)",
-            new { id = targetLineupId, mId = match.Id, rId = rosterId });
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 99, @posId)",
+            new { id = targetLineupId, mId = match.Id, rId = rosterId, posId = positionId });
 
         // 2. Seed Event Definitions
-        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
+        var sportId = await conn.ExecuteScalarAsync("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
         var eventDefId = Guid.NewGuid();
 
         await conn.ExecuteAsync(
