@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Caching.Memory;
+using System.Collections.Concurrent;
 using System.Security.Claims;
 using TTA.BusinessLogic.Services;
 using TTA.DataAccess.Models;
@@ -15,6 +16,8 @@ namespace TTA.WebAPI.Middleware;
 public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache cache)
 {
     private static readonly TimeSpan CacheSlidingExpiration = TimeSpan.FromMinutes(10);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> UserLocks = new();
+
     private const int MinDisplayNameLength = 3;
     private const int MaxDisplayNameLength = 50;
     private const string DefaultFallbackDisplayName = "User";
@@ -22,6 +25,7 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
     /// <summary>
     /// Executes the middleware to inspect the authenticated user's claims and synchronize their profile with the database on cache miss.
     /// Performs validation and fallback logic for display name to satisfy database length constraints.
+    /// Deduplicates concurrent in-flight synchronization requests for the same user.
     /// </summary>
     /// <param name="context">The current HTTP context containing request and user claims information.</param>
     /// <param name="userRepository">The repository used to perform user persistence and upsert operations.</param>
@@ -48,30 +52,44 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
 
                 if (!cache.TryGetValue(cacheKey, out _))
                 {
-                    var email = FirstNonBlank(
-                        user.FindFirst($"{ns}{IdentityResourceClaimsTypes.Email}")?.Value,
-                        user.FindFirst(ClaimTypes.Email)?.Value) ?? string.Empty;
+                    var userLock = UserLocks.GetOrAdd(userId, _ => new SemaphoreSlim(1, 1));
+                    await userLock.WaitAsync(context.RequestAborted);
 
-                    var rawDisplayName = FirstNonBlank(
-                        user.FindFirst($"{ns}display_name")?.Value,
-                        user.FindFirst(ClaimTypes.Name)?.Value);
-
-                    var displayName = ResolveValidDisplayName(rawDisplayName, email, userId);
-
-                    var userEntity = new User
+                    try
                     {
-                        Id = userId,
-                        Email = email,
-                        DisplayName = displayName,
-                        CreatedAt = DateTime.UtcNow
-                    };
+                        // Double-checked locking to avoid redundant DB upserts during concurrent request bursts
+                        if (!cache.TryGetValue(cacheKey, out _))
+                        {
+                            var email = FirstNonBlank(
+                                user.FindFirst($"{ns}{IdentityResourceClaimsTypes.Email}")?.Value,
+                                user.FindFirst(ClaimTypes.Email)?.Value) ?? string.Empty;
 
-                    await userRepository.UpsertAsync(userEntity, context.RequestAborted);
+                            var rawDisplayName = FirstNonBlank(
+                                user.FindFirst($"{ns}display_name")?.Value,
+                                user.FindFirst(ClaimTypes.Name)?.Value);
 
-                    cache.Set(cacheKey, true, new MemoryCacheEntryOptions
+                            var displayName = ResolveValidDisplayName(rawDisplayName, email, userId);
+
+                            var userEntity = new User
+                            {
+                                Id = userId,
+                                Email = email,
+                                DisplayName = displayName,
+                                CreatedAt = DateTime.UtcNow
+                            };
+
+                            await userRepository.UpsertAsync(userEntity, context.RequestAborted);
+
+                            cache.Set(cacheKey, true, new MemoryCacheEntryOptions
+                            {
+                                SlidingExpiration = CacheSlidingExpiration
+                            });
+                        }
+                    }
+                    finally
                     {
-                        SlidingExpiration = CacheSlidingExpiration
-                    });
+                        userLock.Release();
+                    }
                 }
             }
         }

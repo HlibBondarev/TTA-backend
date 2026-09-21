@@ -202,4 +202,39 @@ public class UserSynchronizationMiddlewareTests
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
+
+    /// <summary>
+    /// Verifies that concurrent in-flight requests for the same user only trigger a single database upsert.
+    /// </summary>
+    [Fact]
+    public async Task InvokeAsync_ShouldDeduplicateConcurrentRequests_ForSameUser()
+    {
+        // Arrange
+        var userId = "auth0|concurrent_123";
+        var claims = new[]
+        {
+            new Claim("sub", userId),
+            new Claim(ClaimTypes.Email, "concurrent@example.com"),
+            new Claim(ClaimTypes.Name, "Concurrent User")
+        };
+
+        var middleware = CreateMiddleware();
+
+        // Simulate 5 concurrent requests from the same user on cold cache
+        var tasks = Enumerable.Range(0, 5).Select(_ =>
+        {
+            var context = new DefaultHttpContext();
+            var identity = new ClaimsIdentity(claims, "TestAuth");
+            context.User = new ClaimsPrincipal(identity);
+            return middleware.InvokeAsync(context, _userRepositoryMock.Object, _auth0Settings);
+        });
+
+        // Act
+        await Task.WhenAll(tasks);
+
+        // Assert
+        _userRepositoryMock.Verify(
+            r => r.UpsertAsync(It.Is<User>(u => u.Id == userId), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 }
