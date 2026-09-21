@@ -52,81 +52,124 @@ public class UserSynchronizationMiddleware(RequestDelegate next, IMemoryCache ca
 
         if (user.Identity?.IsAuthenticated == true)
         {
-            var ns = auth0Settings.Namespace;
-
             var userId = FirstNonBlank(
                 user.FindFirst(ClaimTypes.NameIdentifier)?.Value,
                 user.FindFirst(IdentityResourceClaimsTypes.Sub)?.Value);
 
             if (!string.IsNullOrEmpty(userId))
             {
-                var cacheKey = $"jit_user_{userId}";
-
-                if (!cache.TryGetValue(cacheKey, out _))
-                {
-                    KeyedLock lockEntry;
-                    lock (UserLocks)
-                    {
-                        lockEntry = UserLocks.GetOrAdd(userId, _ => new KeyedLock());
-                        lockEntry.RefCount++;
-                    }
-
-                    var lockAcquired = false;
-                    try
-                    {
-                        await lockEntry.Semaphore.WaitAsync(context.RequestAborted);
-                        lockAcquired = true;
-
-                        // Double-checked locking to avoid redundant DB upserts during concurrent request bursts
-                        if (!cache.TryGetValue(cacheKey, out _))
-                        {
-                            var email = FirstNonBlank(
-                                user.FindFirst($"{ns}{IdentityResourceClaimsTypes.Email}")?.Value,
-                                user.FindFirst(ClaimTypes.Email)?.Value) ?? string.Empty;
-
-                            var rawDisplayName = FirstNonBlank(
-                                user.FindFirst($"{ns}display_name")?.Value,
-                                user.FindFirst(ClaimTypes.Name)?.Value);
-
-                            var displayName = ResolveValidDisplayName(rawDisplayName, email, userId);
-
-                            var userEntity = new User
-                            {
-                                Id = userId,
-                                Email = email,
-                                DisplayName = displayName,
-                                CreatedAt = DateTime.UtcNow
-                            };
-
-                            await userRepository.UpsertAsync(userEntity, context.RequestAborted);
-
-                            cache.Set(cacheKey, true, new MemoryCacheEntryOptions
-                            {
-                                SlidingExpiration = CacheSlidingExpiration
-                            });
-                        }
-                    }
-                    finally
-                    {
-                        if (lockAcquired)
-                        {
-                            lockEntry.Semaphore.Release();
-                        }
-
-                        lock (UserLocks)
-                        {
-                            lockEntry.RefCount--;
-                            if (lockEntry.RefCount == 0)
-                            {
-                                UserLocks.TryRemove(userId, out _);
-                            }
-                        }
-                    }
-                }
+                await SynchronizeUserAsync(context, userRepository, auth0Settings, userId);
             }
         }
 
         await next(context);
+    }
+
+    /// <summary>
+    /// Synchronizes user profile on cache miss using per-user double-checked locking.
+    /// </summary>
+    private async Task SynchronizeUserAsync(
+        HttpContext context,
+        IUserRepository userRepository,
+        Auth0Settings auth0Settings,
+        string userId)
+    {
+        var cacheKey = $"jit_user_{userId}";
+
+        if (cache.TryGetValue(cacheKey, out _))
+        {
+            return;
+        }
+
+        var lockEntry = AcquireUserLock(userId);
+        var lockAcquired = false;
+
+        try
+        {
+            await lockEntry.Semaphore.WaitAsync(context.RequestAborted);
+            lockAcquired = true;
+
+            if (!cache.TryGetValue(cacheKey, out _))
+            {
+                await PerformUserUpsertAsync(context, userRepository, auth0Settings, userId, cacheKey);
+            }
+        }
+        finally
+        {
+            ReleaseUserLock(userId, lockEntry, lockAcquired);
+        }
+    }
+
+    /// <summary>
+    /// Retrieves or creates a lock entry for the specified user and increments its reference count.
+    /// </summary>
+    private static KeyedLock AcquireUserLock(string userId)
+    {
+        lock (UserLocks)
+        {
+            var lockEntry = UserLocks.GetOrAdd(userId, _ => new KeyedLock());
+            lockEntry.RefCount++;
+            return lockEntry;
+        }
+    }
+
+    /// <summary>
+    /// Releases the semaphore if acquired and decrements the user lock reference count, evicting the entry when zero.
+    /// </summary>
+    private static void ReleaseUserLock(string userId, KeyedLock lockEntry, bool lockAcquired)
+    {
+        if (lockAcquired)
+        {
+            lockEntry.Semaphore.Release();
+        }
+
+        lock (UserLocks)
+        {
+            lockEntry.RefCount--;
+            if (lockEntry.RefCount == 0)
+            {
+                UserLocks.TryRemove(userId, out _);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Extracts user claims, resolves a valid display name, and persists the user entity to database and memory cache.
+    /// </summary>
+    private async Task PerformUserUpsertAsync(
+        HttpContext context,
+        IUserRepository userRepository,
+        Auth0Settings auth0Settings,
+        string userId,
+        string cacheKey)
+    {
+        var ns = auth0Settings.Namespace;
+        var user = context.User;
+
+        var email = FirstNonBlank(
+            user.FindFirst($"{ns}{IdentityResourceClaimsTypes.Email}")?.Value,
+            user.FindFirst(ClaimTypes.Email)?.Value) ?? string.Empty;
+
+        var rawDisplayName = FirstNonBlank(
+            user.FindFirst($"{ns}display_name")?.Value,
+            user.FindFirst(ClaimTypes.Name)?.Value);
+
+        var displayName = ResolveValidDisplayName(rawDisplayName, email, userId);
+
+        var userEntity = new User
+        {
+            Id = userId,
+            Email = email,
+            DisplayName = displayName,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await userRepository.UpsertAsync(userEntity, context.RequestAborted);
+
+        cache.Set(cacheKey, true, new MemoryCacheEntryOptions
+        {
+            SlidingExpiration = CacheSlidingExpiration
+        });
     }
 
     /// <summary>
