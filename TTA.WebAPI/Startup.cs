@@ -191,6 +191,9 @@ public static class Startup
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
 
+        // Register MemoryCache for JIT User Synchronization caching
+        services.AddMemoryCache();
+
         // Swagger configuration for OAuth2 Authorization Code flow with PKCE
         builder.Services.AddSwaggerGen(options =>
         {
@@ -260,6 +263,7 @@ public static class Startup
         app.UseRouting();
 
         app.UseAuthentication(); // Who are you? (JWT check)
+        app.UseMiddleware<UserSynchronizationMiddleware>(); // JIT User Sync
         app.UseAuthorization();  // Can you come here? (Policy check)
 
         app.MapControllers();
