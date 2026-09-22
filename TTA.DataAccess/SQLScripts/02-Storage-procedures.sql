@@ -1005,6 +1005,11 @@ BEGIN
     AND NOT EXISTS (
         SELECT 1 FROM public.timeanchors ta
         WHERE ta.matchid = m.id
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM public.usertrackedmatches other_utm
+        WHERE other_utm.matchid = m.id
+          AND other_utm.userid <> p_user_id
     );
 
     -- 0. Resolve tournament owner: 

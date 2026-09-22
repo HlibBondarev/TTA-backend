@@ -253,6 +253,93 @@ public class MatchRepositoryTests : BaseIntegrationTest
         guestRosterCount.Should().Be(3, "guest team roster should be filled up to rosterlimit (3)");
     }
 
+    /// <summary>
+    /// Verifies that JIT garbage collection during quick match creation does not purge an empty match 
+    /// if another user is also tracking it.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.< /returns >
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldNotPurgeEmptyMatch_WhenTrackedByAnotherUser()
+    {
+        // Arrange
+        var user1Id = $"auth0|user1-{Guid.NewGuid():N}";
+        var user2Id = $"auth0|user2-{Guid.NewGuid():N}";
+        var sharedMatchId = Guid.NewGuid();
+        var newMatchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        await SeedUserAsync(user1Id, $"user1_{Guid.NewGuid():N}@example.com", "User One");
+        await SeedUserAsync(user2Id, $"user2_{Guid.NewGuid():N}@example.com", "User Two");
+
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await using var transaction = await conn.BeginTransactionAsync();
+
+            // 1. Seed JIT base geography
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+                new { cityId = tempCityId }, transaction: transaction);
+
+            var actualCityId = await conn.ExecuteScalarAsync<Guid>(
+                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
+                transaction: transaction);
+
+            // 2. Seed default club
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.clubs (id, cityid, name, createdat) 
+                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+                ON CONFLICT DO NOTHING;",
+                new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
+
+            // 3. Seed sport & configuration
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+                VALUES (@sportId, @name, 'SHP', @configId)",
+                new { sportId, name = $"SharedPolo_{Guid.NewGuid():N}", configId }, transaction: transaction);
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+                new { configId, sportId }, transaction: transaction);
+
+            await transaction.CommitAsync();
+        }
+
+        // 4. Create initial quick match for user 1 and catch it for both user 1 and user 2
+        var sharedMatch = await _repository.CreateQuickMatchAsync(sharedMatchId, sportId, user1Id, configId, CancellationToken.None);
+        sharedMatch.Should().NotBeNull();
+
+        await _repository.CatchMatchAsync(sharedMatchId, sharedMatch!.HomeTeamId, user1Id, CancellationToken.None);
+        await _repository.CatchMatchAsync(sharedMatchId, sharedMatch.HomeTeamId, user2Id, CancellationToken.None);
+
+        // Act: User 1 creates a new quick match, which triggers JIT garbage collection for user 1
+        var newMatch = await _repository.CreateQuickMatchAsync(newMatchId, sportId, user1Id, configId, CancellationToken.None);
+        newMatch.Should().NotBeNull();
+
+        // Assert: Verify sharedMatchId and User 2's tracking record remain intact
+        using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await checkConn.OpenAsync();
+
+            var matchExists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = sharedMatchId });
+
+            var user2TrackingExists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.usertrackedmatches WHERE matchid = @matchId AND userid = @userId)",
+                new { matchId = sharedMatchId, userId = user2Id });
+
+            matchExists.Should().BeTrue("shared empty match must not be purged when tracked by another user");
+            user2TrackingExists.Should().BeTrue("second user's tracking link must remain intact");
+        }
+    }
+
     #endregion
 
     #region DeleteAsync Tests
@@ -745,10 +832,14 @@ public class MatchRepositoryTests : BaseIntegrationTest
     /// <param name="displayName">The display name of the user.</param>
     private async Task SeedUserAsync(string userId, string email, string displayName)
     {
-        using var conn = (System.Data.Common.DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
-        await conn.ExecuteAsync(
-            "INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @email, @displayName, NOW()) ON CONFLICT (id) DO NOTHING;",
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.users (id, email, displayname, createdat) 
+            VALUES (@id, @email, @displayName, NOW()) 
+            ON CONFLICT (id) DO UPDATE SET 
+                email = EXCLUDED.email, 
+                displayname = EXCLUDED.displayname;",
             new { id = userId, email, displayName });
     }
 
