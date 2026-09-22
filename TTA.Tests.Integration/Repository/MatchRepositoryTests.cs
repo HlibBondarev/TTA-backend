@@ -340,6 +340,100 @@ public class MatchRepositoryTests : BaseIntegrationTest
         }
     }
 
+    /// <summary>
+    /// Verifies that JIT garbage collection during quick match creation successfully purges 
+    /// an orphan empty match belonging to the user when it has no game events and no time anchors.
+    /// 
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldPurgeOrphanEmptyMatch_WhenNoEventsOrAnchorsExist()
+    {
+        // Arrange
+        var userId = $"auth0|user-gc-{Guid.NewGuid():N}";
+        var orphanMatchId = Guid.NewGuid();
+        var newMatchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        await SeedUserAsync(userId, $"usergc_{Guid.NewGuid():N}@example.com", "GC User");
+
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await using var transaction = await conn.BeginTransactionAsync();
+
+            // 1. Seed JIT base geography
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+                new { cityId = tempCityId }, transaction: transaction);
+
+            var actualCityId = await conn.ExecuteScalarAsync<Guid>(
+                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
+                transaction: transaction);
+
+            // 2. Seed default club
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.clubs (id, cityid, name, createdat) 
+                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+                ON CONFLICT DO NOTHING;",
+                new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
+
+            // 3. Seed sport & configuration
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+                VALUES (@sportId, @name, 'GCP', @configId)",
+                new { sportId, name = $"GCPolo_{Guid.NewGuid():N}", configId }, transaction: transaction);
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+                new { configId, sportId }, transaction: transaction);
+
+            await transaction.CommitAsync();
+        }
+
+        // 4. Create an initial orphan match using CreateQuickMatchAsync and track it
+        var orphanMatch = await _repository.CreateQuickMatchAsync(orphanMatchId, sportId, userId, configId, CancellationToken.None);
+        orphanMatch.Should().NotBeNull();
+
+        await _repository.CatchMatchAsync(orphanMatchId, orphanMatch!.HomeTeamId, userId, CancellationToken.None);
+
+        // Verify the orphan match exists prior to GC
+        using (var preCheckConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await preCheckConn.OpenAsync();
+
+            // Use generic ExecuteScalarAsync < bool > with spaces in brackets
+            var existsBefore = await preCheckConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = orphanMatchId });
+
+            existsBefore.Should().BeTrue("orphan match should exist before triggering JIT GC");
+        }
+
+        // Act: User creates a new quick match, which triggers JIT garbage collection for this user,
+        // purging the previous empty match since it has no game events and no time anchors.
+        var newMatch = await _repository.CreateQuickMatchAsync(newMatchId, sportId, userId, configId, CancellationToken.None);
+        newMatch.Should().NotBeNull();
+
+        // Assert: Verify that the old orphan match has been purged by GC
+        using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await checkConn.OpenAsync();
+
+            // Use generic ExecuteScalarAsync < bool > with spaces in brackets
+            var matchExists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = orphanMatchId });
+
+            matchExists.Should().BeFalse("orphan empty match with no game events or time anchors must be purged by JIT GC");
+        }
+    }
+
     #endregion
 
     #region DeleteAsync Tests
