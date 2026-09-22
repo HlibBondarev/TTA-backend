@@ -1726,8 +1726,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     #region Quick Match Tests
 
     /// <summary>
-    /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> returns <see cref="HttpStatusCode.Created"/> (201),
-    /// a populated <see cref="QuickMatchResponse"/>, Provisions JIT User in public.users, verifies tournament ownership,
+    /// Verifies that <see cref="MatchesController.CreateQuickMatch" /> returns <see cref="HttpStatusCode.Created" /> (201),
+    /// a populated <see cref="QuickMatchResponse" />, Provisions JIT User in public.users, verifies tournament ownership,
     /// and initializes starting lineups for both Home and Guest teams.
     /// </summary>
     [Fact]
@@ -1769,14 +1769,20 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
                 WHERE sportid = @sportId;",
                 new { sportId });
 
-            // 4. Seed 10 players: 1..5 will be assigned to Home Squad, 6..10 to Guest Squad
-            for (int i = 1; i <= 10; i++)
+            // 4. Seed players for Home and Guest teams so create_quick_match can register them into rosters and lineups
+            for (int i = 1; i <= 5; i++)
             {
                 await conn.ExecuteAsync(@"
                     INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
-                    VALUES (@id, @clubId, @fn, 'QuickPlayer', '2000-01-01', 0, NOW())
+                    VALUES (@id, @clubId, 'Home Player', @ln, '2000-01-01', 0, NOW())
                     ON CONFLICT DO NOTHING;",
-                    new { id = Guid.NewGuid(), clubId = defaultClubId, fn = $"QuickPlayer_{i}" });
+                    new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() });
+
+                await conn.ExecuteAsync(@"
+                    INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+                    VALUES (@id, @clubId, 'Guest Player', @ln, '2000-01-01', 0, NOW())
+                    ON CONFLICT DO NOTHING;",
+                    new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() });
             }
         }
 

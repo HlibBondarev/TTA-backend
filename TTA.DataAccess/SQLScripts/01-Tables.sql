@@ -225,19 +225,15 @@ CREATE INDEX ix_playerrosters_team ON playerrosters (teamid);
 CREATE TABLE matchlineups (
     id UUID PRIMARY KEY,
     matchid UUID NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
-    -- playerrosterid is now NULLABLE to allow "Team" placeholders (for timeouts, etc.)
-    playerrosterid UUID NULL REFERENCES playerrosters(id) ON DELETE CASCADE,
-    number INT NOT NULL, -- Jersey number; -1=Home placeholder, -2=Guest placeholder. Positive values are real player jerseys.
-    -- positionid is NULLABLE for team placeholders
-    positionid UUID NULL REFERENCES playerpositiondefinitions(id),
+    playerrosterid UUID NOT NULL REFERENCES playerrosters(id) ON DELETE CASCADE,
+    number INT NOT NULL,
+    positionid UUID NOT NULL REFERENCES playerpositiondefinitions(id),
 
-    -- Uniqueness for match lineup rows (real or placeholder).
-    -- Placeholder rows have playerrosterid = NULL and are distinguished by number (-1 = Home, -2 = Guest).
-    -- NULLS NOT DISTINCT prevents duplicate placeholders from being created at the DB level.
-    CONSTRAINT uix_matchlineups_match_player_placeholder
-        UNIQUE NULLS NOT DISTINCT (matchid, playerrosterid, number),
+    -- Uniqueness constraint ensuring a player is registered only once per match protocol
+    CONSTRAINT uix_matchlineups_match_player
+        UNIQUE (matchid, playerrosterid),
 
-    -- Composite PK/FK target to link (matchlineup, match) tuples in foreign keys.
+    -- Composite PK/FK target to link (matchlineup, match) tuples in foreign keys
     CONSTRAINT uix_matchlineups_id_match UNIQUE (id, matchid)
 );
 

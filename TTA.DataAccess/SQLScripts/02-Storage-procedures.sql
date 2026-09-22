@@ -1090,14 +1090,16 @@ BEGIN
         INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname)
         VALUES (v_position_id, p_sport_id, 'Universal', 'UNI');
     END IF;
-
-    -- 7. Bulk-register up to rosterlimit players for HOME SQUAD
+    
+   -- 7. Bulk-register up to rosterlimit players for HOME SQUAD
     WITH ranked_players AS (
         SELECT 
             p.id AS player_id,
-            ROW_NUMBER() OVER (ORDER BY p.createdat, p.id) AS rn
+            ROW_NUMBER() OVER (ORDER BY p.lastname::NUMERIC, p.id) AS rn
         FROM public.players p
-        WHERE p.homeclubid = v_club_id
+        WHERE p.homeclubid = v_club_id 
+          AND p.firstname = 'Home Player'
+          AND p.lastname ~ '^[0-9]+$'
     )
     INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, number, positionid, createdat)
     SELECT 
@@ -1116,9 +1118,11 @@ BEGIN
     WITH ranked_players AS (
         SELECT 
             p.id AS player_id,
-            ROW_NUMBER() OVER (ORDER BY p.createdat, p.id) AS rn
+            ROW_NUMBER() OVER (ORDER BY p.lastname::NUMERIC, p.id) AS rn
         FROM public.players p
-        WHERE p.homeclubid = v_club_id
+        WHERE p.homeclubid = v_club_id 
+          AND p.firstname = 'Guest Player'
+          AND p.lastname ~ '^[0-9]+$'
     )
     INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, number, positionid, createdat)
     SELECT 
@@ -1126,11 +1130,11 @@ BEGIN
         v_tournament_id,
         v_guest_team_id,
         rp.player_id,
-        (rp.rn - v_roster_limit)::INT,
+        rp.rn::INT,
         v_position_id,
         v_now
     FROM ranked_players rp
-    WHERE rp.rn > v_roster_limit AND rp.rn <= (v_roster_limit * 2)
+    WHERE rp.rn <= v_roster_limit
     ON CONFLICT (tournamentid, playerid) DO NOTHING;
 
     -- 9. Insert Match entity directly
@@ -1179,36 +1183,6 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 -- MATCHLINEUP MANAGEMENT FUNCTIONS
 -- =============================================================
-/*****************************************************************************
- * Trigger function to automatically create team placeholders in matchlineups
- *****************************************************************************/
- -- We create two records so that team-specific events (like timeouts) can be attributed correctly
-CREATE OR REPLACE FUNCTION public.fn_create_team_placeholders()
-RETURNS TRIGGER AS $$
-DECLARE
-    -- Sentinel jersey numbers for team-level placeholder lineup rows.
-    -- Kept negative so they can never collide with real jersey numbers
-    -- and are easy to filter out via `number > 0`.
-    c_home_placeholder CONSTANT INT := -1;
-    c_guest_placeholder CONSTANT INT := -2;
-BEGIN
-    -- Placeholder for Home Team
-    INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid)
-    VALUES (gen_random_uuid(), NEW.id, NULL, c_home_placeholder, NULL);
-
-    -- Placeholder for Guest Team
-    INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid)
-    VALUES (gen_random_uuid(), NEW.id, NULL, c_guest_placeholder, NULL);
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_matches_after_insert
-AFTER INSERT ON public.matches
-FOR EACH ROW
-EXECUTE FUNCTION public.fn_create_team_placeholders();
-
 /**********************************************************************************
  * Upserts a player into the match lineup with full business rule validation.
  * * Validations:
@@ -1370,7 +1344,7 @@ END;$$ LANGUAGE plpgsql;
 
 /***************************************************************************************
  * Copies a specific selection of players from the tournament roster to the match.
- * Initialized with roster defaults: jersey number, position, and starting flag = FALSE.
+ * Initialized with roster defaults: jersey number and position definition.
  * Uses ON CONFLICT to skip players already present in the match lineup.
  * p_player_roster_ids: Array of UUIDs from the playerrosters table.
  ***************************************************************************************/
@@ -1438,8 +1412,8 @@ BEGIN
     WHERE pr.id = ANY(p_player_roster_ids)
       AND pr.teamid = p_teamid 
       AND pr.tournamentid = v_tournamentid
-    -- Updated to match the new unique constraint (matchid, playerrosterid, number)
-    ON CONFLICT (matchid, playerrosterid, number) DO NOTHING;
+    -- Matches unique constraint uix_matchlineups_match_player (matchid, playerrosterid)
+    ON CONFLICT (matchid, playerrosterid) DO NOTHING;
 
     GET DIAGNOSTICS v_inserted_count = ROW_COUNT;
     RETURN v_inserted_count;
@@ -1500,7 +1474,6 @@ END;$$ LANGUAGE plpgsql;
 -- =============================================================
 -- EVENT DEFINITION & USER PRESETS STORED FUNCTIONS
 -- =============================================================
-
 /**********************************************************************************
  * Upserts a custom user event definition and automatically enables it inside 
  * the user's active preset for the sport with the next available sort order position.
@@ -1872,7 +1845,6 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 -- GAME EVENTS STORED FUNCTIONS
 -- =============================================================
-
 /**********************************************************************************
  * Ingests a JSONB array of game events and performs set-based upsert operations.
  * Maps JSON properties directly to public.gameevents table columns.
@@ -2069,7 +2041,6 @@ $$ LANGUAGE plpgsql;
  * Iterates through all match periods, computes the piecewise-linear time 
  * normalization coefficient (K), and batch updates the normalized match time 
  * for all game events belonging to a specific team.
- * Automatically processes team placeholders (jerseys -1 and -2) for team events.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.normalize_match_events_time(
     p_match_id UUID,
@@ -2109,14 +2080,10 @@ BEGIN
         IF EXISTS (
             SELECT 1 
             FROM public.gameevents ge
-            JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
-            LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+            INNER JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
+            INNER JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
             WHERE ml.matchid = p_match_id
-              AND (
-                  (ml.playerrosterid IS NOT NULL AND pr.teamid = p_team_id)
-                  OR (ml.playerrosterid IS NULL AND ml.number = -1 AND (SELECT hometeamid FROM public.matches WHERE id = p_match_id) = p_team_id)
-                  OR (ml.playerrosterid IS NULL AND ml.number = -2 AND (SELECT guestteamid FROM public.matches WHERE id = p_match_id) = p_team_id)
-              )
+              AND pr.teamid = p_team_id
         ) THEN
             RAISE EXCEPTION 'No time anchors found for match %, but target team events exist', p_match_id
                 USING ERRCODE = 'P0001';
@@ -2158,15 +2125,11 @@ BEGIN
             IF EXISTS (
                 SELECT 1 
                 FROM public.gameevents ge
-                JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
-                LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+                INNER JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
+                INNER JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
                 WHERE ml.matchid = p_match_id 
                   AND ge.periodnumber = v_period.periodnumber
-                  AND (
-                      (ml.playerrosterid IS NOT NULL AND pr.teamid = p_team_id)
-                      OR (ml.playerrosterid IS NULL AND ml.number = -1 AND (SELECT hometeamid FROM public.matches WHERE id = p_match_id) = p_team_id)
-                      OR (ml.playerrosterid IS NULL AND ml.number = -2 AND (SELECT guestteamid FROM public.matches WHERE id = p_match_id) = p_team_id)
-                  )
+                  AND pr.teamid = p_team_id
             ) THEN
                 RAISE EXCEPTION 'Cannot normalize match %, period % without active play time while target team events exist',
                     p_match_id, v_period.periodnumber
@@ -2182,15 +2145,11 @@ BEGIN
             FOR v_event IN
                 SELECT ge.id, ge.eventtimestamp
                 FROM public.gameevents ge
-                JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
-                LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+                INNER JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
+                INNER JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
                 WHERE ml.matchid = p_match_id 
                   AND ge.periodnumber = v_period.periodnumber
-                  AND (
-                      (ml.playerrosterid IS NOT NULL AND pr.teamid = p_team_id)
-                      OR (ml.playerrosterid IS NULL AND ml.number = -1 AND (SELECT hometeamid FROM public.matches WHERE id = p_match_id) = p_team_id)
-                      OR (ml.playerrosterid IS NULL AND ml.number = -2 AND (SELECT guestteamid FROM public.matches WHERE id = p_match_id) = p_team_id)
-                  )
+                  AND pr.teamid = p_team_id
             LOOP
                 v_accumulated_seconds := 0;
                 
@@ -2232,7 +2191,6 @@ END;$$ LANGUAGE plpgsql;
 -- =============================================================
 -- TIME ANCHORS STORED FUNCTIONS
 -- =============================================================
-
 /**********************************************************************************
  * Ingests a JSONB array of time anchors and performs set-based upsert operations.
  * Maps JSON properties directly to public.timeanchors table columns.
@@ -2349,7 +2307,6 @@ END;$$ LANGUAGE plpgsql;
 -- =============================================================
 -- PLAYER PRESENCE STORED FUNCTIONS & PROCEDURES
 -- =============================================================
-
 /**********************************************************************************
  * Inserts a new player presence record or updates an existing one (e.g., setting timeout).
  **********************************************************************************/
@@ -2470,20 +2427,16 @@ BEGIN
         COALESCE(SUM(EXTRACT(EPOCH FROM (pp.timeout - pp.timein))), 0)::DOUBLE PRECISION AS dirtyseconds
     FROM public.playerpresences pp
     JOIN public.matchlineups ml ON pp.matchlineupid = ml.id
-    LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    INNER JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
     WHERE ml.matchid = p_match_id
-      AND (
-          pr.teamid = p_team_id
-          OR (ml.playerrosterid IS NULL AND ml.number = -1 AND (SELECT hometeamid FROM public.matches WHERE id = p_match_id) = p_team_id)
-          OR (ml.playerrosterid IS NULL AND ml.number = -2 AND (SELECT guestteamid FROM public.matches WHERE id = p_match_id) = p_team_id)
-      )
+      AND pr.teamid = p_team_id
     GROUP BY ml.id, pp.periodnumber;
-END;$$ LANGUAGE plpgsql;
+END;
+$$ LANGUAGE plpgsql;
 
 -- =============================================================
 -- TTA MATCH & PLAYER REPORTS STORED FUNCTIONS
 -- =============================================================
-
 /**********************************************************************************
  * Function: public.get_match_team_summary_report
  * Description: Generates a generalized summary report for all players of a specific 
