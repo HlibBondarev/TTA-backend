@@ -40,14 +40,16 @@ public interface IMatchRepository : IEntityRepositoryBase<Guid, Match>
     Task<dynamic?> GetMatchByIdWithDetailsAsync(Guid matchId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Provisions JIT quick match infrastructure (teams, tournament, rosters) and creates a match record.
+    /// Provisions JIT quick match infrastructure (teams, tournament, rosters) and creates a match record using client-generated match ID.
     /// </summary>
+    /// <param name="matchId">The client-generated unique identifier for the match.</param>
     /// <param name="sportId">The unique identifier of the sport.</param>
     /// <param name="userId">The requesting user identifier for tournament ownership.</param>
     /// <param name="configurationId">The optional unique identifier of the sport configuration.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>The created <see cref="Match"/> entity if successful; otherwise, null.</returns>
     Task<Match?> CreateQuickMatchAsync(
+        Guid matchId,
         Guid sportId,
         string userId,
         Guid? configurationId = null,

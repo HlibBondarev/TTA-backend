@@ -59,12 +59,14 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
 
     /// <inheritdoc />
     public async Task<Match?> CreateQuickMatchAsync(
+        Guid matchId,
         Guid sportId,
         string userId,
         Guid? configurationId = null,
         CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
+        parameters.Add("MatchId", matchId);
         parameters.Add("SportId", sportId);
         parameters.Add("UserId", userId);
         parameters.Add("ConfigurationId", configurationId);

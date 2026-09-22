@@ -946,7 +946,8 @@ $$ LANGUAGE plpgsql;
 /************************************************************************************************
  * Function: public.create_quick_match
  * Description: Provisions JIT teams, tournament container, player rosters (capped by rosterlimit 
- *              for both Home and Guest teams), AND creates the match entity.
+ *              for both Home and Guest teams), AND creates the match entity using client-generated p_match_id.
+ *              Executes JIT garbage collection for previous empty orphan matches owned by p_user_id.
  *              Ensures base geography and default club exist JIT to guarantee idempotency.
  *              Requires an authenticated user identifier (p_user_id) to set as fallback owner.
  *              Assigns Global FullControl Admin as tournament owner if available.
@@ -954,6 +955,7 @@ $$ LANGUAGE plpgsql;
  *              Returns full match entity record matching public.matches structure.
  ************************************************************************************************/
 CREATE OR REPLACE FUNCTION public.create_quick_match(
+    p_match_id UUID,
     p_sport_id UUID,
     p_user_id VARCHAR(64),
     p_configuration_id UUID DEFAULT NULL
@@ -972,16 +974,38 @@ DECLARE
     v_home_team_id UUID;
     v_guest_team_id UUID;
     v_tournament_id UUID;
-    v_match_id UUID := gen_random_uuid();
+    v_match_id UUID := p_match_id;
     v_now TIMESTAMP WITH TIME ZONE := CURRENT_TIMESTAMP;
     v_position_id UUID;
     v_roster_limit INT;
 BEGIN
-    -- Validation: Ensure user ID is provided
+    -- Validation: Ensure match ID and user ID are provided
+    IF p_match_id IS NULL OR p_match_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
+        RAISE EXCEPTION 'Match ID is required for quick match creation.'
+            USING ERRCODE = '22004'; -- Null Value Not Allowed
+    END IF;
+
     IF p_user_id IS NULL OR trim(p_user_id) = '' THEN
         RAISE EXCEPTION 'User ID is required for quick match tournament creation.'
             USING ERRCODE = '22004'; -- Null Value Not Allowed
     END IF;
+
+    -- JIT Garbage Collection: Cleanup orphan empty quick matches for the user
+    DELETE FROM public.matches m
+    WHERE m.id IN (
+        SELECT utm.matchid
+        FROM public.usertrackedmatches utm
+        WHERE utm.userid = p_user_id
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM public.gameevents ge
+        JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
+        WHERE ml.matchid = m.id
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM public.timeanchors ta
+        WHERE ta.matchid = m.id
+    );
 
     -- 0. Resolve tournament owner: 
     -- Search for Global FullControl (Admin) policy (targettype = 0 AND role = 0)
@@ -1137,7 +1161,7 @@ BEGIN
     WHERE rp.rn <= v_roster_limit
     ON CONFLICT (tournamentid, playerid) DO NOTHING;
 
-    -- 9. Insert Match entity directly
+    -- 9. Insert Match entity directly using supplied match ID
     INSERT INTO public.matches (
         id,
         tournamentid,

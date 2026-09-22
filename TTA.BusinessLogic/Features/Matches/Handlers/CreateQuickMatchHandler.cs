@@ -43,7 +43,7 @@ public class CreateQuickMatchHandler(
 
     /// <summary>
     /// Provisions quick match infrastructure, verifies or grants team editor access policies for both competing teams, 
-    /// and copies starter roster entries into the match lineup for both Home and Guest teams.
+    /// copies starter roster entries into the match lineup for both Home and Guest teams, and optionally tracks the match.
     /// Performs compensating cleanup if post-creation provisioning fails.
     /// </summary>
     /// <param name="command">The command containing quick match setup parameters and authenticated user details.</param>
@@ -54,8 +54,8 @@ public class CreateQuickMatchHandler(
         CreateQuickMatchCommand command,
         CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Initiating quick match creation for SportId {SportId} by User {UserId}.",
-            command.Request.SportId, command.UserId);
+        _logger.LogDebug("Initiating quick match creation for MatchId {MatchId} and SportId {SportId} by User {UserId}.",
+            command.Request.Id, command.Request.SportId, command.UserId);
 
         var isNewUser = false;
         Match? quickMatch = null;
@@ -79,6 +79,18 @@ public class CreateQuickMatchHandler(
             }
 
             await PopulateStartingLineupsAsync(quickMatch, command, cancellationToken);
+
+            if (command.Request.TrackedTeamId.HasValue)
+            {
+                _logger.LogDebug("Atomically catching match {MatchId} for tracked team {TeamId} and user {UserId}.",
+                    quickMatch.Id, command.Request.TrackedTeamId.Value, command.UserId);
+
+                await _matchRepository.CatchMatchAsync(
+                    quickMatch.Id,
+                    command.Request.TrackedTeamId.Value,
+                    command.UserId,
+                    cancellationToken);
+            }
 
             _logger.LogInformation("Successfully completed quick match creation for Match {MatchId}.", quickMatch.Id);
 
@@ -127,6 +139,7 @@ public class CreateQuickMatchHandler(
     private async Task<Match> CreateQuickMatchEntityAsync(CreateQuickMatchCommand command, CancellationToken cancellationToken)
     {
         var quickMatch = await _matchRepository.CreateQuickMatchAsync(
+            command.Request.Id,
             command.Request.SportId,
             command.UserId,
             command.Request.ConfigurationId,
@@ -134,7 +147,8 @@ public class CreateQuickMatchHandler(
 
         if (quickMatch == null)
         {
-            _logger.LogError("Failed to provision quick match infrastructure for SportId {SportId}.", command.Request.SportId);
+            _logger.LogError("Failed to provision quick match infrastructure for MatchId {MatchId} and SportId {SportId}.",
+                command.Request.Id, command.Request.SportId);
             throw new KeyNotFoundException($"Failed to provision quick match infrastructure for SportId: {command.Request.SportId}");
         }
 

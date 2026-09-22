@@ -159,7 +159,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that <see cref="MatchRepository.CreateQuickMatchAsync"/> provisions JIT teams, tournament container, 
-    /// player rosters for both Home and Guest teams, and creates the match entity in a single atomic database operation.
+    /// player rosters for both Home and Guest teams, and creates the match entity using client-supplied match ID.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
@@ -170,6 +170,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
 
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
@@ -178,7 +179,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
         // 0. Ensure User exists for ownership assigning
         await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
-            new { id = userId, e = $"quickmatch@test.com", n = $"QuickMatch Owner" }, transaction: transaction);
+            new { id = userId, e = "quickmatch@test.com", n = "QuickMatch Owner" }, transaction: transaction);
 
         // 1. Ensure JIT base geography exists
         await conn.ExecuteAsync(@"
@@ -229,11 +230,11 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await transaction.CommitAsync();
 
         // Act
-        var result = await _repository.CreateQuickMatchAsync(sportId, userId, configId, CancellationToken.None);
+        var result = await _repository.CreateQuickMatchAsync(matchId, sportId, userId, configId, CancellationToken.None);
 
         // Assert
         result.Should().NotBeNull();
-        result!.Id.Should().NotBeEmpty();
+        result!.Id.Should().Be(matchId);
         result.TournamentId.Should().NotBeEmpty();
         result.HomeTeamId.Should().NotBeEmpty();
         result.GuestTeamId.Should().NotBeEmpty();

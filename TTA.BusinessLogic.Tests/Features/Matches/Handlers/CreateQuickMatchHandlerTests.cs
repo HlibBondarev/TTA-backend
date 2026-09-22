@@ -20,10 +20,11 @@ namespace TTA.BusinessLogic.Tests.Features.Matches.Handlers;
 /// Validates business rules and orchestration logic during quick match creation, including:
 /// <list type="bullet">
 ///   <item><description>Just-in-time user provisioning and registration in database.</description></item>
-///   <item><description>Atomic just-in-time infrastructure provisioning via database repositories.</description></item>
+///   <item><description>Atomic just-in-time infrastructure provisioning via database repositories using client-generated match ID.</description></item>
 ///   <item><description>Automated granting or promotion of team editor permissions for both Home and Guest team managers.</description></item>
 ///   <item><description>Fallback resolution to default sport configurations when config IDs are omitted.</description></item>
 ///   <item><description>Initial starting lineup population for both Home and Guest teams up to configured lineup limits.</description></item>
+///   <item><description>Optional atomic match tracking (catch) when TrackedTeamId is provided in request.</description></item>
 ///   <item><description>Compensating rollback cleanup when post-creation initialization steps fail.</description></item>
 /// </list>
 /// </remarks>
@@ -111,18 +112,19 @@ public class CreateQuickMatchHandlerTests
     public async Task Handle_ShouldCreateQuickMatchAndGrantPoliciesAndPopulateLineupsForBothTeams_WhenRequestIsValid()
     {
         // Arrange
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         const string userId = "auth0|user123";
         const string userEmail = "user123@example.com";
         const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest(sportId, configId);
+        var request = new CreateQuickMatchRequest(matchId, sportId, configId);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
         {
-            Id = Guid.NewGuid(),
+            Id = matchId,
             TournamentId = Guid.NewGuid(),
             HomeTeamId = Guid.NewGuid(),
             GuestTeamId = Guid.NewGuid(),
@@ -162,7 +164,7 @@ public class CreateQuickMatchHandlerTests
             .ReturnsAsync((User user, CancellationToken _) => (user, false));
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
+            .Setup(r => r.CreateQuickMatchAsync(matchId, sportId, userId, configId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdMatch);
 
         _accessRepositoryMock
@@ -194,7 +196,7 @@ public class CreateQuickMatchHandlerTests
 
         // Assert
         Assert.NotNull(result);
-        Assert.Equal(createdMatch.Id, result.Id);
+        Assert.Equal(matchId, result.Id);
         Assert.Equal(createdMatch.TournamentId, result.TournamentId);
         Assert.Equal(createdMatch.HomeTeamId, result.HomeTeamId);
         Assert.Equal(createdMatch.GuestTeamId, result.GuestTeamId);
@@ -242,18 +244,19 @@ public class CreateQuickMatchHandlerTests
     public async Task Handle_ShouldGrantPolicyOnlyForGuestTeam_WhenUserAlreadyHasHomeTeamPolicy()
     {
         // Arrange
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         const string userId = "auth0|user123";
         const string userEmail = "user123@example.com";
         const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest(sportId, configId);
+        var request = new CreateQuickMatchRequest(matchId, sportId, configId);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
         {
-            Id = Guid.NewGuid(),
+            Id = matchId,
             TournamentId = Guid.NewGuid(),
             HomeTeamId = Guid.NewGuid(),
             GuestTeamId = Guid.NewGuid(),
@@ -268,7 +271,7 @@ public class CreateQuickMatchHandlerTests
             .ReturnsAsync((User user, CancellationToken _) => (user, false));
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
+            .Setup(r => r.CreateQuickMatchAsync(matchId, sportId, userId, configId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdMatch);
 
         // User already has active Editor policy for Home Team
@@ -316,18 +319,19 @@ public class CreateQuickMatchHandlerTests
     public async Task Handle_ShouldGrantEditorPolicy_WhenUserHasOnlyViewerPolicy()
     {
         // Arrange
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         const string userId = "auth0|user123";
         const string userEmail = "user123@example.com";
         const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest(sportId, configId);
+        var request = new CreateQuickMatchRequest(matchId, sportId, configId);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
         {
-            Id = Guid.NewGuid(),
+            Id = matchId,
             TournamentId = Guid.NewGuid(),
             HomeTeamId = Guid.NewGuid(),
             GuestTeamId = Guid.NewGuid(),
@@ -342,7 +346,7 @@ public class CreateQuickMatchHandlerTests
             .ReturnsAsync((User user, CancellationToken _) => (user, false));
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
+            .Setup(r => r.CreateQuickMatchAsync(matchId, sportId, userId, configId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdMatch);
 
         // User holds Viewer policy for Home Team
@@ -390,18 +394,19 @@ public class CreateQuickMatchHandlerTests
     public async Task Handle_ShouldProvisionJitUser_WhenUserDoesNotExist()
     {
         // Arrange
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         const string userId = "auth0|newuser123";
         const string userEmail = "newuser123@example.com";
         const string userName = "New User";
 
-        var request = new CreateQuickMatchRequest(sportId, configId);
+        var request = new CreateQuickMatchRequest(matchId, sportId, configId);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
         {
-            Id = Guid.NewGuid(),
+            Id = matchId,
             TournamentId = Guid.NewGuid(),
             HomeTeamId = Guid.NewGuid(),
             GuestTeamId = Guid.NewGuid(),
@@ -416,7 +421,7 @@ public class CreateQuickMatchHandlerTests
             .ReturnsAsync((User user, CancellationToken _) => (user, true));
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
+            .Setup(r => r.CreateQuickMatchAsync(matchId, sportId, userId, configId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdMatch);
 
         _accessRepositoryMock
@@ -452,18 +457,19 @@ public class CreateQuickMatchHandlerTests
     public async Task Handle_ShouldResolveDefaultConfig_WhenConfigurationIdIsNull()
     {
         // Arrange
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         var defaultConfigId = Guid.NewGuid();
         const string userId = "auth0|user123";
         const string userEmail = "user123@example.com";
         const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest(sportId, null);
+        var request = new CreateQuickMatchRequest(matchId, sportId, null);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
         {
-            Id = Guid.NewGuid(),
+            Id = matchId,
             TournamentId = Guid.NewGuid(),
             HomeTeamId = Guid.NewGuid(),
             GuestTeamId = Guid.NewGuid(),
@@ -479,7 +485,7 @@ public class CreateQuickMatchHandlerTests
             .ReturnsAsync((User user, CancellationToken _) => (user, false));
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, null, It.IsAny<CancellationToken>()))
+            .Setup(r => r.CreateQuickMatchAsync(matchId, sportId, userId, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdMatch);
 
         _accessRepositoryMock
@@ -510,6 +516,72 @@ public class CreateQuickMatchHandlerTests
     }
 
     /// <summary>
+    /// Verifies that match tracking (catch) is automatically invoked when TrackedTeamId is specified in the request.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldCatchMatchAutomatically_WhenTrackedTeamIdIsProvided()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var trackedTeamId = Guid.NewGuid();
+        const string userId = "auth0|user123";
+        const string userEmail = "user123@example.com";
+        const string userName = "Test User";
+
+        var request = new CreateQuickMatchRequest(matchId, sportId, configId, trackedTeamId);
+        var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
+
+        var createdMatch = new Match
+        {
+            Id = matchId,
+            TournamentId = Guid.NewGuid(),
+            HomeTeamId = trackedTeamId,
+            GuestTeamId = Guid.NewGuid(),
+            ScheduledAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var sportConfig = new SportConfiguration { Id = configId, SportId = sportId, LineupLimit = 7 };
+
+        _userRepositoryMock
+            .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => (user, false));
+
+        _matchRepositoryMock
+            .Setup(r => r.CreateQuickMatchAsync(matchId, sportId, userId, configId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdMatch);
+
+        _accessRepositoryMock
+            .Setup(a => a.GetActiveTeamPolicyAsync(userId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AccessPolicy { Role = AppRole.Editor });
+
+        _sportConfigurationRepositoryMock
+            .Setup(c => c.GetByIdAsync(configId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(sportConfig);
+
+        _rosterRepositoryMock
+            .Setup(r => r.GetTeamRosterAsync(createdMatch.TournamentId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<dynamic>());
+
+        _matchRepositoryMock
+            .Setup(r => r.CatchMatchAsync(matchId, trackedTeamId, userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(matchId, result.Id);
+
+        _matchRepositoryMock.Verify(
+            r => r.CatchMatchAsync(matchId, trackedTeamId, userId, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
     /// Verifies that a <see cref="KeyNotFoundException"/> is thrown when database-level quick match provisioning returns null,
     /// indicating an infrastructure or stored procedure execution failure.
     /// </summary>
@@ -517,12 +589,13 @@ public class CreateQuickMatchHandlerTests
     public async Task Handle_ShouldThrowKeyNotFoundException_WhenProvisioningFails()
     {
         // Arrange
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         const string userId = "auth0|user123";
         const string userEmail = "user123@example.com";
         const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest(sportId);
+        var request = new CreateQuickMatchRequest(matchId, sportId);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         _userRepositoryMock
@@ -530,7 +603,7 @@ public class CreateQuickMatchHandlerTests
             .ReturnsAsync((User user, CancellationToken _) => (user, false));
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.CreateQuickMatchAsync(matchId, sportId, userId, It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Match?)null);
 
         // Act & Assert
@@ -547,17 +620,18 @@ public class CreateQuickMatchHandlerTests
     public async Task Handle_ShouldThrowKeyNotFoundExceptionAndRollbackNewUserAndBothPolicies_WhenSportNotFoundForDefaultConfig()
     {
         // Arrange
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         const string userId = "auth0|user123";
         const string userEmail = "user123@example.com";
         const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest(sportId, null);
+        var request = new CreateQuickMatchRequest(matchId, sportId, null);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
         {
-            Id = Guid.NewGuid(),
+            Id = matchId,
             TournamentId = Guid.NewGuid(),
             HomeTeamId = Guid.NewGuid(),
             GuestTeamId = Guid.NewGuid(),
@@ -573,7 +647,7 @@ public class CreateQuickMatchHandlerTests
             .ReturnsAsync((User user, CancellationToken _) => (user, true));
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, null, It.IsAny<CancellationToken>()))
+            .Setup(r => r.CreateQuickMatchAsync(matchId, sportId, userId, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdMatch);
 
         // No prior active policy exists for either team
@@ -621,18 +695,19 @@ public class CreateQuickMatchHandlerTests
     public async Task Handle_ShouldThrowKeyNotFoundExceptionAndNotDeleteExistingUser_WhenSportConfigurationNotFound()
     {
         // Arrange
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         const string userId = "auth0|user123";
         const string userEmail = "user123@example.com";
         const string userName = "Test User";
 
-        var request = new CreateQuickMatchRequest(sportId, configId);
+        var request = new CreateQuickMatchRequest(matchId, sportId, configId);
         var command = new CreateQuickMatchCommand(request, userId, userEmail, userName);
 
         var createdMatch = new Match
         {
-            Id = Guid.NewGuid(),
+            Id = matchId,
             TournamentId = Guid.NewGuid(),
             HomeTeamId = Guid.NewGuid(),
             GuestTeamId = Guid.NewGuid(),
@@ -648,7 +723,7 @@ public class CreateQuickMatchHandlerTests
             .ReturnsAsync((User user, CancellationToken _) => (user, false));
 
         _matchRepositoryMock
-            .Setup(r => r.CreateQuickMatchAsync(sportId, userId, configId, It.IsAny<CancellationToken>()))
+            .Setup(r => r.CreateQuickMatchAsync(matchId, sportId, userId, configId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdMatch);
 
         _accessRepositoryMock
