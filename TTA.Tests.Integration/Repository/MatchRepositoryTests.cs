@@ -434,6 +434,75 @@ public class MatchRepositoryTests : BaseIntegrationTest
         }
     }
 
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.CreateQuickMatchAsync"/> automatically tracks the guest team 
+    /// instead of the home team for the requesting user when <c>isGuestTeam</c> is set to <c>true</c>.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldTrackGuestTeam_WhenIsGuestTeamIsTrue()
+    {
+        // Arrange
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        var matchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var userId = $"auth0|quickmatch-guest-{Guid.NewGuid()}";
+
+        // 0. Ensure User exists
+        await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
+            new { id = userId, e = "quickmatchguest@test.com", n = "QuickMatch Guest Owner" }, transaction: transaction);
+
+        // 1. Ensure JIT base geography exists
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+            INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+            INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+            new { cityId = tempCityId }, transaction: transaction);
+
+        var actualCityId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
+            transaction: transaction);
+
+        // 2. Ensure default club exists
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.clubs (id, cityid, name, createdat) 
+            VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+            ON CONFLICT DO NOTHING;",
+            new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
+
+        // 3. Seed sport & configuration
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@sportId, 'Water Polo Guest', 'WPG', @configId)",
+            new { sportId, configId }, transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+            VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+            new { configId, sportId }, transaction: transaction);
+
+        await transaction.CommitAsync();
+
+        // Act
+        var result = await _repository.CreateQuickMatchAsync(matchId, sportId, userId, configId, isGuestTeam: true, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(matchId);
+
+        var isGuestTracked = await _repository.IsMatchCatchedByUserAsync(matchId, result.GuestTeamId, userId, CancellationToken.None);
+        var isHomeTracked = await _repository.IsMatchCatchedByUserAsync(matchId, result.HomeTeamId, userId, CancellationToken.None);
+
+        isGuestTracked.Should().BeTrue("quick match creation should automatically track the guest team when isGuestTeam is true");
+        isHomeTracked.Should().BeFalse("home team should not be tracked when isGuestTeam is true");
+    }
+
     #endregion
 
     #region DeleteAsync Tests
