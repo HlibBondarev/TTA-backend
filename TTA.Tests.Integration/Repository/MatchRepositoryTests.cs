@@ -503,6 +503,93 @@ public class MatchRepositoryTests : BaseIntegrationTest
         isHomeTracked.Should().BeFalse("home team should not be tracked when isGuestTeam is true");
     }
 
+    /// <summary>
+    /// Verifies that JIT garbage collection during quick match creation does not purge 
+    /// a quick match if it contains time anchors.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldNotPurgeMatch_WhenTimeAnchorsExist()
+    {
+        // Arrange
+        var userId = $"auth0|user-anchors-{Guid.NewGuid():N}";
+        var firstMatchId = Guid.NewGuid();
+        var secondMatchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        await SeedUserAsync(userId, $"useranchors_{Guid.NewGuid():N}@example.com", "Anchors User");
+
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await using var transaction = await conn.BeginTransactionAsync();
+
+            // 1. Seed JIT base geography
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+                new { cityId = tempCityId }, transaction: transaction);
+
+            var actualCityId = await conn.ExecuteScalarAsync<Guid>(
+                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
+                transaction: transaction);
+
+            // 2. Seed default club
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.clubs (id, cityid, name, createdat) 
+                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+                ON CONFLICT DO NOTHING;",
+                new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
+
+            // 3. Seed sport & configuration
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+                VALUES (@sportId, @name, 'TAP', @configId)",
+                new { sportId, name = $"AnchorPolo_{Guid.NewGuid():N}", configId }, transaction: transaction);
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+                new { configId, sportId }, transaction: transaction);
+
+            await transaction.CommitAsync();
+        }
+
+        // 4. Create first quick match for the user
+        var firstMatch = await _repository.CreateQuickMatchAsync(firstMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        firstMatch.Should().NotBeNull();
+
+        // 5. Insert a time anchor into the first match
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp)
+                VALUES (@id, @matchId, 1, 0, NOW())",
+                new { id = Guid.NewGuid(), matchId = firstMatchId });
+        }
+
+        // Act: User creates a second quick match, triggering JIT GC
+        var secondMatch = await _repository.CreateQuickMatchAsync(secondMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        secondMatch.Should().NotBeNull();
+
+        // Assert: Verify the first match was NOT purged because it has a time anchor
+        using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await checkConn.OpenAsync();
+
+            var firstMatchExists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = firstMatchId });
+
+            firstMatchExists.Should().BeTrue("a match with time anchors must not be purged by JIT GC");
+        }
+    }
+
     #endregion
 
     #region DeleteAsync Tests
