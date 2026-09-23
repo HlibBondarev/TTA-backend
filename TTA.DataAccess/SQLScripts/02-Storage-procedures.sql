@@ -943,20 +943,24 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-/************************************************************************************************
+/***************************************************************************************************
  * Function: public.create_quick_match
- * Description: Provisions JIT teams, tournament container, player rosters (capped by rosterlimit 
- *              for both Home and Guest teams), AND creates the match entity.
+ * Description: Provisions JIT teams, tournament container (marked with isjit = TRUE), player rosters 
+ *              (capped by rosterlimit for both Home and Guest teams), AND creates the match entity 
+ *              using client-generated p_match_id.
+ *              Executes JIT garbage collection for previous empty orphan matches owned by p_user_id.
  *              Ensures base geography and default club exist JIT to guarantee idempotency.
  *              Requires an authenticated user identifier (p_user_id) to set as fallback owner.
  *              Assigns Global FullControl Admin as tournament owner if available.
- *              Falls back to sports.defaultconfigid if p_configuration_id is NULL.
+ *              Enforces mandatory p_configuration_id and p_is_guest_team flag for atomic tracking.
  *              Returns full match entity record matching public.matches structure.
- ************************************************************************************************/
+ ***************************************************************************************************/
 CREATE OR REPLACE FUNCTION public.create_quick_match(
+    p_match_id UUID,
     p_sport_id UUID,
     p_user_id VARCHAR(64),
-    p_configuration_id UUID DEFAULT NULL
+    p_configuration_id UUID,
+    p_is_guest_team BOOLEAN
 )
 RETURNS SETOF public.matches
 LANGUAGE plpgsql
@@ -972,16 +976,52 @@ DECLARE
     v_home_team_id UUID;
     v_guest_team_id UUID;
     v_tournament_id UUID;
-    v_match_id UUID := gen_random_uuid();
+    v_match_id UUID := p_match_id;
     v_now TIMESTAMP WITH TIME ZONE := CURRENT_TIMESTAMP;
     v_position_id UUID;
     v_roster_limit INT;
 BEGIN
-    -- Validation: Ensure user ID is provided
+    -- Validation: Ensure match ID, user ID, and configuration ID are provided
+    IF p_match_id IS NULL OR p_match_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
+        RAISE EXCEPTION 'Match ID is required for quick match creation.'
+            USING ERRCODE = '22004'; -- Null Value Not Allowed
+    END IF;
+
     IF p_user_id IS NULL OR trim(p_user_id) = '' THEN
         RAISE EXCEPTION 'User ID is required for quick match tournament creation.'
             USING ERRCODE = '22004'; -- Null Value Not Allowed
     END IF;
+
+    IF p_configuration_id IS NULL OR p_configuration_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
+        RAISE EXCEPTION 'Configuration ID is required for quick match creation.'
+            USING ERRCODE = '22004'; -- Null Value Not Allowed
+    END IF;
+
+    -- JIT Garbage Collection: Cleanup orphan empty quick matches for the user (scoped strictly to JIT tournaments via isjit marker)
+    DELETE FROM public.matches m
+    WHERE m.id IN (
+        SELECT utm.matchid
+        FROM public.usertrackedmatches utm
+        WHERE utm.userid = p_user_id
+    )
+    AND EXISTS (
+        SELECT 1 FROM public.tournaments t
+        WHERE t.id = m.tournamentid AND t.isjit = TRUE
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM public.gameevents ge
+        JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
+        WHERE ml.matchid = m.id
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM public.timeanchors ta
+        WHERE ta.matchid = m.id
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM public.usertrackedmatches other_utm
+        WHERE other_utm.matchid = m.id
+          AND other_utm.userid <> p_user_id
+    );
 
     -- 0. Resolve tournament owner: 
     -- Search for Global FullControl (Admin) policy (targettype = 0 AND role = 0)
@@ -1015,22 +1055,10 @@ BEGIN
     VALUES (v_club_id, v_city_id, 'TTA Training Club', v_now)
     ON CONFLICT DO NOTHING;
 
-    -- 2. Determine effective configuration ID (Use provided or fallback to sports.defaultconfigid)
-    IF p_configuration_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
-        p_configuration_id := NULL;
-    END IF;
+    -- 2. Determine effective configuration ID
+    v_effective_config_id := p_configuration_id;
 
-    v_effective_config_id := COALESCE(
-        p_configuration_id, 
-        (SELECT s.defaultconfigid FROM public.sports s WHERE s.id = p_sport_id)
-    );
-
-    IF v_effective_config_id IS NULL THEN
-        RAISE EXCEPTION 'Configuration ID not provided and default configuration does not exist for sport %.', p_sport_id
-            USING ERRCODE = 'P0005';
-    END IF;
-
-    -- Validate that effective configuration exists AND belongs to the specified sport, retrieve rosterlimit
+    -- Validate that configuration exists AND belongs to the specified sport, retrieve rosterlimit
     SELECT sc.rosterlimit INTO v_roster_limit
     FROM public.sportconfigurations sc 
     WHERE sc.id = v_effective_config_id AND sc.sportid = p_sport_id;
@@ -1070,13 +1098,14 @@ BEGIN
     -- 5. Ensure Training Tournament exists for the effective configurationId
     SELECT t.id INTO v_tournament_id
     FROM public.tournaments t
-    WHERE t.configurationid = v_effective_config_id AND t.name = 'Training & Friendly Matches'
+    WHERE t.configurationid = v_effective_config_id AND t.isjit = TRUE
+    ORDER BY t.createdat ASC
     LIMIT 1;
 
     IF v_tournament_id IS NULL THEN
         v_tournament_id := gen_random_uuid();
-        INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat)
-        VALUES (v_tournament_id, p_sport_id, v_effective_config_id, v_city_id, v_owner_id, 'Training & Friendly Matches', CURRENT_DATE, v_now);
+        INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, isjit, startdate, createdat)
+        VALUES (v_tournament_id, p_sport_id, v_effective_config_id, v_city_id, v_owner_id, 'Training & Friendly Matches', TRUE, CURRENT_DATE, v_now);
     END IF;
 
     -- 6. Get or create a default position definition for this sport
@@ -1091,7 +1120,7 @@ BEGIN
         VALUES (v_position_id, p_sport_id, 'Universal', 'UNI');
     END IF;
     
-   -- 7. Bulk-register up to rosterlimit players for HOME SQUAD
+    -- 7. Bulk-register up to rosterlimit players for HOME SQUAD
     WITH ranked_players AS (
         SELECT 
             p.id AS player_id,
@@ -1137,7 +1166,7 @@ BEGIN
     WHERE rp.rn <= v_roster_limit
     ON CONFLICT (tournamentid, playerid) DO NOTHING;
 
-    -- 9. Insert Match entity directly
+    -- 9. Insert Match entity directly using supplied match ID
     INSERT INTO public.matches (
         id,
         tournamentid,
@@ -1155,7 +1184,16 @@ BEGIN
         v_now
     );
 
-    -- 10. Return full created match entity matching public.matches
+    -- 10. Automatically track match for the user based on p_is_guest_team
+    INSERT INTO public.usertrackedmatches (userid, matchid, teamid)
+    VALUES (
+        p_user_id,
+        v_match_id,
+        CASE WHEN p_is_guest_team THEN v_guest_team_id ELSE v_home_team_id END
+    )
+    ON CONFLICT (userid, matchid, teamid) DO NOTHING;
+
+    -- 11. Return full created match entity matching public.matches
     RETURN QUERY
     SELECT m.*
     FROM public.matches m
@@ -2601,7 +2639,8 @@ $$ LANGUAGE plpgsql;
 
 /**********************************************************************************
  * Removes tracking link between a user and a specific match/team context.
- * Automatically deletes the match entity if no tracking references remain.
+ * Automatically deletes the match entity if no tracking references remain AND 
+ * the match is a JIT Quick Match (identified by isjit = TRUE flag).
  * Returns TRUE if a tracking record was deleted, FALSE otherwise.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.uncatch_user_match(
@@ -2626,10 +2665,13 @@ BEGIN
             SELECT 1 FROM public.usertrackedmatches
             WHERE matchid = p_match_id
         ) THEN
-            -- 3. If no other users are tracking this match, delete the match entity
-            -- (ON DELETE CASCADE will automatically clean up lineups, events, anchors, etc.)
-            DELETE FROM public.matches
-            WHERE id = p_match_id;
+            -- 3. Delete the match entity ONLY if it is a JIT Quick Match (isjit = TRUE)
+            DELETE FROM public.matches m
+            WHERE m.id = p_match_id
+              AND EXISTS (
+                  SELECT 1 FROM public.tournaments t
+                  WHERE t.id = m.tournamentid AND t.isjit = TRUE
+              );
         END IF;
     END IF;
 

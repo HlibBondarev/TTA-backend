@@ -1726,8 +1726,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     #region Quick Match Tests
 
     /// <summary>
-    /// Verifies that <see cref="MatchesController.CreateQuickMatch" /> returns <see cref="HttpStatusCode.Created" /> (201),
-    /// a populated <see cref="QuickMatchResponse" />, Provisions JIT User in public.users, verifies tournament ownership,
+    /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> returns <see cref="HttpStatusCode.Created"/> (201),
+    /// a populated <see cref="QuickMatchResponse"/>, provisions JIT User in public.users, verifies tournament ownership,
     /// and initializes starting lineups for both Home and Guest teams.
     /// </summary>
     [Fact]
@@ -1735,61 +1735,13 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     {
         // Arrange
         var jitUserId = $"auth0|jit-{Guid.NewGuid():N}";
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"QuickPolo_{Guid.NewGuid():N}");
+        var configId = await SeedConfigurationAsync(sportId);
+        await SeedQuickMatchEnvironmentAsync(sportId);
 
-        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
-        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-
-        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
-        {
-            await conn.OpenAsync();
-
-            // 1. Ensure geography exists
-            await conn.ExecuteAsync(@"
-                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
-                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
-                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
-                new { cityId = tempCityId });
-
-            var actualCityId = await conn.QuerySingleAsync<Guid>(
-                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1");
-
-            // 2. Ensure default club exists using the resolved city ID
-            await conn.ExecuteAsync(@"
-                INSERT INTO public.clubs (id, cityid, name, createdat) 
-                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
-                ON CONFLICT DO NOTHING;",
-                new { clubId = defaultClubId, cityId = actualCityId });
-
-            // 3. Adjust rosterlimit and lineuplimit for test predictability (5 players per team roster, 3 in lineup)
-            await conn.ExecuteAsync(@"
-                UPDATE public.sportconfigurations 
-                SET rosterlimit = 5, lineuplimit = 3 
-                WHERE sportid = @sportId;",
-                new { sportId });
-
-            // 4. Seed players for Home and Guest teams so create_quick_match can register them into rosters and lineups
-            for (int i = 1; i <= 5; i++)
-            {
-                await conn.ExecuteAsync(@"
-                    INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
-                    VALUES (@id, @clubId, 'Home Player', @ln, '2000-01-01', 0, NOW())
-                    ON CONFLICT DO NOTHING;",
-                    new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() });
-
-                await conn.ExecuteAsync(@"
-                    INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
-                    VALUES (@id, @clubId, 'Guest Player', @ln, '2000-01-01', 0, NOW())
-                    ON CONFLICT DO NOTHING;",
-                    new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() });
-            }
-        }
-
-        var request = new
-        {
-            SportId = sportId
-        };
+        var request = new CreateQuickMatchRequest(matchId, sportId, configId, IsGuestTeam: false);
 
         try
         {
@@ -1804,7 +1756,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
             var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
             result.Should().NotBeNull();
-            result!.Id.Should().NotBeEmpty();
+            result!.Id.Should().Be(matchId);
             result.HomeTeamId.Should().NotBeEmpty();
             result.GuestTeamId.Should().NotBeEmpty();
             result.TournamentId.Should().NotBeEmpty();
@@ -1862,7 +1814,10 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Arrange
         var request = new
         {
-            SportId = Guid.Empty
+            Id = Guid.NewGuid(),
+            SportId = Guid.Empty,
+            ConfigurationId = Guid.NewGuid(),
+            IsGuestTeam = false
         };
 
         // Act
@@ -1882,7 +1837,10 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Arrange
         var request = new
         {
-            SportId = Guid.NewGuid()
+            Id = Guid.NewGuid(),
+            SportId = Guid.NewGuid(),
+            ConfigurationId = Guid.NewGuid(),
+            IsGuestTeam = false
         };
 
         try
@@ -1909,14 +1867,15 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     public async Task CreateQuickMatch_ShouldReturnUnauthorized_WhenUserEmailClaimIsMissing()
     {
         // Arrange
-        var request = new
-        {
-            SportId = Guid.NewGuid()
-        };
+        var sportId = Guid.NewGuid();
+        sportId = await SeedSportDataAsync(sportId, $"UnauthPolo_{Guid.NewGuid():N}");
+        var configId = await SeedConfigurationAsync(sportId);
+        await SeedQuickMatchEnvironmentAsync(sportId);
+
+        var request = new CreateQuickMatchRequest(Guid.NewGuid(), sportId, configId, IsGuestTeam: false);
 
         try
         {
-            // Omit the email claim to trigger the missing userEmail validation check
             TestAuthHandler.CustomEmail = string.Empty;
 
             // Act
@@ -1943,48 +1902,18 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Arrange
         var fallbackUserId = $"auth0|fallback-{Guid.NewGuid():N}";
         const string fallbackEmail = "fallback@example.com";
+        var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"FallbackPolo_{Guid.NewGuid():N}");
+        var configId = await SeedConfigurationAsync(sportId);
+        await SeedQuickMatchEnvironmentAsync(sportId);
 
-        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
-        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-
-        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
-        {
-            await conn.OpenAsync();
-
-            await conn.ExecuteAsync(@"
-                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
-                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
-                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
-                new { cityId = tempCityId });
-
-            var actualCityId = await conn.QuerySingleAsync<Guid>(
-                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1");
-
-            await conn.ExecuteAsync(@"
-                INSERT INTO public.clubs (id, cityid, name, createdat) 
-                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
-                ON CONFLICT DO NOTHING;",
-                new { clubId = defaultClubId, cityId = actualCityId });
-
-            await conn.ExecuteAsync(@"
-                UPDATE public.sportconfigurations 
-                SET rosterlimit = 5, lineuplimit = 3 
-                WHERE sportid = @sportId;",
-                new { sportId });
-        }
-
-        var request = new
-        {
-            SportId = sportId
-        };
+        var request = new CreateQuickMatchRequest(matchId, sportId, configId, IsGuestTeam: false);
 
         try
         {
             TestAuthHandler.CustomUserId = fallbackUserId;
             TestAuthHandler.CustomEmail = fallbackEmail;
-            // Omit the display name claim to cover the ternary fallback branch
             TestAuthHandler.CustomDisplayName = string.Empty;
 
             // Act
@@ -1994,7 +1923,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             response.StatusCode.Should().Be(HttpStatusCode.Created);
             var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
             result.Should().NotBeNull();
-            result!.Id.Should().NotBeEmpty();
+            result!.Id.Should().Be(matchId);
 
             // Assert 2: Database State Verification - Persisted DisplayName falls back to user email
             using var checkConn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -2785,6 +2714,62 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         await tx.CommitAsync();
 
         return sportId;
+    }
+
+    private async Task SeedQuickMatchEnvironmentAsync(Guid sportId)
+    {
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // 1. Geography seeding
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+            INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+            INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+            new { cityId = tempCityId });
+
+        var actualCityId = await conn.QuerySingleAsync<Guid>(
+            "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1");
+
+        // 2. Default club seeding
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.clubs (id, cityid, name, createdat) 
+            VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+            ON CONFLICT DO NOTHING;",
+            new { clubId = defaultClubId, cityId = actualCityId });
+
+        // 3. Position definition seeding for the specified sport
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname)
+            VALUES (@id, @sportId, 'Universal Player', 'UP')
+            ON CONFLICT DO NOTHING;",
+            new { id = Guid.NewGuid(), sportId });
+
+        // 4. Adjust roster and lineup limits for test predictability
+        await conn.ExecuteAsync(@"
+            UPDATE public.sportconfigurations 
+            SET rosterlimit = 5, lineuplimit = 3 
+            WHERE sportid = @sportId;",
+            new { sportId });
+
+        // 5. Seed default club players for Home and Guest teams
+        for (int i = 1; i <= 5; i++)
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+                VALUES (@id, @clubId, 'Home Player', @ln, '2000-01-01', 0, NOW())
+                ON CONFLICT DO NOTHING;",
+                new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() });
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+                VALUES (@id, @clubId, 'Guest Player', @ln, '2000-01-01', 0, NOW())
+                ON CONFLICT DO NOTHING;",
+                new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() });
+        }
     }
 
     private async Task<Guid> GetFirstPositionIdAsync(Guid sportId)

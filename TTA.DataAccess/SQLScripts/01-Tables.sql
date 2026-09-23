@@ -129,8 +129,9 @@ CREATE TABLE public.tournaments (
     sportid UUID NOT NULL,
     configurationid UUID NOT NULL,
     cityid UUID NOT NULL REFERENCES public.cities(id),
-    ownerid VARCHAR(64) NOT NULL REFERENCES public.users(id), -- Added Ownership
+    ownerid VARCHAR(64) NOT NULL REFERENCES public.users(id),
     name VARCHAR(200) NOT NULL,
+    isjit BOOLEAN NOT NULL DEFAULT FALSE, -- System flag to identify JIT Quick Match tournaments
     startdate TIMESTAMPTZ NOT NULL,
     enddate TIMESTAMPTZ NULL,
     createdat TIMESTAMPTZ NOT NULL,
@@ -144,10 +145,12 @@ CREATE TABLE public.tournaments (
     CONSTRAINT chk_tournaments_end_after_start 
         CHECK (enddate IS NULL OR enddate >= startdate)
 );
+
 -- Essential indexes for performance
 CREATE INDEX ix_tournaments_cityid ON public.tournaments (cityid);
 CREATE INDEX ix_tournaments_sportid ON public.tournaments (sportid);
 CREATE INDEX ix_tournaments_ownerid ON public.tournaments (ownerid);
+CREATE INDEX ix_tournaments_isjit ON public.tournaments (isjit);
 
 CREATE TABLE matches (
     id UUID PRIMARY KEY,

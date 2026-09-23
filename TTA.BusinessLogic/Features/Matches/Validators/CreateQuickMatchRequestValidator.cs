@@ -13,8 +13,16 @@ public class CreateQuickMatchRequestValidator : AbstractValidator<CreateQuickMat
     /// </summary>
     public CreateQuickMatchRequestValidator()
     {
+        RuleFor(x => x.Id)
+            .NotEmpty()
+            .WithMessage("Match Id is required and cannot be an empty GUID.");
+
         RuleFor(x => x.SportId)
             .NotEmpty()
             .WithMessage("SportId is required and cannot be an empty GUID.");
+
+        RuleFor(x => x.ConfigurationId)
+            .NotEmpty()
+            .WithMessage("ConfigurationId is required and cannot be an empty GUID.");
     }
 }
