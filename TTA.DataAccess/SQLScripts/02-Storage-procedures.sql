@@ -943,17 +943,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-/************************************************************************************************
+/***************************************************************************************************
  * Function: public.create_quick_match
- * Description: Provisions JIT teams, tournament container, player rosters (capped by rosterlimit 
- *              for both Home and Guest teams), AND creates the match entity using client-generated p_match_id.
+ * Description: Provisions JIT teams, tournament container (marked with isjit = TRUE), player rosters 
+ *              (capped by rosterlimit for both Home and Guest teams), AND creates the match entity 
+ *              using client-generated p_match_id.
  *              Executes JIT garbage collection for previous empty orphan matches owned by p_user_id.
  *              Ensures base geography and default club exist JIT to guarantee idempotency.
  *              Requires an authenticated user identifier (p_user_id) to set as fallback owner.
  *              Assigns Global FullControl Admin as tournament owner if available.
  *              Enforces mandatory p_configuration_id and p_is_guest_team flag for atomic tracking.
  *              Returns full match entity record matching public.matches structure.
- ************************************************************************************************/
+ ***************************************************************************************************/
 CREATE OR REPLACE FUNCTION public.create_quick_match(
     p_match_id UUID,
     p_sport_id UUID,
@@ -996,7 +997,7 @@ BEGIN
             USING ERRCODE = '22004'; -- Null Value Not Allowed
     END IF;
 
-    -- JIT Garbage Collection: Cleanup orphan empty quick matches for the user (scoped strictly to JIT Training matches)
+    -- JIT Garbage Collection: Cleanup orphan empty quick matches for the user (scoped strictly to JIT tournaments via isjit marker)
     DELETE FROM public.matches m
     WHERE m.id IN (
         SELECT utm.matchid
@@ -1005,7 +1006,7 @@ BEGIN
     )
     AND EXISTS (
         SELECT 1 FROM public.tournaments t
-        WHERE t.id = m.tournamentid AND t.name = 'Training & Friendly Matches'
+        WHERE t.id = m.tournamentid AND t.isjit = TRUE
     )
     AND NOT EXISTS (
         SELECT 1 FROM public.gameevents ge
@@ -1102,8 +1103,8 @@ BEGIN
 
     IF v_tournament_id IS NULL THEN
         v_tournament_id := gen_random_uuid();
-        INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat)
-        VALUES (v_tournament_id, p_sport_id, v_effective_config_id, v_city_id, v_owner_id, 'Training & Friendly Matches', CURRENT_DATE, v_now);
+        INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, isjit, startdate, createdat)
+        VALUES (v_tournament_id, p_sport_id, v_effective_config_id, v_city_id, v_owner_id, 'Training & Friendly Matches', TRUE, CURRENT_DATE, v_now);
     END IF;
 
     -- 6. Get or create a default position definition for this sport
@@ -2638,7 +2639,7 @@ $$ LANGUAGE plpgsql;
 /**********************************************************************************
  * Removes tracking link between a user and a specific match/team context.
  * Automatically deletes the match entity if no tracking references remain AND 
- * the match is a JIT Quick Match (belonging to 'Training & Friendly Matches').
+ * the match is a JIT Quick Match (identified by isjit = TRUE flag).
  * Returns TRUE if a tracking record was deleted, FALSE otherwise.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.uncatch_user_match(
@@ -2663,12 +2664,12 @@ BEGIN
             SELECT 1 FROM public.usertrackedmatches
             WHERE matchid = p_match_id
         ) THEN
-            -- 3. Delete the match entity ONLY if it is a JIT Quick Match
+            -- 3. Delete the match entity ONLY if it is a JIT Quick Match (isjit = TRUE)
             DELETE FROM public.matches m
             WHERE m.id = p_match_id
               AND EXISTS (
                   SELECT 1 FROM public.tournaments t
-                  WHERE t.id = m.tournamentid AND t.name = 'Training & Friendly Matches'
+                  WHERE t.id = m.tournamentid AND t.isjit = TRUE
               );
         END IF;
     END IF;

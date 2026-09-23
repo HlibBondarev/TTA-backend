@@ -160,7 +160,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
     /// <summary>
     /// Verifies that <see cref="MatchRepository.CreateQuickMatchAsync"/> provisions JIT teams, tournament container, 
     /// player rosters for both Home and Guest teams, creates the match entity using client-supplied match ID,
-    /// and automatically tracks the match for the requesting user based on the isGuestTeam flag.
+    /// automatically tracks the match for the requesting user based on the isGuestTeam flag,
+    /// and verifies that the created tournament container has the isjit flag set to true.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
@@ -240,6 +241,13 @@ public class MatchRepositoryTests : BaseIntegrationTest
         result.HomeTeamId.Should().NotBeEmpty();
         result.GuestTeamId.Should().NotBeEmpty();
         result.ScheduledAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
+
+        // Assert DB state: verify that created JIT tournament container has isjit = true
+        var isJitFlag = await conn.ExecuteScalarAsync<bool>(
+            "SELECT isjit FROM public.tournaments WHERE id = @tId",
+            new { tId = result.TournamentId });
+
+        isJitFlag.Should().BeTrue("quick match tournament container must have isjit flag set to true");
 
         // Assert DB state: verify player rosters exist for BOTH Home and Guest teams up to rosterlimit (3 each)
         var homeRosterCount = await conn.ExecuteScalarAsync<int>(
@@ -629,6 +637,56 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { matchId = ordinaryMatch.Id });
 
             matchExists.Should().BeTrue("ordinary tournament matches must never be purged by JIT GC during quick match creation");
+        }
+    }
+
+    /// <summary>
+    /// Verifies that JIT garbage collection purges an empty quick match based strictly on the isjit flag,
+    /// regardless of the tournament's name.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldPurgeOrphanMatch_BasedOnIsJitFlagNotTournamentName()
+    {
+        // Arrange
+        var userId = $"auth0|user-isjit-{Guid.NewGuid():N}";
+        var firstMatchId = Guid.NewGuid();
+        var secondMatchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+
+        await SeedUserAsync(userId, $"user_isjit_{Guid.NewGuid():N}@example.com", "IsJit User");
+        await SeedSportWithConfigAsync(sportId, $"IsJitPolo_{Guid.NewGuid():N}", "IJP", configId);
+
+        // 1. Create initial quick match
+        var firstMatch = await _repository.CreateQuickMatchAsync(
+            firstMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        firstMatch.Should().NotBeNull();
+
+        // 2. Explicitly rename the JIT tournament in DB to ensure GC doesn't rely on the legacy name string
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(
+                "UPDATE public.tournaments SET name = 'Custom JIT Name' WHERE id = @tId",
+                new { tId = firstMatch!.TournamentId });
+        }
+
+        // Act: Create second quick match, triggering JIT GC
+        var secondMatch = await _repository.CreateQuickMatchAsync(
+            secondMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        secondMatch.Should().NotBeNull();
+
+        // Assert: Verify first match was purged strictly because isjit = true
+        using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await checkConn.OpenAsync();
+
+            var exists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = firstMatchId });
+
+            exists.Should().BeFalse("JIT GC must purge orphan empty quick matches relying on isjit = true regardless of tournament name");
         }
     }
 
