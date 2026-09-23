@@ -44,11 +44,6 @@ public class CreateQuickMatchHandlerTests
     private readonly Mock<IAccessRepository> _accessRepositoryMock = new();
 
     /// <summary>
-    /// Mock instance for retrieving sport discipline metadata.
-    /// </summary>
-    private readonly Mock<ISportRepository> _sportRepositoryMock = new();
-
-    /// <summary>
     /// Mock instance for fetching sport configuration rules and lineup limits.
     /// </summary>
     private readonly Mock<ISportConfigurationRepository> _sportConfigurationRepositoryMock = new();
@@ -83,7 +78,6 @@ public class CreateQuickMatchHandlerTests
             _userRepositoryMock.Object,
             _matchRepositoryMock.Object,
             _accessRepositoryMock.Object,
-            _sportRepositoryMock.Object,
             _sportConfigurationRepositoryMock.Object,
             _rosterRepositoryMock.Object,
             _matchLineupRepositoryMock.Object,

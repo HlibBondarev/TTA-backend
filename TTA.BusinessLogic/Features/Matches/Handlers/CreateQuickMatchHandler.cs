@@ -18,7 +18,6 @@ namespace TTA.BusinessLogic.Features.Matches.Handlers;
 /// <param name="userRepository">The user repository for JIT user provisioning and rollbacks.</param>
 /// <param name="matchRepository">The match repository for database operations and JIT provisioning.</param>
 /// <param name="accessRepository">The access repository for checking and granting team access policies.</param>
-/// <param name="sportRepository">The sport repository for retrieving sport metadata.</param>
 /// <param name="sportConfigurationRepository">The sport configuration repository for retrieving sport configuration rules.</param>
 /// <param name="rosterRepository">The roster repository for fetching tournament rosters.</param>
 /// <param name="matchLineupRepository">The match lineup repository for copying players into match lineups.</param>
@@ -27,7 +26,6 @@ public class CreateQuickMatchHandler(
     IUserRepository userRepository,
     IMatchRepository matchRepository,
     IAccessRepository accessRepository,
-    ISportRepository sportRepository,
     ISportConfigurationRepository sportConfigurationRepository,
     IRosterRepository rosterRepository,
     IMatchLineupRepository matchLineupRepository,
@@ -36,7 +34,6 @@ public class CreateQuickMatchHandler(
     private readonly IUserRepository _userRepository = userRepository;
     private readonly IMatchRepository _matchRepository = matchRepository;
     private readonly IAccessRepository _accessRepository = accessRepository;
-    private readonly ISportRepository _sportRepository = sportRepository;
     private readonly ISportConfigurationRepository _sportConfigurationRepository = sportConfigurationRepository;
     private readonly IRosterRepository _rosterRepository = rosterRepository;
     private readonly IMatchLineupRepository _matchLineupRepository = matchLineupRepository;
