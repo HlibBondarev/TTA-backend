@@ -1727,7 +1727,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> returns <see cref="HttpStatusCode.Created"/> (201),
-    /// a populated <see cref="QuickMatchResponse"/>, Provisions JIT User in public.users, verifies tournament ownership,
+    /// a populated <see cref="QuickMatchResponse"/>, provisions JIT User in public.users, verifies tournament ownership,
     /// and initializes starting lineups for both Home and Guest teams.
     /// </summary>
     [Fact]
@@ -1738,9 +1738,10 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"QuickPolo_{Guid.NewGuid():N}");
+        var configId = await SeedConfigurationAsync(sportId);
         await SeedQuickMatchEnvironmentAsync(sportId);
 
-        var request = new CreateQuickMatchRequest(matchId, sportId);
+        var request = new CreateQuickMatchRequest(matchId, sportId, configId, IsGuestTeam: false);
 
         try
         {
@@ -1813,7 +1814,10 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Arrange
         var request = new
         {
-            SportId = Guid.Empty
+            Id = Guid.NewGuid(),
+            SportId = Guid.Empty,
+            ConfigurationId = Guid.NewGuid(),
+            IsGuestTeam = false
         };
 
         // Act
@@ -1833,7 +1837,10 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Arrange
         var request = new
         {
-            SportId = Guid.NewGuid()
+            Id = Guid.NewGuid(),
+            SportId = Guid.NewGuid(),
+            ConfigurationId = Guid.NewGuid(),
+            IsGuestTeam = false
         };
 
         try
@@ -1862,13 +1869,13 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Arrange
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"UnauthPolo_{Guid.NewGuid():N}");
+        var configId = await SeedConfigurationAsync(sportId);
         await SeedQuickMatchEnvironmentAsync(sportId);
 
-        var request = new CreateQuickMatchRequest(Guid.NewGuid(), sportId);
+        var request = new CreateQuickMatchRequest(Guid.NewGuid(), sportId, configId, IsGuestTeam: false);
 
         try
         {
-            // Omit the email claim to trigger the missing userEmail validation check
             TestAuthHandler.CustomEmail = string.Empty;
 
             // Act
@@ -1898,15 +1905,15 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var matchId = Guid.NewGuid();
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"FallbackPolo_{Guid.NewGuid():N}");
+        var configId = await SeedConfigurationAsync(sportId);
         await SeedQuickMatchEnvironmentAsync(sportId);
 
-        var request = new CreateQuickMatchRequest(matchId, sportId);
+        var request = new CreateQuickMatchRequest(matchId, sportId, configId, IsGuestTeam: false);
 
         try
         {
             TestAuthHandler.CustomUserId = fallbackUserId;
             TestAuthHandler.CustomEmail = fallbackEmail;
-            // Omit the display name claim to cover the ternary fallback branch
             TestAuthHandler.CustomDisplayName = string.Empty;
 
             // Act

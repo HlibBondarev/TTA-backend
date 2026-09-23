@@ -159,7 +159,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that <see cref="MatchRepository.CreateQuickMatchAsync"/> provisions JIT teams, tournament container, 
-    /// player rosters for both Home and Guest teams, and creates the match entity using client-supplied match ID.
+    /// player rosters for both Home and Guest teams, creates the match entity using client-supplied match ID,
+    /// and automatically tracks the match for the requesting user based on the isGuestTeam flag.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
@@ -230,7 +231,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await transaction.CommitAsync();
 
         // Act
-        var result = await _repository.CreateQuickMatchAsync(matchId, sportId, userId, configId, CancellationToken.None);
+        var result = await _repository.CreateQuickMatchAsync(matchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
 
         // Assert
         result.Should().NotBeNull();
@@ -251,13 +252,17 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
         homeRosterCount.Should().Be(3, "home team roster should be filled up to rosterlimit (3)");
         guestRosterCount.Should().Be(3, "guest team roster should be filled up to rosterlimit (3)");
+
+        // Assert DB state: verify automatic tracking in usertrackedmatches for home team
+        var isTracked = await _repository.IsMatchCatchedByUserAsync(matchId, result.HomeTeamId, userId, CancellationToken.None);
+        isTracked.Should().BeTrue("quick match creation should automatically track the home team for the user when isGuestTeam is false");
     }
 
     /// <summary>
     /// Verifies that JIT garbage collection during quick match creation does not purge an empty match 
     /// if another user is also tracking it.
     /// </summary>
-    /// <returns>A task representing the asynchronous test operation.< /returns >
+    /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
     public async Task CreateQuickMatchAsync_ShouldNotPurgeEmptyMatch_WhenTrackedByAnotherUser()
     {
@@ -311,15 +316,14 @@ public class MatchRepositoryTests : BaseIntegrationTest
             await transaction.CommitAsync();
         }
 
-        // 4. Create initial quick match for user 1 and catch it for both user 1 and user 2
-        var sharedMatch = await _repository.CreateQuickMatchAsync(sharedMatchId, sportId, user1Id, configId, CancellationToken.None);
+        // 4. Create initial quick match for user 1 and catch it for user 2
+        var sharedMatch = await _repository.CreateQuickMatchAsync(sharedMatchId, sportId, user1Id, configId, isGuestTeam: false, CancellationToken.None);
         sharedMatch.Should().NotBeNull();
 
-        await _repository.CatchMatchAsync(sharedMatchId, sharedMatch!.HomeTeamId, user1Id, CancellationToken.None);
-        await _repository.CatchMatchAsync(sharedMatchId, sharedMatch.HomeTeamId, user2Id, CancellationToken.None);
+        await _repository.CatchMatchAsync(sharedMatchId, sharedMatch!.HomeTeamId, user2Id, CancellationToken.None);
 
         // Act: User 1 creates a new quick match, which triggers JIT garbage collection for user 1
-        var newMatch = await _repository.CreateQuickMatchAsync(newMatchId, sportId, user1Id, configId, CancellationToken.None);
+        var newMatch = await _repository.CreateQuickMatchAsync(newMatchId, sportId, user1Id, configId, isGuestTeam: false, CancellationToken.None);
         newMatch.Should().NotBeNull();
 
         // Assert: Verify sharedMatchId and User 2's tracking record remain intact
@@ -343,7 +347,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
     /// <summary>
     /// Verifies that JIT garbage collection during quick match creation successfully purges 
     /// an orphan empty match belonging to the user when it has no game events and no time anchors.
-    /// 
+    /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
     public async Task CreateQuickMatchAsync_ShouldPurgeOrphanEmptyMatch_WhenNoEventsOrAnchorsExist()
@@ -396,18 +400,15 @@ public class MatchRepositoryTests : BaseIntegrationTest
             await transaction.CommitAsync();
         }
 
-        // 4. Create an initial orphan match using CreateQuickMatchAsync and track it
-        var orphanMatch = await _repository.CreateQuickMatchAsync(orphanMatchId, sportId, userId, configId, CancellationToken.None);
+        // 4. Create an initial orphan match using CreateQuickMatchAsync (which automatically tracks it)
+        var orphanMatch = await _repository.CreateQuickMatchAsync(orphanMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         orphanMatch.Should().NotBeNull();
-
-        await _repository.CatchMatchAsync(orphanMatchId, orphanMatch!.HomeTeamId, userId, CancellationToken.None);
 
         // Verify the orphan match exists prior to GC
         using (var preCheckConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await preCheckConn.OpenAsync();
 
-            // Use generic ExecuteScalarAsync < bool > with spaces in brackets
             var existsBefore = await preCheckConn.ExecuteScalarAsync<bool>(
                 "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
                 new { matchId = orphanMatchId });
@@ -417,7 +418,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
         // Act: User creates a new quick match, which triggers JIT garbage collection for this user,
         // purging the previous empty match since it has no game events and no time anchors.
-        var newMatch = await _repository.CreateQuickMatchAsync(newMatchId, sportId, userId, configId, CancellationToken.None);
+        var newMatch = await _repository.CreateQuickMatchAsync(newMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         newMatch.Should().NotBeNull();
 
         // Assert: Verify that the old orphan match has been purged by GC
@@ -425,7 +426,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         {
             await checkConn.OpenAsync();
 
-            // Use generic ExecuteScalarAsync < bool > with spaces in brackets
             var matchExists = await checkConn.ExecuteScalarAsync<bool>(
                 "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
                 new { matchId = orphanMatchId });

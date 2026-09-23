@@ -40,19 +40,22 @@ public interface IMatchRepository : IEntityRepositoryBase<Guid, Match>
     Task<dynamic?> GetMatchByIdWithDetailsAsync(Guid matchId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Provisions JIT quick match infrastructure (teams, tournament, rosters) and creates a match record using client-generated match ID.
+    /// Provisions JIT quick match infrastructure (teams, tournament, rosters), creates a match record using client-generated match ID,
+    /// and automatically tracks the selected team for the user based on <paramref name="isGuestTeam"/>.
     /// </summary>
     /// <param name="matchId">The client-generated unique identifier for the match.</param>
     /// <param name="sportId">The unique identifier of the sport.</param>
     /// <param name="userId">The requesting user identifier for tournament ownership.</param>
-    /// <param name="configurationId">The optional unique identifier of the sport configuration.</param>
+    /// <param name="configurationId">The mandatory unique identifier of the sport configuration.</param>
+    /// <param name="isGuestTeam">Flag indicating whether to track the guest team (<c>true</c>) or home team (<c>false</c>).</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>The created <see cref="Match"/> entity if successful; otherwise, null.</returns>
     Task<Match?> CreateQuickMatchAsync(
         Guid matchId,
         Guid sportId,
         string userId,
-        Guid? configurationId = null,
+        Guid configurationId,
+        bool isGuestTeam,
         CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -21,11 +21,8 @@ public class CreateQuickMatchRequestValidator : AbstractValidator<CreateQuickMat
             .NotEmpty()
             .WithMessage("SportId is required and cannot be an empty GUID.");
 
-        When(x => x.TrackedTeamId.HasValue, () =>
-        {
-            RuleFor(x => x.TrackedTeamId!.Value)
-                .NotEmpty()
-                .WithMessage("TrackedTeamId cannot be an empty GUID when specified.");
-        });
+        RuleFor(x => x.ConfigurationId)
+            .NotEmpty()
+            .WithMessage("ConfigurationId is required and cannot be an empty GUID.");
     }
 }

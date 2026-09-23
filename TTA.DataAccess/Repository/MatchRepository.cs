@@ -62,7 +62,8 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
         Guid matchId,
         Guid sportId,
         string userId,
-        Guid? configurationId = null,
+        Guid configurationId,
+        bool isGuestTeam,
         CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
@@ -70,6 +71,7 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
         parameters.Add("SportId", sportId);
         parameters.Add("UserId", userId);
         parameters.Add("ConfigurationId", configurationId);
+        parameters.Add("IsGuestTeam", isGuestTeam);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.QueryFirstOrDefaultAsync<Match>(new CommandDefinition(

@@ -12,12 +12,13 @@ namespace TTA.BusinessLogic.Features.Matches.Handlers;
 
 /// <summary>
 /// Handles the execution of <see cref="CreateQuickMatchCommand"/> to provision JIT entities, assign access policies 
-/// for both Home and Guest teams, create the match, and initialize starting lineups for both competing teams.
+/// for both Home and Guest teams, create the match, initialize starting lineups for both competing teams, 
+/// and automatically track the selected team context in the database.
 /// </summary>
 /// <param name="userRepository">The user repository for JIT user provisioning and rollbacks.</param>
 /// <param name="matchRepository">The match repository for database operations and JIT provisioning.</param>
 /// <param name="accessRepository">The access repository for checking and granting team access policies.</param>
-/// <param name="sportRepository">The sport repository for retrieving sport metadata and default configurations.</param>
+/// <param name="sportRepository">The sport repository for retrieving sport metadata.</param>
 /// <param name="sportConfigurationRepository">The sport configuration repository for retrieving sport configuration rules.</param>
 /// <param name="rosterRepository">The roster repository for fetching tournament rosters.</param>
 /// <param name="matchLineupRepository">The match lineup repository for copying players into match lineups.</param>
@@ -43,13 +44,13 @@ public class CreateQuickMatchHandler(
 
     /// <summary>
     /// Provisions quick match infrastructure, verifies or grants team editor access policies for both competing teams, 
-    /// copies starter roster entries into the match lineup for both Home and Guest teams, and optionally tracks the match.
+    /// and copies starter roster entries into the match lineup for both Home and Guest teams.
     /// Performs compensating cleanup if post-creation provisioning fails.
     /// </summary>
     /// <param name="command">The command containing quick match setup parameters and authenticated user details.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A <see cref="QuickMatchResponse"/> containing the newly created match details.</returns>
-    /// <exception cref="KeyNotFoundException">Thrown if quick match infrastructure creation fails, or if the specified sport/sport configuration is missing.</exception>
+    /// <exception cref="KeyNotFoundException">Thrown if quick match infrastructure creation fails, or if the specified sport configuration is missing.</exception>
     public async Task<QuickMatchResponse> Handle(
         CreateQuickMatchCommand command,
         CancellationToken cancellationToken)
@@ -79,18 +80,6 @@ public class CreateQuickMatchHandler(
             }
 
             await PopulateStartingLineupsAsync(quickMatch, command, cancellationToken);
-
-            if (command.Request.TrackedTeamId.HasValue)
-            {
-                _logger.LogDebug("Atomically catching match {MatchId} for tracked team {TeamId} and user {UserId}.",
-                    quickMatch.Id, command.Request.TrackedTeamId.Value, command.UserId);
-
-                await _matchRepository.CatchMatchAsync(
-                    quickMatch.Id,
-                    command.Request.TrackedTeamId.Value,
-                    command.UserId,
-                    cancellationToken);
-            }
 
             _logger.LogInformation("Successfully completed quick match creation for Match {MatchId}.", quickMatch.Id);
 
@@ -130,7 +119,7 @@ public class CreateQuickMatchHandler(
     }
 
     /// <summary>
-    /// Invokes the stored procedure to provision quick match infrastructure and create the match entity.
+    /// Invokes the stored procedure to provision quick match infrastructure, create the match entity, and track the team context.
     /// </summary>
     /// <param name="command">The command containing setup parameters.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
@@ -143,6 +132,7 @@ public class CreateQuickMatchHandler(
             command.Request.SportId,
             command.UserId,
             command.Request.ConfigurationId,
+            command.Request.IsGuestTeam,
             cancellationToken);
 
         if (quickMatch == null)
@@ -213,10 +203,10 @@ public class CreateQuickMatchHandler(
     /// <param name="quickMatch">The newly created match entity.</param>
     /// <param name="command">The quick match creation command.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <exception cref="KeyNotFoundException">Thrown if sport or sport configuration is not found.</exception>
+    /// <exception cref="KeyNotFoundException">Thrown if sport configuration is not found.</exception>
     private async Task PopulateStartingLineupsAsync(Match quickMatch, CreateQuickMatchCommand command, CancellationToken cancellationToken)
     {
-        var targetConfigId = await ResolveConfigurationIdAsync(command.Request.SportId, command.Request.ConfigurationId, cancellationToken);
+        var targetConfigId = command.Request.ConfigurationId;
 
         var sportConfig = await _sportConfigurationRepository.GetByIdAsync(targetConfigId, cancellationToken);
         if (sportConfig == null)
@@ -229,31 +219,6 @@ public class CreateQuickMatchHandler(
 
         await PopulateTeamStartersAsync(quickMatch.Id, quickMatch.TournamentId, quickMatch.HomeTeamId, sportConfig.LineupLimit, cancellationToken);
         await PopulateTeamStartersAsync(quickMatch.Id, quickMatch.TournamentId, quickMatch.GuestTeamId, sportConfig.LineupLimit, cancellationToken);
-    }
-
-    /// <summary>
-    /// Resolves the effective sport configuration ID, falling back to the sport's default configuration if not specified.
-    /// </summary>
-    /// <param name="sportId">The unique identifier of the sport.</param>
-    /// <param name="configurationId">The optional requested configuration identifier.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>The resolved configuration identifier.</returns>
-    /// <exception cref="KeyNotFoundException">Thrown if sport is missing.</exception>
-    private async Task<Guid> ResolveConfigurationIdAsync(Guid sportId, Guid? configurationId, CancellationToken cancellationToken)
-    {
-        if (configurationId.HasValue && configurationId.Value != Guid.Empty)
-        {
-            return configurationId.Value;
-        }
-
-        var sport = await _sportRepository.GetByIdAsync(sportId, cancellationToken);
-        if (sport == null)
-        {
-            _logger.LogError("Sport with ID {SportId} was not found.", sportId);
-            throw new KeyNotFoundException($"Sport with ID {sportId} was not found.");
-        }
-
-        return sport.DefaultConfigId;
     }
 
     /// <summary>

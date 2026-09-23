@@ -7,13 +7,13 @@ namespace TTA.BusinessLogic.Features.Matches.DTOs;
 /// </summary>
 /// <param name="Id">Gets the client-generated unique identifier of the match.</param>
 /// <param name="SportId">Gets the unique identifier of the target sport discipline.</param>
-/// <param name="ConfigurationId">Gets the optional unique identifier of the sport configuration. If omitted, the system automatically falls back to the default configuration of the specified sport.</param>
-/// <param name="TrackedTeamId">Gets the optional unique identifier of the team to track (catch) automatically upon match creation.</param>
+/// <param name="ConfigurationId">Gets the mandatory unique identifier of the sport configuration.</param>
+/// <param name="IsGuestTeam">Gets a value indicating whether to track the guest team (<c>true</c>) or home team (<c>false</c>).</param>
 public record CreateQuickMatchRequest(
     Guid Id,
     Guid SportId,
-    Guid? ConfigurationId = null,
-    Guid? TrackedTeamId = null);
+    Guid ConfigurationId,
+    bool IsGuestTeam);
 
 /// <summary>
 /// Mapping extensions for <see cref="CreateQuickMatchRequest"/>.

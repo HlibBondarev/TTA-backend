@@ -951,14 +951,15 @@ $$ LANGUAGE plpgsql;
  *              Ensures base geography and default club exist JIT to guarantee idempotency.
  *              Requires an authenticated user identifier (p_user_id) to set as fallback owner.
  *              Assigns Global FullControl Admin as tournament owner if available.
- *              Falls back to sports.defaultconfigid if p_configuration_id is NULL.
+ *              Enforces mandatory p_configuration_id and p_is_guest_team flag for atomic tracking.
  *              Returns full match entity record matching public.matches structure.
  ************************************************************************************************/
 CREATE OR REPLACE FUNCTION public.create_quick_match(
     p_match_id UUID,
     p_sport_id UUID,
     p_user_id VARCHAR(64),
-    p_configuration_id UUID DEFAULT NULL
+    p_configuration_id UUID,
+    p_is_guest_team BOOLEAN
 )
 RETURNS SETOF public.matches
 LANGUAGE plpgsql
@@ -979,7 +980,7 @@ DECLARE
     v_position_id UUID;
     v_roster_limit INT;
 BEGIN
-    -- Validation: Ensure match ID and user ID are provided
+    -- Validation: Ensure match ID, user ID, and configuration ID are provided
     IF p_match_id IS NULL OR p_match_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
         RAISE EXCEPTION 'Match ID is required for quick match creation.'
             USING ERRCODE = '22004'; -- Null Value Not Allowed
@@ -987,6 +988,11 @@ BEGIN
 
     IF p_user_id IS NULL OR trim(p_user_id) = '' THEN
         RAISE EXCEPTION 'User ID is required for quick match tournament creation.'
+            USING ERRCODE = '22004'; -- Null Value Not Allowed
+    END IF;
+
+    IF p_configuration_id IS NULL OR p_configuration_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
+        RAISE EXCEPTION 'Configuration ID is required for quick match creation.'
             USING ERRCODE = '22004'; -- Null Value Not Allowed
     END IF;
 
@@ -1044,22 +1050,10 @@ BEGIN
     VALUES (v_club_id, v_city_id, 'TTA Training Club', v_now)
     ON CONFLICT DO NOTHING;
 
-    -- 2. Determine effective configuration ID (Use provided or fallback to sports.defaultconfigid)
-    IF p_configuration_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
-        p_configuration_id := NULL;
-    END IF;
+    -- 2. Determine effective configuration ID
+    v_effective_config_id := p_configuration_id;
 
-    v_effective_config_id := COALESCE(
-        p_configuration_id, 
-        (SELECT s.defaultconfigid FROM public.sports s WHERE s.id = p_sport_id)
-    );
-
-    IF v_effective_config_id IS NULL THEN
-        RAISE EXCEPTION 'Configuration ID not provided and default configuration does not exist for sport %.', p_sport_id
-            USING ERRCODE = 'P0005';
-    END IF;
-
-    -- Validate that effective configuration exists AND belongs to the specified sport, retrieve rosterlimit
+    -- Validate that configuration exists AND belongs to the specified sport, retrieve rosterlimit
     SELECT sc.rosterlimit INTO v_roster_limit
     FROM public.sportconfigurations sc 
     WHERE sc.id = v_effective_config_id AND sc.sportid = p_sport_id;
@@ -1120,7 +1114,7 @@ BEGIN
         VALUES (v_position_id, p_sport_id, 'Universal', 'UNI');
     END IF;
     
-   -- 7. Bulk-register up to rosterlimit players for HOME SQUAD
+    -- 7. Bulk-register up to rosterlimit players for HOME SQUAD
     WITH ranked_players AS (
         SELECT 
             p.id AS player_id,
@@ -1184,7 +1178,16 @@ BEGIN
         v_now
     );
 
-    -- 10. Return full created match entity matching public.matches
+    -- 10. Automatically track match for the user based on p_is_guest_team
+    INSERT INTO public.usertrackedmatches (userid, matchid, teamid)
+    VALUES (
+        p_user_id,
+        v_match_id,
+        CASE WHEN p_is_guest_team THEN v_guest_team_id ELSE v_home_team_id END
+    )
+    ON CONFLICT (userid, matchid, teamid) DO NOTHING;
+
+    -- 11. Return full created match entity matching public.matches
     RETURN QUERY
     SELECT m.*
     FROM public.matches m
