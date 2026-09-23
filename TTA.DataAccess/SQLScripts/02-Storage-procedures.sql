@@ -1098,7 +1098,8 @@ BEGIN
     -- 5. Ensure Training Tournament exists for the effective configurationId
     SELECT t.id INTO v_tournament_id
     FROM public.tournaments t
-    WHERE t.configurationid = v_effective_config_id AND t.name = 'Training & Friendly Matches'
+    WHERE t.configurationid = v_effective_config_id AND t.isjit = TRUE
+    ORDER BY t.createdat ASC
     LIMIT 1;
 
     IF v_tournament_id IS NULL THEN

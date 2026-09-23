@@ -642,7 +642,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that JIT garbage collection purges an empty quick match based strictly on the isjit flag,
-    /// regardless of the tournament's name.
+    /// and that the existing JIT tournament container is consistently reused even if its name was changed.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
@@ -663,7 +663,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
             firstMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         firstMatch.Should().NotBeNull();
 
-        // 2. Explicitly rename the JIT tournament in DB to ensure GC doesn't rely on the legacy name string
+        // 2. Explicitly rename the JIT tournament in DB to ensure logic doesn't rely on the legacy name string
         using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.OpenAsync();
@@ -672,12 +672,16 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { tId = firstMatch!.TournamentId });
         }
 
-        // Act: Create second quick match, triggering JIT GC
+        // Act: Create second quick match, triggering JIT GC and container resolution
         var secondMatch = await _repository.CreateQuickMatchAsync(
             secondMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         secondMatch.Should().NotBeNull();
 
-        // Assert: Verify first match was purged strictly because isjit = true
+        // Assert 1: Verify the existing JIT tournament container was reused despite being renamed
+        secondMatch!.TournamentId.Should().Be(firstMatch.TournamentId,
+            "JIT tournament container must be reused based on configurationid and isjit = true regardless of tournament name");
+
+        // Assert 2: Verify first match was purged strictly because isjit = true
         using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await checkConn.OpenAsync();
