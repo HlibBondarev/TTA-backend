@@ -590,6 +590,48 @@ public class MatchRepositoryTests : BaseIntegrationTest
         }
     }
 
+    /// <summary>
+    /// Verifies that JIT garbage collection during quick match creation DOES NOT purge an empty 
+    /// ordinary tournament match even if it is tracked by the user and has no events or anchors.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldNotPurgeOrdinaryMatch_WhenEmptyAndTracked()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var ordinaryMatch = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId, "ORD-EMPTY");
+        await _repository.UpsertMatchAsync(ordinaryMatch, CancellationToken.None);
+
+        var userId = $"auth0|user-gc-ordinary-{Guid.NewGuid():N}";
+        await SeedUserAsync(userId, $"usergc_ord_{Guid.NewGuid():N}@example.com", "GC Ordinary User");
+
+        await _repository.CatchMatchAsync(ordinaryMatch.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Setup sport & config for Quick Match creation
+        var newMatchId = Guid.NewGuid();
+        var quickSportId = Guid.NewGuid();
+        var quickConfigId = Guid.NewGuid();
+
+        await SeedSportWithConfigAsync(quickSportId, $"QuickPolo_{Guid.NewGuid():N}", "QP", quickConfigId);
+
+        // Act: User creates a new quick match, triggering JIT GC
+        var quickMatch = await _repository.CreateQuickMatchAsync(newMatchId, quickSportId, userId, quickConfigId, isGuestTeam: false, CancellationToken.None);
+        quickMatch.Should().NotBeNull();
+
+        // Assert: Ordinary tournament match must NOT be purged by JIT GC
+        using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await checkConn.OpenAsync();
+
+            var matchExists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = ordinaryMatch.Id });
+
+            matchExists.Should().BeTrue("ordinary tournament matches must never be purged by JIT GC during quick match creation");
+        }
+    }
+
     #endregion
 
     #region DeleteAsync Tests
@@ -999,7 +1041,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="MatchRepository.UncatchMatchAsync"/> automatically deletes the match entity 
+    /// Verifies that <see cref="MatchRepository.UncatchMatchAsync"/> automatically deletes a quick match entity 
     /// from the database when the last tracking user uncatches it.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
@@ -1007,12 +1049,46 @@ public class MatchRepositoryTests : BaseIntegrationTest
     public async Task UncatchMatchAsync_ShouldRemoveTrackingLinkAndDeleteMatch_WhenLastUserUncatches()
     {
         // Arrange
+        var matchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var userId = $"auth0|single-user-{Guid.NewGuid():N}";
+
+        await SeedUserAsync(userId, $"single_{Guid.NewGuid():N}@test.com", "Single Quick User");
+        await SeedSportWithConfigAsync(sportId, $"QuickPolo_{Guid.NewGuid():N}", "QP", configId);
+
+        // CreateQuickMatchAsync creates a match in 'Training & Friendly Matches' and automatically tracks it for userId
+        var match = await _repository.CreateQuickMatchAsync(matchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        match.Should().NotBeNull();
+
+        // Act
+        var isUncatched = await _repository.UncatchMatchAsync(matchId, match!.HomeTeamId, userId, CancellationToken.None);
+
+        // Assert
+        isUncatched.Should().BeTrue();
+
+        var isCatched = await _repository.IsMatchCatchedByUserAsync(matchId, match.HomeTeamId, userId, CancellationToken.None);
+        isCatched.Should().BeFalse();
+
+        var matchInDb = await _repository.GetByIdAsync(matchId, CancellationToken.None);
+        matchInDb.Should().BeNull("quick match entity must be deleted automatically when no tracking records remain");
+    }
+
+    /// <summary>
+    /// Verifies that UncatchMatchAsync removes the tracking link but DOES NOT delete the match entity
+    /// when the match belongs to an ordinary tournament (not a JIT Quick Match).
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task UncatchMatchAsync_ShouldKeepOrdinaryMatch_WhenLastUserUncatches()
+    {
+        // Arrange
         var context = await SeedMatchEnvironmentAsync();
         var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
         await _repository.UpsertMatchAsync(match, CancellationToken.None);
 
-        var userId = $"auth0|single-user-{Guid.NewGuid()}";
-        await SeedUserAsync(userId, "single@test.com", "Single User");
+        var userId = $"auth0|ordinary-uncatch-{Guid.NewGuid():N}";
+        await SeedUserAsync(userId, $"ordinary_{Guid.NewGuid():N}@test.com", "Ordinary User");
 
         await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
 
@@ -1020,13 +1096,13 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var isUncatched = await _repository.UncatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
 
         // Assert
-        isUncatched.Should().BeTrue();
+        isUncatched.Should().BeTrue("uncatching an existing tracking link should return true");
 
         var isCatched = await _repository.IsMatchCatchedByUserAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
-        isCatched.Should().BeFalse();
+        isCatched.Should().BeFalse("tracking record must be removed");
 
         var matchInDb = await _repository.GetByIdAsync(match.Id, CancellationToken.None);
-        matchInDb.Should().BeNull("the match entity must be deleted automatically when no tracking records remain");
+        matchInDb.Should().NotBeNull("an ordinary tournament match must NOT be deleted when untracked by the last user");
     }
 
     /// <summary>

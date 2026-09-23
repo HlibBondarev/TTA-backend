@@ -996,12 +996,16 @@ BEGIN
             USING ERRCODE = '22004'; -- Null Value Not Allowed
     END IF;
 
-    -- JIT Garbage Collection: Cleanup orphan empty quick matches for the user
+    -- JIT Garbage Collection: Cleanup orphan empty quick matches for the user (scoped strictly to JIT Training matches)
     DELETE FROM public.matches m
     WHERE m.id IN (
         SELECT utm.matchid
         FROM public.usertrackedmatches utm
         WHERE utm.userid = p_user_id
+    )
+    AND EXISTS (
+        SELECT 1 FROM public.tournaments t
+        WHERE t.id = m.tournamentid AND t.name = 'Training & Friendly Matches'
     )
     AND NOT EXISTS (
         SELECT 1 FROM public.gameevents ge
@@ -2633,7 +2637,8 @@ $$ LANGUAGE plpgsql;
 
 /**********************************************************************************
  * Removes tracking link between a user and a specific match/team context.
- * Automatically deletes the match entity if no tracking references remain.
+ * Automatically deletes the match entity if no tracking references remain AND 
+ * the match is a JIT Quick Match (belonging to 'Training & Friendly Matches').
  * Returns TRUE if a tracking record was deleted, FALSE otherwise.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.uncatch_user_match(
@@ -2658,10 +2663,13 @@ BEGIN
             SELECT 1 FROM public.usertrackedmatches
             WHERE matchid = p_match_id
         ) THEN
-            -- 3. If no other users are tracking this match, delete the match entity
-            -- (ON DELETE CASCADE will automatically clean up lineups, events, anchors, etc.)
-            DELETE FROM public.matches
-            WHERE id = p_match_id;
+            -- 3. Delete the match entity ONLY if it is a JIT Quick Match
+            DELETE FROM public.matches m
+            WHERE m.id = p_match_id
+              AND EXISTS (
+                  SELECT 1 FROM public.tournaments t
+                  WHERE t.id = m.tournamentid AND t.name = 'Training & Friendly Matches'
+              );
         END IF;
     END IF;
 
