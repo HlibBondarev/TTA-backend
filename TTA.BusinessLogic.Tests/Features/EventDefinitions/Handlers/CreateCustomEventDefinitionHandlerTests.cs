@@ -54,8 +54,6 @@ public class CreateCustomEventDefinitionHandlerTests
             CreatedAt = DateTime.UtcNow
         };
 
-        const int expectedSortOrder = 3;
-
         _repositoryMock
             .Setup(r => r.UpsertCustomAsync(It.Is<EventDefinition>(e =>
                 e.Id == command.Id &&
@@ -65,7 +63,7 @@ public class CreateCustomEventDefinitionHandlerTests
                 e.ShortName == command.ShortName &&
                 e.IsPositive == command.IsPositive &&
                 !e.IsSoftDeleted), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((createdEntity, expectedSortOrder));
+            .ReturnsAsync(createdEntity);
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
@@ -79,7 +77,7 @@ public class CreateCustomEventDefinitionHandlerTests
         result.IsPositive.Should().BeTrue();
         result.IsCustom.Should().BeTrue();
         result.IsEnabled.Should().BeTrue();
-        result.SortOrder.Should().Be(expectedSortOrder);
+        result.SortOrder.Should().Be(0);
 
         _repositoryMock.Verify(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -102,7 +100,7 @@ public class CreateCustomEventDefinitionHandlerTests
 
         _repositoryMock
             .Setup(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(((EventDefinition?)null, 0));
+            .ReturnsAsync((EventDefinition?)null);
 
         // Act
         Func<Task> act = async () => await _handler.Handle(command, CancellationToken.None);
@@ -146,7 +144,7 @@ public class CreateCustomEventDefinitionHandlerTests
 
         _repositoryMock
             .Setup(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), cancellationToken))
-            .ReturnsAsync((createdEntity, 0));
+            .ReturnsAsync(createdEntity);
 
         // Act
         await _handler.Handle(command, cancellationToken);
@@ -200,7 +198,7 @@ public class CreateCustomEventDefinitionHandlerTests
             OwnerId: "auth0|user123",
             Name: "Foul",
             ShortName: "FOL-P",
-            IsPositive: true); // Positive "Foul" (e.g. Foul drawn)
+            IsPositive: true);
 
         var createdEntity = new EventDefinition
         {
@@ -214,14 +212,12 @@ public class CreateCustomEventDefinitionHandlerTests
             CreatedAt = DateTime.UtcNow
         };
 
-        const int expectedSortOrder = 4;
-
         _repositoryMock
             .Setup(r => r.UpsertCustomAsync(It.Is<EventDefinition>(e =>
                 e.Id == command.Id &&
                 e.Name == "Foul" &&
                 e.IsPositive == true), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((createdEntity, expectedSortOrder));
+            .ReturnsAsync(createdEntity);
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
@@ -231,7 +227,7 @@ public class CreateCustomEventDefinitionHandlerTests
         result.Id.Should().Be(command.Id);
         result.Name.Should().Be("Foul");
         result.IsPositive.Should().BeTrue();
-        result.SortOrder.Should().Be(expectedSortOrder);
+        result.SortOrder.Should().Be(0);
 
         _repositoryMock.Verify(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()), Times.Once);
     }

@@ -13,7 +13,6 @@ namespace TTA.Tests.Integration.Repository;
 /// </summary>
 public class EventDefinitionRepositoryTests : BaseIntegrationTest
 {
-    private static readonly int[] ExpectedSortOrders = [0, 1];
     private readonly EventDefinitionRepository _repository;
 
     /// <summary>
@@ -153,10 +152,10 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> successfully creates 
-    /// a new custom event definition entity and automatically registers it in user presets.
+    /// a new custom event definition entity without mutating active user presets.
     /// </summary>
     [Fact]
-    public async Task UpsertCustomAsync_ShouldInsertNewCustomEventDefinition_AndAddToPresets()
+    public async Task UpsertCustomAsync_ShouldInsertNewCustomEventDefinition_WithoutMutatingPresets()
     {
         // Arrange
         var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
@@ -173,30 +172,29 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         };
 
         // Act
-        var (created, sortOrder) = await _repository.UpsertCustomAsync(customDefinition);
+        var created = await _repository.UpsertCustomAsync(customDefinition);
 
         // Assert
         created.Should().NotBeNull();
         created!.Id.Should().Be(customDefinition.Id);
         created.Name.Should().Be("Custom Tactical Block");
         created.OwnerId.Should().Be(userId);
-        sortOrder.Should().Be(0);
 
-        // Verify database state: user preset entry should exist
+        // Verify database state: no user preset entry should exist automatically
         using var conn = Fixture.ConnectionFactory.CreateConnection();
         var presetCount = await conn.ExecuteScalarAsync<int>(
             "SELECT COUNT(*) FROM public.usereventpresets WHERE userid = @userId AND eventdefinitionid = @defId",
             new { userId, defId = customDefinition.Id });
 
-        presetCount.Should().Be(1);
+        presetCount.Should().Be(0);
     }
 
     /// <summary>
     /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> is idempotent when re-posting 
-    /// an existing custom event definition with identical attributes and returns its current preset sort order.
+    /// an existing custom event definition with identical attributes.
     /// </summary>
     [Fact]
-    public async Task UpsertCustomAsync_ShouldBeIdempotentAndReturnSortOrder_WhenRePostingExistingCustomEventDefinition()
+    public async Task UpsertCustomAsync_ShouldBeIdempotent_WhenRePostingExistingCustomEventDefinition()
     {
         // Arrange
         var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
@@ -214,14 +212,6 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         await _repository.UpsertCustomAsync(customDef);
 
-        // Manually set preset sort order to 3 to verify idempotent re-post retrieves existing sort order
-        using (var conn = Fixture.ConnectionFactory.CreateConnection())
-        {
-            await conn.ExecuteAsync(
-                "UPDATE public.usereventpresets SET sortorder = 3 WHERE userid = @userId AND eventdefinitionid = @defId",
-                new { userId, defId = customDef.Id });
-        }
-
         var rePostedDef = new EventDefinition
         {
             Id = customDef.Id, // Same ID
@@ -234,14 +224,13 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         };
 
         // Act
-        var (result, sortOrder) = await _repository.UpsertCustomAsync(rePostedDef);
+        var result = await _repository.UpsertCustomAsync(rePostedDef);
 
         // Assert
         result.Should().NotBeNull();
         result!.Name.Should().Be("Tactical Move");
         result.ShortName.Should().Be("MOVE");
         result.IsPositive.Should().BeTrue();
-        sortOrder.Should().Be(3);
     }
 
     /// <summary>
@@ -290,12 +279,12 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             .WithMessage("*Cannot update or reuse a soft-deleted event definition*");
     }
 
-    /// < summary >
+    /// <summary>
     /// Verifies that sequential insertions of custom event definitions for the same user and sport
-    /// dynamically assign incremental preset SortOrder values (0, 1, ...).
-    /// < /summary >
+    /// successfully insert multiple definitions without mutating presets.
+    /// </summary>
     [Fact]
-    public async Task UpsertCustomAsync_ShouldAssignIncrementalSortOrder_ForMultipleCustomDefinitions()
+    public async Task UpsertCustomAsync_ShouldSuccessfullyInsertMultipleCustomDefinitions()
     {
         // Arrange
         var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
@@ -323,12 +312,14 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         };
 
         // Act
-        var (_, firstSortOrder) = await _repository.UpsertCustomAsync(firstDef);
-        var (_, secondSortOrder) = await _repository.UpsertCustomAsync(secondDef);
+        var firstResult = await _repository.UpsertCustomAsync(firstDef);
+        var secondResult = await _repository.UpsertCustomAsync(secondDef);
 
         // Assert
-        firstSortOrder.Should().Be(0);
-        secondSortOrder.Should().Be(1);
+        firstResult.Should().NotBeNull();
+        secondResult.Should().NotBeNull();
+        firstResult!.Id.Should().Be(firstDef.Id);
+        secondResult!.Id.Should().Be(secondDef.Id);
     }
 
     /// <summary>
@@ -518,7 +509,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         var customItem = list.FirstOrDefault(x => x.Id == customDef.Id);
         customItem.Should().NotBeNull();
         customItem!.IsCustom.Should().BeTrue();
-        customItem.IsEnabled.Should().BeTrue(); // Automatically enabled on creation
+        customItem.IsEnabled.Should().BeFalse(); // Not automatically enabled in presets on creation
 
         var systemItem = list.FirstOrDefault(x => x.Id == systemDefIds[0]);
         systemItem.Should().NotBeNull();
@@ -531,10 +522,10 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that concurrent calls to <see cref="EventDefinitionRepository.UpsertCustomAsync"/> for the same user and sport 
-    /// are properly serialized via PostgreSQL advisory locks, preventing sort order race conditions or database deadlocks.
+    /// are properly serialized via PostgreSQL advisory locks without deadlocks or errors.
     /// </summary>
     [Fact]
-    public async Task UpsertCustomAsync_ConcurrentCallsSameUserAndSport_ShouldSerializeAndAssignSequentialSortOrders()
+    public async Task UpsertCustomAsync_ConcurrentCallsSameUserAndSport_ShouldSerializeWithoutConflicts()
     {
         // Arrange
         var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
@@ -583,24 +574,11 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         // Assert: Both tasks should execute without deadlocks or Postgres exceptions
         await act.Should().NotThrowAsync();
 
-        var (created1, sortOrder1) = await task1;
-        var (created2, sortOrder2) = await task2;
+        var created1 = await task1;
+        var created2 = await task2;
 
         created1.Should().NotBeNull();
         created2.Should().NotBeNull();
-
-        // One must be 0, the other must be 1 (order depending on lock acquisition sequence)
-        var sortOrders = new[] { sortOrder1, sortOrder2 };
-        sortOrders.Should().BeEquivalentTo(ExpectedSortOrders);
-
-        // Verify database state: User presets table must have exactly 2 entries with unique sort orders (0 and 1)
-        using var conn = Fixture.ConnectionFactory.CreateConnection();
-        var presets = (await conn.QueryAsync<(Guid EventDefinitionId, int SortOrder)>(
-            "SELECT eventdefinitionid, sortorder FROM public.usereventpresets WHERE userid = @userId ORDER BY sortorder ASC",
-            new { userId })).ToList();
-
-        presets.Should().HaveCount(2);
-        presets.Select(p => p.SortOrder).Should().BeEquivalentTo(ExpectedSortOrders);
     }
 
     /// <summary>
@@ -661,25 +639,18 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         await act.Should().NotThrowAsync();
 
         var deleteResult = await deleteTask;
-        var (upsertResult, newSortOrder) = await upsertTask;
+        var upsertResult = await upsertTask;
 
         deleteResult.Should().BeTrue();
         upsertResult.Should().NotBeNull();
 
-        // Verify DB State: Old definition is soft-deleted and removed from presets, new definition is active
+        // Verify DB State: Old definition is soft-deleted
         using var conn = Fixture.ConnectionFactory.CreateConnection();
         var isSoftDeleted = await conn.ExecuteScalarAsync<bool>(
             "SELECT issoftdeleted FROM public.eventdefinitions WHERE id = @id",
             new { id = existingDefId });
 
         isSoftDeleted.Should().BeTrue();
-
-        var activePresetIds = (await conn.QueryAsync<Guid>(
-            "SELECT eventdefinitionid FROM public.usereventpresets WHERE userid = @userId",
-            new { userId })).ToList();
-
-        activePresetIds.Should().ContainSingle()
-            .Which.Should().Be(newDef.Id);
     }
 
     /// <summary>
@@ -731,12 +702,11 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         // Assert
         await act.Should().NotThrowAsync();
 
-        var (_, sort1) = await task1;
-        var (_, sort2) = await task2;
+        var created1 = await task1;
+        var created2 = await task2;
 
-        // Both should have independent sort order sequence starting from 0
-        sort1.Should().Be(0);
-        sort2.Should().Be(0);
+        created1.Should().NotBeNull();
+        created2.Should().NotBeNull();
     }
 
     /// <summary>
@@ -814,8 +784,8 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         };
 
         // Act
-        var (createdPositive, sortOrder1) = await _repository.UpsertCustomAsync(positiveDef);
-        var (createdNegative, sortOrder2) = await _repository.UpsertCustomAsync(negativeDef);
+        var createdPositive = await _repository.UpsertCustomAsync(positiveDef);
+        var createdNegative = await _repository.UpsertCustomAsync(negativeDef);
 
         // Assert
         createdPositive.Should().NotBeNull();
@@ -824,8 +794,6 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         createdNegative!.Name.Should().Be("Foul");
         createdPositive.IsPositive.Should().BeTrue();
         createdNegative.IsPositive.Should().BeFalse();
-        sortOrder1.Should().Be(0);
-        sortOrder2.Should().Be(1);
     }
 
     /// <summary>
