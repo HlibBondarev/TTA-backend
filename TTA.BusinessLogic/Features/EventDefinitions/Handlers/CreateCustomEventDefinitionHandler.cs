@@ -66,7 +66,7 @@ public class CreateCustomEventDefinitionHandler(
                 ShortName: created.ShortName,
                 IsPositive: created.IsPositive,
                 IsCustom: true,
-                IsEnabled: true,
+                IsEnabled: false,
                 SortOrder: 0
             );
         }

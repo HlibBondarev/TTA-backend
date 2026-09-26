@@ -253,7 +253,7 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         result.ShortName.Should().Be("CTO");
         result.IsPositive.Should().BeTrue();
         result.IsCustom.Should().BeTrue();
-        result.IsEnabled.Should().BeTrue();
+        result.IsEnabled.Should().BeFalse();
     }
 
     /// <summary>

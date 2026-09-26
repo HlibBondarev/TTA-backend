@@ -28,7 +28,7 @@ public class CreateCustomEventDefinitionHandlerTests
 
     /// <summary>
     /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle" /> successfully creates and
-    /// persists a custom event definition entity via repository and returns a mapped response DTO.
+    /// persists a custom event definition entity via repository and returns a mapped response DTO with IsEnabled set to false.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldCreateAndReturnEventDefinitionResponse_WhenRepositoryReturnsEntity()
@@ -76,7 +76,7 @@ public class CreateCustomEventDefinitionHandlerTests
         result.ShortName.Should().Be("C-BLK");
         result.IsPositive.Should().BeTrue();
         result.IsCustom.Should().BeTrue();
-        result.IsEnabled.Should().BeTrue();
+        result.IsEnabled.Should().BeFalse();
         result.SortOrder.Should().Be(0);
 
         _repositoryMock.Verify(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -227,6 +227,7 @@ public class CreateCustomEventDefinitionHandlerTests
         result.Id.Should().Be(command.Id);
         result.Name.Should().Be("Foul");
         result.IsPositive.Should().BeTrue();
+        result.IsEnabled.Should().BeFalse();
         result.SortOrder.Should().Be(0);
 
         _repositoryMock.Verify(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()), Times.Once);
