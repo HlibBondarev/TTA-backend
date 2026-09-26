@@ -1513,9 +1513,9 @@ END;$$ LANGUAGE plpgsql;
 -- EVENT DEFINITION & USER PRESETS STORED FUNCTIONS
 -- =============================================================
 /**********************************************************************************
- * Upserts a custom user event definition and automatically enables it inside 
- * the user's active preset for the sport with the next available sort order position.
+ * Upserts a custom user event definition.
  * Validates ownership and prohibits modifying system default definitions.
+ * Does not mutate active user presets.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
     p_id UUID,
@@ -1529,7 +1529,6 @@ RETURNS SETOF public.eventdefinitions AS $$
 DECLARE
     v_now TIMESTAMPTZ := NOW();
     v_rows INT := 0;
-    v_next_sort_order INT := 0;
 BEGIN
     -- Validation: Owner ID must be provided for custom definitions
     IF p_owner_id IS NULL OR TRIM(p_owner_id) = '' THEN
@@ -1604,17 +1603,6 @@ BEGIN
         RAISE EXCEPTION 'Cannot update or reuse a soft-deleted event definition.'
             USING ERRCODE = 'P0001';
     END IF;
-
-    -- Calculate the next available sortorder position for this user and sport
-    SELECT COALESCE(MAX(uep.sortorder) + 1, 0) INTO v_next_sort_order
-    FROM public.usereventpresets uep
-    INNER JOIN public.eventdefinitions ed ON uep.eventdefinitionid = ed.id
-    WHERE uep.userid = p_owner_id AND ed.sportid = p_sport_id;
-
-    -- Automatically add the custom definition into the user's active preset if not already present
-    INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
-    VALUES (p_owner_id, p_id, v_next_sort_order, v_now)
-    ON CONFLICT (userid, eventdefinitionid) DO NOTHING;
 
     RETURN QUERY
     SELECT * FROM public.eventdefinitions WHERE id = p_id;
@@ -1760,7 +1748,7 @@ BEGIN
         ed.ispositive,
         (ed.ownerid IS NOT NULL) AS iscustom,
         (uep.eventdefinitionid IS NOT NULL) AS isenabled,
-        COALESCE(uep.sortorder, 999) AS sortorder
+        COALESCE(uep.sortorder, 0) AS sortorder
     FROM public.eventdefinitions ed
     LEFT JOIN public.usereventpresets uep 
         ON ed.id = uep.eventdefinitionid AND uep.userid = p_user_id
@@ -1769,7 +1757,7 @@ BEGIN
       AND (ed.ownerid IS NULL OR ed.ownerid = p_user_id)
     ORDER BY 
         (uep.eventdefinitionid IS NOT NULL) DESC,
-        uep.sortorder ASC,
+        uep.sortorder ASC NULLS LAST,
         ed.name ASC;
 END;
 $$ LANGUAGE plpgsql;
