@@ -13,14 +13,24 @@ try
     // 2. Load variables from .env file safely without overwriting system or orchestrator variables
     DotNetEnv.Env.NoClobber().Load();
 
-    // 3. Get ports from environment variables or use defaults
-    var httpsPort = Environment.GetEnvironmentVariable("API_PORT_HTTPS") ?? "5001";
-    var httpPort = Environment.GetEnvironmentVariable("API_PORT_HTTP") ?? "5002";
+    var configuredUrls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
 
-    // 4. Use the built-in builder. In .NET 9, this automatically handles 
+    // 3. Use the built-in builder. In .NET 9, this automatically handles 
     // appsettings.json and appsettings.{Environment}.json based on the project context.
     var builder = WebApplication.CreateBuilder(args);
-    builder.WebHost.UseUrls($"https://localhost:{httpsPort};http://localhost:{httpPort}");
+
+    // Apply local development ports only if ASPNETCORE_URLS is not explicitly set by the environment or Docker container
+    if (string.IsNullOrWhiteSpace(configuredUrls))
+    {
+        var httpsPort = Environment.GetEnvironmentVariable("API_PORT_HTTPS") ?? "5001";
+        var httpPort = Environment.GetEnvironmentVariable("API_PORT_HTTP") ?? "5002";
+        builder.WebHost.UseUrls($"https://localhost:{httpsPort};http://localhost:{httpPort}");
+    }
+
+    // 4. Bind Serilog to the host configuration
+    builder.Host.UseSerilog((context, services, configuration) => configuration
+        .ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(services));
 
     // 5. Bind Serilog to the host configuration
     builder.Host.UseSerilog((context, services, configuration) => configuration
