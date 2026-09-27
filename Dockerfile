@@ -12,6 +12,9 @@ FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 
+# Run application as a non-root user for security compliance
+USER $APP_UID
+
 # Configure ASP.NET Core to listen on port 8080
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
