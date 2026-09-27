@@ -399,6 +399,15 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         await _repository.UpsertCustomAsync(customDef);
 
+        // Seed a preset row so the assertion verifies active removal during soft-delete
+        using (var connection = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await connection.ExecuteAsync(@"
+                INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat) 
+                VALUES (@userId, @definitionId, 0, NOW())",
+                new { userId, definitionId = customDef.Id });
+        }
+
         // Act
         var deleted = await _repository.SoftDeleteAsync(customDef.Id, userId);
 
