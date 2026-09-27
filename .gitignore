@@ -43,3 +43,4 @@ secrets.json
 TestResults/
 [Bb]in/
 [Oo]bj/
+.env

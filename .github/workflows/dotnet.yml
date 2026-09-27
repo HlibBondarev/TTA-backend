@@ -1,0 +1,62 @@
+name: TTA Engine CI
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: 'zulu'
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Required for better SonarCloud analysis
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install SonarScanner
+        run: dotnet tool install --global dotnet-sonarscanner --version 9.2.1
+
+      - name: Begin Sonar Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dotnet-sonarscanner begin /k:"HlibBondarev_TTA-backend" /o:"hlibbondarev" \
+          /d:sonar.token="$SONAR_TOKEN" \
+          /d:sonar.host.url="https://sonarcloud.io" \
+          /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
+          /d:sonar.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**,**/*.sql" \
+          /d:sonar.coverage.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**,**/*.sql" \
+          /d:sonar.cpd.exclusions="**/Controllers/MatchesController.cs" \
+          /d:sonar.lang.patterns.plsql="**/*.not_exists" \
+          /d:sonar.lang.patterns.tsql="**/*.sql"
+
+      - name: Restore dependencies
+        run: dotnet restore TTA-backend.sln
+
+      - name: Build projects
+        run: dotnet build TTA-backend.sln --no-restore
+
+      - name: Run tests with coverage
+        run: |
+          dotnet test TTA-backend.sln --no-build --verbosity normal \
+          --collect:"XPlat Code Coverage" \
+          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+      - name: End Sonar Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"

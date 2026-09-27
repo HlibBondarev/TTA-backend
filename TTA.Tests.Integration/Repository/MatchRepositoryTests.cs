@@ -1,0 +1,1363 @@
+﻿using Dapper;
+using FluentAssertions;
+using System.Data.Common;
+using TTA.DataAccess.Models;
+using TTA.DataAccess.Repository;
+using TTA.Tests.Integration.Infrastructure;
+using TTA.Tests.Integration.Repository.Auth;
+
+namespace TTA.Tests.Integration.Repository;
+
+/// <summary>
+/// Integration tests for <see cref="MatchRepository"/> using a real database container.
+/// Verifies SQL function calls, data mapping, and referential integrity constraints.
+/// </summary>
+public class MatchRepositoryTests : BaseIntegrationTest
+{
+    private readonly MatchRepository _repository;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="MatchRepositoryTests"/> class with the database fixture.
+    /// </summary>
+    /// <param name="fixture">The database test container fixture.</param>
+    public MatchRepositoryTests(DatabaseFixture fixture) : base(fixture)
+    {
+        _repository = new MatchRepository(fixture.ConnectionFactory);
+    }
+
+    private static readonly string[] ExpectedMatchNumbers = { "M-01", "M-02" };
+
+    #region UpsertMatchAsync Tests
+
+    /// <summary>
+    /// Verifies that a new match is correctly persisted when all foreign keys (Tournament, Teams) exist.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task UpsertMatchAsync_ShouldPersistNewMatch_WhenDataIsValid()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+
+        // Act
+        var result = await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Id.Should().Be(match.Id);
+        result.HomeTeamId.Should().Be(context.HomeTeamId);
+    }
+
+    /// <summary>
+    /// Verifies that updating an existing match (e.g., recording a score) updates the database correctly.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task UpsertMatchAsync_ShouldUpdateScores_WhenMatchExists()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        // Act
+        match.HomeScore = 3;
+        match.GuestScore = 1;
+        match.Temperature = 22.5;
+        var result = await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        // Assert
+        result.HomeScore.Should().Be(3);
+        result.Temperature.Should().Be(22.5);
+
+        var fromDb = await _repository.GetByIdAsync(match.Id, CancellationToken.None);
+        fromDb!.HomeScore.Should().Be(3);
+    }
+
+    #endregion
+
+    #region Retrieval Tests
+
+    /// <summary>
+    /// Verifies that GetMatchByIdWithDetailsAsync returns dynamic object with joined team names.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetMatchByIdWithDetailsAsync_ShouldReturnJoinedData()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        // Act
+        var result = await _repository.GetMatchByIdWithDetailsAsync(match.Id, CancellationToken.None);
+
+        // Assert
+        // Dapper returns dynamic (DapperRow), we check properties defined in the SQL function
+        ((Guid)result!.id).Should().Be(match.Id);
+        ((string)result!.hometeamname).Should().NotBeNullOrEmpty();
+        ((string)result!.tournamentname).Should().NotBeNullOrEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that GetByTournamentIdAsync correctly filters matches by the specified tournament ID.
+    /// Seeds matches in multiple tournaments to ensure isolation and uses unique user IDs 
+    /// to avoid primary key constraint violations.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetByTournamentIdAsync_ShouldReturnOnlyMatchesInTargetTournament()
+    {
+        // Arrange
+        // 1. Setup the target tournament context
+        var context = await SeedMatchEnvironmentAsync();
+        var match1 = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId, "M-01");
+        var match2 = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId, "M-02");
+
+        await _repository.UpsertMatchAsync(match1, CancellationToken.None);
+        await _repository.UpsertMatchAsync(match2, CancellationToken.None);
+
+        // 2. Setup a second tournament to verify that its matches are NOT returned
+        var noiseContext = await SeedMatchEnvironmentAsync();
+        var noiseMatch = CreateMatchModel(noiseContext.TournamentId, noiseContext.HomeTeamId, noiseContext.GuestTeamId, "NOISE-01");
+        await _repository.UpsertMatchAsync(noiseMatch, CancellationToken.None);
+
+        // Act
+        var rawResults = await _repository.GetByTournamentIdAsync(context.TournamentId, CancellationToken.None);
+        var resultsList = rawResults.ToList();
+
+        // Assert
+        resultsList.Should().HaveCount(2, "matches from other tournaments must be excluded from the result");
+
+        // Verify each returned match belongs to the correct tournament
+        foreach (var item in resultsList)
+        {
+            var dict = (IDictionary<string, object>)item;
+
+            if (!dict.TryGetValue("tournamentid", out var returnedIdObj) &&
+                !dict.TryGetValue("TournamentId", out returnedIdObj))
+            {
+                throw new KeyNotFoundException("The expected TournamentId key was not found in the returned dynamic object.");
+            }
+
+            var returnedId = (Guid)returnedIdObj;
+            returnedId.Should().Be(context.TournamentId);
+        }
+
+        // Verify that the specific match numbers are present
+        var matchNumbers = resultsList.Select(x => (string)((IDictionary<string, object>)x)["matchnumber"]).ToList();
+
+        matchNumbers.Should().Contain(ExpectedMatchNumbers);
+        matchNumbers.Should().NotContain("NOISE-01");
+    }
+
+    #endregion
+
+    #region CreateQuickMatchAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.CreateQuickMatchAsync"/> provisions JIT teams, tournament container, 
+    /// player rosters for both Home and Guest teams, creates the match entity using client-supplied match ID,
+    /// automatically tracks the match for the requesting user based on the isGuestTeam flag,
+    /// and verifies that the created tournament container has the isjit flag set to true.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldProvisionInfrastructureAndReturnMatchEntity()
+    {
+        // Arrange - seed base sport, configuration, JIT default club, users and players
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        var matchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var userId = $"auth0|quickmatch-{Guid.NewGuid()}";
+
+        // 0. Ensure User exists for ownership assigning
+        await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
+            new { id = userId, e = "quickmatch@test.com", n = "QuickMatch Owner" }, transaction: transaction);
+
+        // 1. Ensure JIT base geography exists
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+            INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+            INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+            new { cityId = tempCityId }, transaction: transaction);
+
+        // Resolve actual persisted city ID
+        var actualCityId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
+            transaction: transaction);
+
+        // 2. Ensure default club exists using actual city ID
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.clubs (id, cityid, name, createdat) 
+            VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+            ON CONFLICT DO NOTHING;",
+            new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
+
+        // 3. Seed players for the default club so that create_quick_match function can register them into rosters
+        for (int i = 1; i <= 3; i++)
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+                VALUES (@id, @clubId, 'Home Player', @ln, '2000-01-01', 0, NOW())
+                ON CONFLICT DO NOTHING;",
+                new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() }, transaction: transaction);
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
+                VALUES (@id, @clubId, 'Guest Player', @ln, '2000-01-01', 0, NOW())
+                ON CONFLICT DO NOTHING;",
+                new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() }, transaction: transaction);
+        }
+
+        // 4. Seed sport and sport configuration (setting rosterlimit = 3 for clear testing)
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@sportId, 'Water Polo Quick', 'WPQ', @configId)",
+            new { sportId, configId }, transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+            VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+            new { configId, sportId }, transaction: transaction);
+
+        await transaction.CommitAsync();
+
+        // Act
+        var result = await _repository.CreateQuickMatchAsync(matchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(matchId);
+        result.TournamentId.Should().NotBeEmpty();
+        result.HomeTeamId.Should().NotBeEmpty();
+        result.GuestTeamId.Should().NotBeEmpty();
+        result.ScheduledAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
+
+        // Assert DB state: verify that created JIT tournament container has isjit = true
+        var isJitFlag = await conn.ExecuteScalarAsync<bool>(
+            "SELECT isjit FROM public.tournaments WHERE id = @tId",
+            new { tId = result.TournamentId });
+
+        isJitFlag.Should().BeTrue("quick match tournament container must have isjit flag set to true");
+
+        // Assert DB state: verify player rosters exist for BOTH Home and Guest teams up to rosterlimit (3 each)
+        var homeRosterCount = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @homeId",
+            new { tId = result.TournamentId, homeId = result.HomeTeamId });
+
+        var guestRosterCount = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @guestId",
+            new { tId = result.TournamentId, guestId = result.GuestTeamId });
+
+        homeRosterCount.Should().Be(3, "home team roster should be filled up to rosterlimit (3)");
+        guestRosterCount.Should().Be(3, "guest team roster should be filled up to rosterlimit (3)");
+
+        // Assert DB state: verify automatic tracking in usertrackedmatches for home team
+        var isTracked = await _repository.IsMatchCatchedByUserAsync(matchId, result.HomeTeamId, userId, CancellationToken.None);
+        isTracked.Should().BeTrue("quick match creation should automatically track the home team for the user when isGuestTeam is false");
+    }
+
+    /// <summary>
+    /// Verifies that JIT garbage collection during quick match creation does not purge an empty match 
+    /// if another user is also tracking it.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldNotPurgeEmptyMatch_WhenTrackedByAnotherUser()
+    {
+        // Arrange
+        var user1Id = $"auth0|user1-{Guid.NewGuid():N}";
+        var user2Id = $"auth0|user2-{Guid.NewGuid():N}";
+        var sharedMatchId = Guid.NewGuid();
+        var newMatchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        await SeedUserAsync(user1Id, $"user1_{Guid.NewGuid():N}@example.com", "User One");
+        await SeedUserAsync(user2Id, $"user2_{Guid.NewGuid():N}@example.com", "User Two");
+
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await using var transaction = await conn.BeginTransactionAsync();
+
+            // 1. Seed JIT base geography
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+                new { cityId = tempCityId }, transaction: transaction);
+
+            var actualCityId = await conn.ExecuteScalarAsync<Guid>(
+                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
+                transaction: transaction);
+
+            // 2. Seed default club
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.clubs (id, cityid, name, createdat) 
+                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+                ON CONFLICT DO NOTHING;",
+                new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
+
+            // 3. Seed sport & configuration
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+                VALUES (@sportId, @name, 'SHP', @configId)",
+                new { sportId, name = $"SharedPolo_{Guid.NewGuid():N}", configId }, transaction: transaction);
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+                new { configId, sportId }, transaction: transaction);
+
+            await transaction.CommitAsync();
+        }
+
+        // 4. Create initial quick match for user 1 and catch it for user 2
+        var sharedMatch = await _repository.CreateQuickMatchAsync(sharedMatchId, sportId, user1Id, configId, isGuestTeam: false, CancellationToken.None);
+        sharedMatch.Should().NotBeNull();
+
+        await _repository.CatchMatchAsync(sharedMatchId, sharedMatch!.HomeTeamId, user2Id, CancellationToken.None);
+
+        // Act: User 1 creates a new quick match, which triggers JIT garbage collection for user 1
+        var newMatch = await _repository.CreateQuickMatchAsync(newMatchId, sportId, user1Id, configId, isGuestTeam: false, CancellationToken.None);
+        newMatch.Should().NotBeNull();
+
+        // Assert: Verify sharedMatchId and User 2's tracking record remain intact
+        using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await checkConn.OpenAsync();
+
+            var matchExists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = sharedMatchId });
+
+            var user2TrackingExists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.usertrackedmatches WHERE matchid = @matchId AND userid = @userId)",
+                new { matchId = sharedMatchId, userId = user2Id });
+
+            matchExists.Should().BeTrue("shared empty match must not be purged when tracked by another user");
+            user2TrackingExists.Should().BeTrue("second user's tracking link must remain intact");
+        }
+    }
+
+    /// <summary>
+    /// Verifies that JIT garbage collection during quick match creation successfully purges 
+    /// an orphan empty match belonging to the user when it has no game events and no time anchors.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldPurgeOrphanEmptyMatch_WhenNoEventsOrAnchorsExist()
+    {
+        // Arrange
+        var userId = $"auth0|user-gc-{Guid.NewGuid():N}";
+        var orphanMatchId = Guid.NewGuid();
+        var newMatchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        await SeedUserAsync(userId, $"usergc_{Guid.NewGuid():N}@example.com", "GC User");
+
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await using var transaction = await conn.BeginTransactionAsync();
+
+            // 1. Seed JIT base geography
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+                new { cityId = tempCityId }, transaction: transaction);
+
+            var actualCityId = await conn.ExecuteScalarAsync<Guid>(
+                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
+                transaction: transaction);
+
+            // 2. Seed default club
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.clubs (id, cityid, name, createdat) 
+                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+                ON CONFLICT DO NOTHING;",
+                new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
+
+            // 3. Seed sport & configuration
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+                VALUES (@sportId, @name, 'GCP', @configId)",
+                new { sportId, name = $"GCPolo_{Guid.NewGuid():N}", configId }, transaction: transaction);
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+                new { configId, sportId }, transaction: transaction);
+
+            await transaction.CommitAsync();
+        }
+
+        // 4. Create an initial orphan match using CreateQuickMatchAsync (which automatically tracks it)
+        var orphanMatch = await _repository.CreateQuickMatchAsync(orphanMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        orphanMatch.Should().NotBeNull();
+
+        // Verify the orphan match exists prior to GC
+        using (var preCheckConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await preCheckConn.OpenAsync();
+
+            var existsBefore = await preCheckConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = orphanMatchId });
+
+            existsBefore.Should().BeTrue("orphan match should exist before triggering JIT GC");
+        }
+
+        // Act: User creates a new quick match, which triggers JIT garbage collection for this user,
+        // purging the previous empty match since it has no game events and no time anchors.
+        var newMatch = await _repository.CreateQuickMatchAsync(newMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        newMatch.Should().NotBeNull();
+
+        // Assert: Verify that the old orphan match has been purged by GC
+        using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await checkConn.OpenAsync();
+
+            var matchExists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = orphanMatchId });
+
+            matchExists.Should().BeFalse("orphan empty match with no game events or time anchors must be purged by JIT GC");
+        }
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.CreateQuickMatchAsync"/> automatically tracks the guest team 
+    /// instead of the home team for the requesting user when <c>isGuestTeam</c> is set to <c>true</c>.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldTrackGuestTeam_WhenIsGuestTeamIsTrue()
+    {
+        // Arrange
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        var matchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var userId = $"auth0|quickmatch-guest-{Guid.NewGuid()}";
+
+        // 0. Ensure User exists
+        await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
+            new { id = userId, e = "quickmatchguest@test.com", n = "QuickMatch Guest Owner" }, transaction: transaction);
+
+        // 1. Ensure JIT base geography exists
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+            INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+            INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+            new { cityId = tempCityId }, transaction: transaction);
+
+        var actualCityId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
+            transaction: transaction);
+
+        // 2. Ensure default club exists
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.clubs (id, cityid, name, createdat) 
+            VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+            ON CONFLICT DO NOTHING;",
+            new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
+
+        // 3. Seed sport & configuration
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@sportId, 'Water Polo Guest', 'WPG', @configId)",
+            new { sportId, configId }, transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+            VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+            new { configId, sportId }, transaction: transaction);
+
+        await transaction.CommitAsync();
+
+        // Act
+        var result = await _repository.CreateQuickMatchAsync(matchId, sportId, userId, configId, isGuestTeam: true, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(matchId);
+
+        var isGuestTracked = await _repository.IsMatchCatchedByUserAsync(matchId, result.GuestTeamId, userId, CancellationToken.None);
+        var isHomeTracked = await _repository.IsMatchCatchedByUserAsync(matchId, result.HomeTeamId, userId, CancellationToken.None);
+
+        isGuestTracked.Should().BeTrue("quick match creation should automatically track the guest team when isGuestTeam is true");
+        isHomeTracked.Should().BeFalse("home team should not be tracked when isGuestTeam is true");
+    }
+
+    /// <summary>
+    /// Verifies that JIT garbage collection during quick match creation does not purge 
+    /// a quick match if it contains time anchors.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldNotPurgeMatch_WhenTimeAnchorsExist()
+    {
+        // Arrange
+        var userId = $"auth0|user-anchors-{Guid.NewGuid():N}";
+        var firstMatchId = Guid.NewGuid();
+        var secondMatchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
+        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        await SeedUserAsync(userId, $"useranchors_{Guid.NewGuid():N}@example.com", "Anchors User");
+
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await using var transaction = await conn.BeginTransactionAsync();
+
+            // 1. Seed JIT base geography
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
+                INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
+                INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
+                new { cityId = tempCityId }, transaction: transaction);
+
+            var actualCityId = await conn.ExecuteScalarAsync<Guid>(
+                "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
+                transaction: transaction);
+
+            // 2. Seed default club
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.clubs (id, cityid, name, createdat) 
+                VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
+                ON CONFLICT DO NOTHING;",
+                new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
+
+            // 3. Seed sport & configuration
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+                VALUES (@sportId, @name, 'TAP', @configId)",
+                new { sportId, name = $"AnchorPolo_{Guid.NewGuid():N}", configId }, transaction: transaction);
+
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
+                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+                new { configId, sportId }, transaction: transaction);
+
+            await transaction.CommitAsync();
+        }
+
+        // 4. Create first quick match for the user
+        var firstMatch = await _repository.CreateQuickMatchAsync(firstMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        firstMatch.Should().NotBeNull();
+
+        // 5. Insert a time anchor into the first match
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp)
+                VALUES (@id, @matchId, 1, 0, NOW())",
+                new { id = Guid.NewGuid(), matchId = firstMatchId });
+        }
+
+        // Act: User creates a second quick match, triggering JIT GC
+        var secondMatch = await _repository.CreateQuickMatchAsync(secondMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        secondMatch.Should().NotBeNull();
+
+        // Assert: Verify the first match was NOT purged because it has a time anchor
+        using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await checkConn.OpenAsync();
+
+            var firstMatchExists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = firstMatchId });
+
+            firstMatchExists.Should().BeTrue("a match with time anchors must not be purged by JIT GC");
+        }
+    }
+
+    /// <summary>
+    /// Verifies that JIT garbage collection during quick match creation DOES NOT purge an empty 
+    /// ordinary tournament match even if it is tracked by the user and has no events or anchors.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldNotPurgeOrdinaryMatch_WhenEmptyAndTracked()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var ordinaryMatch = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId, "ORD-EMPTY");
+        await _repository.UpsertMatchAsync(ordinaryMatch, CancellationToken.None);
+
+        var userId = $"auth0|user-gc-ordinary-{Guid.NewGuid():N}";
+        await SeedUserAsync(userId, $"usergc_ord_{Guid.NewGuid():N}@example.com", "GC Ordinary User");
+
+        await _repository.CatchMatchAsync(ordinaryMatch.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Setup sport & config for Quick Match creation
+        var newMatchId = Guid.NewGuid();
+        var quickSportId = Guid.NewGuid();
+        var quickConfigId = Guid.NewGuid();
+
+        await SeedSportWithConfigAsync(quickSportId, $"QuickPolo_{Guid.NewGuid():N}", "QP", quickConfigId);
+
+        // Act: User creates a new quick match, triggering JIT GC
+        var quickMatch = await _repository.CreateQuickMatchAsync(newMatchId, quickSportId, userId, quickConfigId, isGuestTeam: false, CancellationToken.None);
+        quickMatch.Should().NotBeNull();
+
+        // Assert: Ordinary tournament match must NOT be purged by JIT GC
+        using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await checkConn.OpenAsync();
+
+            var matchExists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = ordinaryMatch.Id });
+
+            matchExists.Should().BeTrue("ordinary tournament matches must never be purged by JIT GC during quick match creation");
+        }
+    }
+
+    /// <summary>
+    /// Verifies that JIT garbage collection purges an empty quick match based strictly on the isjit flag,
+    /// and that the existing JIT tournament container is consistently reused even if its name was changed.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CreateQuickMatchAsync_ShouldPurgeOrphanMatch_BasedOnIsJitFlagNotTournamentName()
+    {
+        // Arrange
+        var userId = $"auth0|user-isjit-{Guid.NewGuid():N}";
+        var firstMatchId = Guid.NewGuid();
+        var secondMatchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+
+        await SeedUserAsync(userId, $"user_isjit_{Guid.NewGuid():N}@example.com", "IsJit User");
+        await SeedSportWithConfigAsync(sportId, $"IsJitPolo_{Guid.NewGuid():N}", "IJP", configId);
+
+        // 1. Create initial quick match
+        var firstMatch = await _repository.CreateQuickMatchAsync(
+            firstMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        firstMatch.Should().NotBeNull();
+
+        // 2. Explicitly rename the JIT tournament in DB to ensure logic doesn't rely on the legacy name string
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(
+                "UPDATE public.tournaments SET name = 'Custom JIT Name' WHERE id = @tId",
+                new { tId = firstMatch!.TournamentId });
+        }
+
+        // Act: Create second quick match, triggering JIT GC and container resolution
+        var secondMatch = await _repository.CreateQuickMatchAsync(
+            secondMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        secondMatch.Should().NotBeNull();
+
+        // Assert 1: Verify the existing JIT tournament container was reused despite being renamed
+        secondMatch!.TournamentId.Should().Be(firstMatch.TournamentId,
+            "JIT tournament container must be reused based on configurationid and isjit = true regardless of tournament name");
+
+        // Assert 2: Verify first match was purged strictly because isjit = true
+        using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await checkConn.OpenAsync();
+
+            var exists = await checkConn.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM public.matches WHERE id = @matchId)",
+                new { matchId = firstMatchId });
+
+            exists.Should().BeFalse("JIT GC must purge orphan empty quick matches relying on isjit = true regardless of tournament name");
+        }
+    }
+
+    #endregion
+
+    #region DeleteAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.DeleteAsync"/> deletes an existing match from the database and returns true.
+    /// Also confirms that subsequent retrieval returns null.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task DeleteAsync_ShouldDeleteMatch_WhenMatchExists()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        // Act
+        var isDeleted = await _repository.DeleteAsync(match.Id, CancellationToken.None);
+
+        // Assert
+        isDeleted.Should().BeTrue("deleting an existing match should return true");
+
+        var deletedMatch = await _repository.GetByIdAsync(match.Id, CancellationToken.None);
+        deletedMatch.Should().BeNull("the match record must no longer exist in the database");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.DeleteAsync"/> returns false when trying to delete a non-existent match.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task DeleteAsync_ShouldReturnFalse_WhenMatchDoesNotExist()
+    {
+        // Arrange
+        var nonExistentMatchId = Guid.NewGuid();
+
+        // Act
+        var isDeleted = await _repository.DeleteAsync(nonExistentMatchId, CancellationToken.None);
+
+        // Assert
+        isDeleted.Should().BeFalse("deleting a non-existent match should return false");
+    }
+
+    #endregion
+
+    #region Report Repository Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetTeamSummaryReportAsync"/> correctly aggregates 
+    /// player statistics, action counts, and play percentage for a specific team in a match.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetTeamSummaryReportAsync_ShouldReturnTeamSummary_WhenDataExists()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        // 1. Seed Time Anchors to establish match duration (Period 1: 0 to 10 minutes)
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var startTime = DateTime.UtcNow.AddMinutes(-30);
+        var endTime = startTime.AddMinutes(10);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) 
+            VALUES 
+            (@idStart, @matchId, 1, 0, @startTs),
+            (@idEnd, @matchId, 1, 1, @endTs);",
+            new
+            {
+                idStart = Guid.NewGuid(),
+                idEnd = Guid.NewGuid(),
+                matchId = match.Id,
+                startTs = startTime,
+                endTs = endTime
+            });
+
+        // 2. Fetch a lineup entry for the Home team
+        var matchLineupId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT ml.id FROM public.matchlineups ml JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = @matchId AND pr.teamid = @teamId LIMIT 1",
+            new { matchId = match.Id, teamId = context.HomeTeamId });
+
+        // If no lineup entry exists from seed, create one for testing
+        Guid targetLineupId = matchLineupId;
+        if (targetLineupId == Guid.Empty)
+        {
+            var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+                "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+                new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+            Guid rosterId = rosterData.id;
+            Guid positionId = rosterData.positionid;
+
+            targetLineupId = Guid.NewGuid();
+            await conn.ExecuteAsync(
+                "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 10, @posId)",
+                new { id = targetLineupId, mId = match.Id, rId = rosterId, posId = positionId });
+        }
+
+        // 3. Seed Player Presence (full 10 minutes duration -> 100% play percentage)
+        await conn.ExecuteAsync(
+            "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) VALUES (@id, @lineupId, 1, @in, @out)",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, @in = startTime, @out = endTime });
+
+        // 4. Seed an Event Definition and a Game Event ('Goal', positive, lead to goal)
+        var eventDefId = Guid.NewGuid();
+        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
+
+        await conn.ExecuteAsync(
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
+            new { id = eventDefId, sId = sportId });
+
+        await conn.ExecuteAsync(
+            "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:05:00', true, NOW())",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = eventDefId, ts = startTime.AddMinutes(5) });
+
+        // Act
+        var report = (await _repository.GetTeamSummaryReportAsync(match.Id, context.HomeTeamId, CancellationToken.None)).ToList();
+
+        // Assert
+        report.Should().NotBeEmpty();
+        var playerSummary = report.FirstOrDefault(r => r.MatchLineupId == targetLineupId);
+        playerSummary.Should().NotBeNull();
+        playerSummary!.Goals.Should().Be(1);
+        playerSummary.TotalPositiveActions.Should().Be(1);
+        playerSummary.PositiveGoalLeadingActions.Should().Be(1);
+        playerSummary.PlayPercentage.Should().Be(100.0);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetPlayerDetailedReportAsync"/> retrieves the chronological 
+    /// list of events for a specific player match lineup entry.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetPlayerDetailedReportAsync_ShouldReturnDetailedEvents_WhenDataExists()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // 1. Fetch or create a match lineup ID for the Home team
+        var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+            "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+            new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+        Guid rosterId = rosterData.id;
+        Guid positionId = rosterData.positionid;
+
+        var targetLineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 99, @posId)",
+            new { id = targetLineupId, mId = match.Id, rId = rosterId, posId = positionId });
+
+        // 2. Seed Event Definitions
+        var sportId = await conn.ExecuteScalarAsync("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
+        var eventDefId = Guid.NewGuid();
+
+        await conn.ExecuteAsync(
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Exclusion', 'EX', false, NOW())",
+            new { id = eventDefId, sId = sportId });
+
+        // 3. Seed Game Events for this lineup
+        var eventTimestamp = DateTime.UtcNow;
+        await conn.ExecuteAsync(
+            "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:03:30', false, NOW())",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = eventDefId, ts = eventTimestamp });
+
+        // Act
+        var report = (await _repository.GetPlayerDetailedReportAsync(match.Id, targetLineupId, CancellationToken.None)).ToList();
+
+        // Assert
+        report.Should().NotBeEmpty();
+        report.Should().HaveCount(1);
+
+        var detail = report[0];
+        detail.MatchLineupId.Should().Be(targetLineupId);
+        detail.Number.Should().Be(99);
+        detail.EventName.Should().Be("Exclusion");
+        detail.IsPositive.Should().BeFalse();
+        detail.PeriodNumber.Should().Be(1);
+        detail.NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(3.5));
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetPlayerDetailedReportAsync"/> returns player events
+    /// ordered strictly ascending by EventTimestamp, resolving any cross-period conflicts.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayerDetailedReportAsync_ShouldOrderEventsStrictlyByAscendingEventTimestamp()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId, "M-REP-SORT");
+        await _repository.UpsertMatchAsync(match);
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // Retrieve sportId associated with the seeded tournament
+        var sportId = await conn.QueryFirstAsync<Guid>(
+            "SELECT sportid FROM public.tournaments WHERE id = @tourId",
+            new { tourId = context.TournamentId });
+
+        // Query the existing player roster and position identifier using the exact column names from 01-Tables.sql
+        var rosterData = await conn.QueryFirstAsync<dynamic>(
+            "SELECT id, positionid FROM public.playerrosters WHERE teamid = @teamId AND tournamentid = @tourId LIMIT 1",
+            new { teamId = context.HomeTeamId, tourId = context.TournamentId });
+
+        Guid rosterId = rosterData.id;
+        Guid positionId = rosterData.positionid;
+
+        var lineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @m, @r, 99, @posId)",
+            new { id = lineupId, m = match.Id, r = rosterId, posId = positionId });
+
+        // Seed event definition explicitly including shortname for the test sport
+        var eventDefId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat)
+            VALUES (@id, @sportId, 'Goal', 'GL', true, NOW())",
+            new { id = eventDefId, sportId });
+
+        var baseTime = DateTime.UtcNow;
+
+        // Event 1: Period 2, absolute time is later (+30 min), but relative period time is smaller (2 min)
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat)
+            VALUES (@id, @mlId, @edId, 2, @ts, @norm, false, NOW())",
+            new { id = Guid.NewGuid(), mlId = lineupId, edId = eventDefId, ts = baseTime.AddMinutes(30), norm = TimeSpan.FromMinutes(2) });
+
+        // Event 2: Period 1, absolute time is earlier (baseTime), but relative period time is larger (44 min)
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat)
+            VALUES (@id, @mlId, @edId, 1, @ts, @norm, true, NOW())",
+            new { id = Guid.NewGuid(), mlId = lineupId, edId = eventDefId, ts = baseTime, norm = TimeSpan.FromMinutes(44) });
+
+        // Act
+        var result = (await _repository.GetPlayerDetailedReportAsync(match.Id, lineupId)).ToList();
+
+        // Assert
+        result.Should().NotBeNull();
+        var eventsWithData = result.Where(r => r.EventId.HasValue).ToList();
+        eventsWithData.Should().HaveCount(2);
+
+        // Verify that the repository (database function) orders strictly ascending by EventTimestamp
+        eventsWithData[0].PeriodNumber.Should().Be(1);
+        eventsWithData[0].EventTimestamp.Should().NotBeNull();
+        eventsWithData[0].EventTimestamp!.Value.Should().BeCloseTo(baseTime, TimeSpan.FromMilliseconds(100));
+        eventsWithData[0].IsLeadToGoal.Should().BeTrue();
+
+        eventsWithData[1].PeriodNumber.Should().Be(2);
+        eventsWithData[1].EventTimestamp.Should().NotBeNull();
+        eventsWithData[1].EventTimestamp!.Value.Should().BeCloseTo(baseTime.AddMinutes(30), TimeSpan.FromMilliseconds(100));
+        eventsWithData[1].IsLeadToGoal.Should().BeFalse();
+
+        // Compare non-nullable DateTime values using .Value
+        eventsWithData[0].EventTimestamp!.Value.Should().BeBefore(eventsWithData[1].EventTimestamp!.Value);
+    }
+
+    #endregion
+
+    #region User Tracked Matches Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.CatchMatchAsync"/> successfully links a user to a match/team 
+    /// context and returns true on the first call.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CatchMatchAsync_ShouldReturnTrue_WhenMatchIsCatchedFirstTime()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var userId = $"auth0|user-{Guid.NewGuid()}";
+        await SeedUserAsync(userId, "catch1@test.com", "Catch User 1");
+
+        // Act
+        var result = await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeTrue("catching a match for the first time should return true");
+
+        var isCatched = await _repository.IsMatchCatchedByUserAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+        isCatched.Should().BeTrue("tracking record should exist in the database");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.CatchMatchAsync"/> returns false on duplicate invocations 
+    /// due to idempotency enforcement (ON CONFLICT DO NOTHING).
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CatchMatchAsync_ShouldReturnFalse_WhenMatchIsAlreadyCatchedByUser()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var userId = $"auth0|user-{Guid.NewGuid()}";
+        await SeedUserAsync(userId, "catch2@test.com", "Catch User 2");
+
+        await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Act
+        var secondResult = await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Assert
+        secondResult.Should().BeFalse("catching an already tracked match should return false");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.CatchMatchAsync"/> throws a database exception when the specified team 
+    /// does not participate in the match (SQLSTATE P0001).
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task CatchMatchAsync_ShouldThrowException_WhenTeamDoesNotParticipateInMatch()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var userId = $"auth0|user-{Guid.NewGuid()}";
+        await SeedUserAsync(userId, "invalidteam@test.com", "Invalid Team User");
+
+        var invalidTeamId = Guid.NewGuid();
+
+        // Act
+        Func<Task> act = async () => await _repository.CatchMatchAsync(match.Id, invalidTeamId, userId, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*does not participate in match*");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.IsMatchCatchedByUserAsync"/> returns false when no tracking record exists.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task IsMatchCatchedByUserAsync_ShouldReturnFalse_WhenTrackingRecordDoesNotExist()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+        var userId = $"auth0|user-{Guid.NewGuid()}";
+
+        // Act
+        var result = await _repository.IsMatchCatchedByUserAsync(matchId, teamId, userId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.UncatchMatchAsync"/> removes the tracking link for User A, 
+    /// but keeps the match in the database because User B is still tracking it.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task UncatchMatchAsync_ShouldRemoveTrackingLinkAndKeepMatch_WhenOtherUserStillTracksIt()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var userA = $"auth0|userA-{Guid.NewGuid()}";
+        var userB = $"auth0|userB-{Guid.NewGuid()}";
+
+        await SeedUserAsync(userA, "usera@test.com", "User A");
+        await SeedUserAsync(userB, "userb@test.com", "User B");
+
+        await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userA, CancellationToken.None);
+        await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userB, CancellationToken.None);
+
+        // Act
+        var isUncatched = await _repository.UncatchMatchAsync(match.Id, context.HomeTeamId, userA, CancellationToken.None);
+
+        // Assert
+        isUncatched.Should().BeTrue("uncatching an existing tracking link should return true");
+
+        var isCatchedByA = await _repository.IsMatchCatchedByUserAsync(match.Id, context.HomeTeamId, userA, CancellationToken.None);
+        isCatchedByA.Should().BeFalse("user A link must be removed");
+
+        var isCatchedByB = await _repository.IsMatchCatchedByUserAsync(match.Id, context.HomeTeamId, userB, CancellationToken.None);
+        isCatchedByB.Should().BeTrue("user B link must remain intact");
+
+        var matchInDb = await _repository.GetByIdAsync(match.Id, CancellationToken.None);
+        matchInDb.Should().NotBeNull("the match must remain in the database because User B still tracks it");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.UncatchMatchAsync"/> automatically deletes a quick match entity 
+    /// from the database when the last tracking user uncatches it.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task UncatchMatchAsync_ShouldRemoveTrackingLinkAndDeleteMatch_WhenLastUserUncatches()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var userId = $"auth0|single-user-{Guid.NewGuid():N}";
+
+        await SeedUserAsync(userId, $"single_{Guid.NewGuid():N}@test.com", "Single Quick User");
+        await SeedSportWithConfigAsync(sportId, $"QuickPolo_{Guid.NewGuid():N}", "QP", configId);
+
+        // CreateQuickMatchAsync creates a match in 'Training & Friendly Matches' and automatically tracks it for userId
+        var match = await _repository.CreateQuickMatchAsync(matchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
+        match.Should().NotBeNull();
+
+        // Act
+        var isUncatched = await _repository.UncatchMatchAsync(matchId, match!.HomeTeamId, userId, CancellationToken.None);
+
+        // Assert
+        isUncatched.Should().BeTrue();
+
+        var isCatched = await _repository.IsMatchCatchedByUserAsync(matchId, match.HomeTeamId, userId, CancellationToken.None);
+        isCatched.Should().BeFalse();
+
+        var matchInDb = await _repository.GetByIdAsync(matchId, CancellationToken.None);
+        matchInDb.Should().BeNull("quick match entity must be deleted automatically when no tracking records remain");
+    }
+
+    /// <summary>
+    /// Verifies that UncatchMatchAsync removes the tracking link but DOES NOT delete the match entity
+    /// when the match belongs to an ordinary tournament (not a JIT Quick Match).
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task UncatchMatchAsync_ShouldKeepOrdinaryMatch_WhenLastUserUncatches()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var userId = $"auth0|ordinary-uncatch-{Guid.NewGuid():N}";
+        await SeedUserAsync(userId, $"ordinary_{Guid.NewGuid():N}@test.com", "Ordinary User");
+
+        await _repository.CatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Act
+        var isUncatched = await _repository.UncatchMatchAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+
+        // Assert
+        isUncatched.Should().BeTrue("uncatching an existing tracking link should return true");
+
+        var isCatched = await _repository.IsMatchCatchedByUserAsync(match.Id, context.HomeTeamId, userId, CancellationToken.None);
+        isCatched.Should().BeFalse("tracking record must be removed");
+
+        var matchInDb = await _repository.GetByIdAsync(match.Id, CancellationToken.None);
+        matchInDb.Should().NotBeNull("an ordinary tournament match must NOT be deleted when untracked by the last user");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetCatchedMatchesByUserIdAsync"/> retrieves only matches 
+    /// catched by the specified user, returning strongly-typed <see cref="MatchWithDetailsProjection"/> objects.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetCatchedMatchesByUserIdAsync_ShouldReturnOnlyCatchedMatchesForSpecifiedUser()
+    {
+        // Arrange
+        var context1 = await SeedMatchEnvironmentAsync();
+        var match1 = CreateMatchModel(context1.TournamentId, context1.HomeTeamId, context1.GuestTeamId, "CATCH-01");
+        await _repository.UpsertMatchAsync(match1, CancellationToken.None);
+
+        var context2 = await SeedMatchEnvironmentAsync();
+        var match2 = CreateMatchModel(context2.TournamentId, context2.HomeTeamId, context2.GuestTeamId, "CATCH-02");
+        await _repository.UpsertMatchAsync(match2, CancellationToken.None);
+
+        var targetUserId = $"auth0|target-{Guid.NewGuid()}";
+        var noiseUserId = $"auth0|noise-{Guid.NewGuid()}";
+
+        await SeedUserAsync(targetUserId, "targetuser@test.com", "Target User");
+        await SeedUserAsync(noiseUserId, "noiseuser@test.com", "Noise User");
+
+        // Target user catches match 1; Noise user catches match 2
+        await _repository.CatchMatchAsync(match1.Id, context1.HomeTeamId, targetUserId, CancellationToken.None);
+        await _repository.CatchMatchAsync(match2.Id, context2.HomeTeamId, noiseUserId, CancellationToken.None);
+
+        // Act
+        var catchedMatches = (await _repository.GetCatchedMatchesByUserIdAsync(targetUserId, CancellationToken.None)).ToList();
+
+        // Assert
+        catchedMatches.Should().HaveCount(1);
+
+        var item = catchedMatches[0];
+        item.Id.Should().Be(match1.Id);
+        item.MatchNumber.Should().Be("CATCH-01");
+        item.HomeTeamName.Should().NotBeNullOrEmpty();
+        item.GuestTeamName.Should().NotBeNullOrEmpty();
+        item.TournamentName.Should().NotBeNullOrEmpty();
+    }
+
+    #endregion
+
+    #region Helpers
+
+    /// <summary>
+    /// Helper method to insert a user record into the database for integration testing.
+    /// </summary>
+    /// <param name="userId">The unique string identifier of the user.</param>
+    /// <param name="email">The email address of the user.</param>
+    /// <param name="displayName">The display name of the user.</param>
+    private async Task SeedUserAsync(string userId, string email, string displayName)
+    {
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.users (id, email, displayname, createdat) 
+            VALUES (@id, @email, @displayName, NOW()) 
+            ON CONFLICT (id) DO UPDATE SET 
+                email = EXCLUDED.email, 
+                displayname = EXCLUDED.displayname;",
+            new { id = userId, email, displayName });
+    }
+
+    /// <summary>
+    /// Seeds all necessary entities with unique names and valid codes strictly following 01-Tables.sql schema.
+    /// Ensures country codes do not exceed the 3-character database limit (varchar(3)).
+    /// Uses an explicit transaction to satisfy deferred foreign key constraints between sports and sportconfigurations.
+    /// </summary>
+    /// <returns>A tuple containing the created Tournament ID, Home Team ID, and Guest Team ID.</returns>
+    private async Task<(Guid TournamentId, Guid HomeTeamId, Guid GuestTeamId)> SeedMatchEnvironmentAsync()
+    {
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        // Generate a unique 8-char suffix for names
+        var suffix = Guid.NewGuid().ToString()[..8];
+        // Generate a unique 3-char code for the country to satisfy varchar(3) constraint
+        var shortCode = Guid.NewGuid().ToString()[..3].ToUpper();
+
+        // 1. Geography & Auth
+        var userId = $"auth0|{Guid.NewGuid()}";
+        await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
+            new { id = userId, e = $"owner_{suffix}@test.com", n = $"Owner {suffix}" }, transaction: transaction);
+
+        var countryId = await conn.ExecuteScalarAsync<int>(
+            "INSERT INTO public.countries (name, code, createdat) VALUES (@n, @c, NOW()) RETURNING id",
+            new { n = $"Country_{suffix}", c = shortCode }, transaction: transaction);
+
+        var regionId = await conn.ExecuteScalarAsync<int>(
+            "INSERT INTO public.regions (countryid, name) VALUES (@c, @n) RETURNING id",
+            new { c = countryId, n = $"Region_{suffix}" }, transaction: transaction);
+
+        var cityId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.cities (id, regionid, name) VALUES (@id, @r, @n)",
+            new { id = cityId, r = regionId, n = $"City_{suffix}" }, transaction: transaction);
+
+        // 2. Sport & Tournament (Updated for Issue #69 schema)
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        var shortName = $"S_{sportId:N}"[..10];
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            VALUES (@id, @n, @sn, @cfg)",
+            new { id = sportId, n = $"Sport_{suffix}", sn = shortName, cfg = configId }, transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
+            VALUES (@id, @s, false, 2, 45, 'Large', 20, 11)",
+            new { id = configId, s = sportId }, transaction: transaction);
+
+        var tournamentId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
+            VALUES (@id, @s, @cfg, @ct, @o, @n, NOW(), NOW())",
+            new { id = tournamentId, s = sportId, cfg = configId, ct = cityId, o = userId, n = $"Tourney_{suffix}" }, transaction: transaction);
+
+        // 3. Teams & Rosters
+        var clubId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @c, @n, NOW())",
+            new { id = clubId, c = cityId, n = $"Club_{suffix}" }, transaction: transaction);
+
+        var homeTeamId = await SeedTeamAndRosterAsync(conn, transaction, clubId, sportId, tournamentId, $"Home_{suffix}");
+        var guestTeamId = await SeedTeamAndRosterAsync(conn, transaction, clubId, sportId, tournamentId, $"Guest_{suffix}");
+
+        await transaction.CommitAsync();
+
+        return (tournamentId, homeTeamId, guestTeamId);
+    }
+
+    /// <summary>
+    /// Helper method to seed a team, a player, and their tournament roster entry within an active transaction.
+    /// </summary>
+    /// <param name="conn">The active database connection.</param>
+    /// <param name="transaction">The active database transaction.</param>
+    /// <param name="clubId">The club identifier to associate with the team and player.</param>
+    /// <param name="sportId">The sport identifier associated with the team.</param>
+    /// <param name="tournamentId">The tournament identifier for roster registration.</param>
+    /// <param name="name">The name of the team to create.</param>
+    /// <returns>The unique identifier of the newly created team.</returns>
+    private static async Task<Guid> SeedTeamAndRosterAsync(
+        System.Data.IDbConnection conn,
+        System.Data.IDbTransaction transaction,
+        Guid clubId,
+        Guid sportId,
+        Guid tournamentId,
+        string name)
+    {
+        var teamId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @c, @s, @n, 0, NOW())",
+            new { id = teamId, c = clubId, s = sportId, n = name }, transaction: transaction);
+
+        // The stored function upsert_match requires teams to be in playerrosters
+        var playerId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @c, 'F', 'L', '2000-01-01', 0, NOW())",
+            new { id = playerId, c = clubId }, transaction: transaction);
+
+        var posId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) VALUES (@id, @s, 'Forward', 'FW')",
+            new { id = posId, s = sportId }, transaction: transaction);
+
+        await conn.ExecuteAsync("SELECT public.upsert_player_to_roster(@id, @tid, @teamid, @pid, @posid, 10, NOW())",
+            new { id = Guid.NewGuid(), tid = tournamentId, teamid = teamId, pid = playerId, posid = posId }, transaction: transaction);
+
+        return teamId;
+    }
+
+    /// <summary>
+    /// Helper method to construct a valid <see cref="Match"/> domain model for testing.
+    /// </summary>
+    /// <param name="tournamentId">The associated tournament identifier.</param>
+    /// <param name="homeId">The home team identifier.</param>
+    /// <param name="guestId">The guest team identifier.</param>
+    /// <param name="matchNumber">The match number or code (defaults to "M-TEST").</param>
+    /// <returns>A populated <see cref="Match"/> instance.</returns>
+    private static Match CreateMatchModel(Guid tournamentId, Guid homeId, Guid guestId, string matchNumber = "M-TEST")
+    {
+        return new Match
+        {
+            Id = Guid.NewGuid(),
+            TournamentId = tournamentId,
+            HomeTeamId = homeId,
+            GuestTeamId = guestId,
+            MatchNumber = matchNumber,
+            ScheduledAt = DateTime.UtcNow.AddHours(2),
+            Venue = "Main Arena",
+            CreatedAt = DateTime.UtcNow
+        };
+    }
+
+    #endregion
+}

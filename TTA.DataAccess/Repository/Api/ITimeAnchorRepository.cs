@@ -1,0 +1,50 @@
+﻿using TTA.DataAccess.Models;
+using TTA.DataAccess.Repository.Base;
+
+namespace TTA.DataAccess.Repository.Api;
+
+/// <summary>
+/// Defines data access operations for the TimeAnchor entity.
+/// </summary>
+public interface ITimeAnchorRepository : IEntityRepositoryBase<Guid, TimeAnchor>
+{
+    /// <summary>
+    /// Persists a batch of time anchors to the database using a JSONB upsert operation.
+    /// </summary>
+    /// <param name="entities">The collection of time anchor entities to save.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>The collection of persisted time anchor entities.</returns>
+    Task<IEnumerable<TimeAnchor>> UpsertAsync(IEnumerable<TimeAnchor> entities, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves a single time anchor by its unique identifier.
+    /// </summary>
+    /// <param name="id">The unique identifier of the time anchor.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>The time anchor entity if found; otherwise, null.</returns>
+    Task<TimeAnchor?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves all time anchors associated with a specific match.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A collection of time anchor entities.</returns>
+    Task<IEnumerable<TimeAnchor>> GetMatchAnchorsAsync(Guid matchId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes a time anchor from the database by its unique identifier.
+    /// </summary>
+    /// <param name="id">The unique identifier of the anchor to delete.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A task representing the asynchronous operation. Returns true if successful.</returns>
+    Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves the nominal period duration in minutes for the sport configuration associated with the match.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the target match.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>The nominal period duration in minutes.</returns>
+    Task<int> GetMatchPeriodDurationMinutesAsync(Guid matchId, CancellationToken cancellationToken = default);
+}

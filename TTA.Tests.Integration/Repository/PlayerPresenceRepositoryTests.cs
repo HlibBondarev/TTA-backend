@@ -1,0 +1,655 @@
+﻿using Dapper;
+using FluentAssertions;
+using Npgsql;
+using System.Data.Common;
+using TTA.DataAccess.Models;
+using TTA.DataAccess.Repository;
+using TTA.Tests.Integration.Infrastructure;
+
+namespace TTA.Tests.Integration.Repository;
+
+/// <summary>
+/// Integration tests for the <see cref="PlayerPresenceRepository"/>.
+/// Validates data access logic, database constraints, and PostgreSQL storage function execution for player presence tracking.
+/// </summary>
+public class PlayerPresenceRepositoryTests : BaseIntegrationTest
+{
+    private readonly PlayerPresenceRepository _repository;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="PlayerPresenceRepositoryTests"/> class.
+    /// </summary>
+    /// <param name="fixture">The shared database fixture managing containerized PostgreSQL lifecycles.</param>
+    public PlayerPresenceRepositoryTests(DatabaseFixture fixture) : base(fixture)
+    {
+        _repository = new PlayerPresenceRepository(fixture.ConnectionFactory);
+    }
+
+    #region Integration Tests
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.RecordPresenceAsync"/> correctly persists a new presence record (TimeIn).
+    /// </summary>
+    [Fact]
+    public async Task RecordPresenceAsync_ShouldInsertNewPresence_WhenDataIsValid()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var exactTimeIn = DateTime.UtcNow;
+
+        var presence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = exactTimeIn,
+            TimeOut = null
+        };
+
+        // Act
+        var resultId = await _repository.RecordPresenceAsync(presence);
+
+        // Assert
+        resultId.Should().Be(presence.Id);
+
+        var matchPresences = await _repository.GetMatchPresenceAsync(context.MatchId);
+        var persisted = matchPresences.FirstOrDefault(p => p.Id == presence.Id);
+
+        persisted.Should().NotBeNull();
+        persisted!.MatchLineupId.Should().Be(context.LineupId1);
+        persisted.PeriodNumber.Should().Be(1);
+        persisted.TimeOut.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.RecordPresenceAsync"/> successfully updates an existing record (e.g., setting TimeOut).
+    /// </summary>
+    [Fact]
+    public async Task RecordPresenceAsync_ShouldUpdateExistingPresence_WhenRecordExists()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var exactTimeIn = DateTime.UtcNow;
+        var exactTimeOut = exactTimeIn.AddMinutes(15);
+
+        var presence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = exactTimeIn,
+            TimeOut = null
+        };
+
+        await _repository.RecordPresenceAsync(presence); // Insert
+
+        // Act - Set TimeOut and trigger Upsert logic
+        presence.TimeOut = exactTimeOut;
+        await _repository.RecordPresenceAsync(presence); // Update
+
+        // Assert
+        var matchPresences = await _repository.GetMatchPresenceAsync(context.MatchId);
+        var updated = matchPresences.FirstOrDefault(p => p.Id == presence.Id);
+
+        updated.Should().NotBeNull();
+        updated!.TimeOut.Should().BeCloseTo(exactTimeOut, TimeSpan.FromMilliseconds(100)); // DB precision check
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.RecordSubstitutionAsync"/> atomically updates the outgoing player and inserts the incoming player
+    /// using explicit client-provided primary keys and timestamps.
+    /// </summary>
+    [Fact]
+    public async Task RecordSubstitutionAsync_ShouldUpdateOutgoingAndInsertIncoming_Atomically_WhenDataIsValid()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var baseTime = DateTime.UtcNow;
+        var substitutionTime = baseTime.AddMinutes(15);
+        var explicitIncomingId = Guid.NewGuid();
+
+        // Record initial active presence for the outgoing player
+        var outgoingPresence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = baseTime,
+            TimeOut = null
+        };
+        await _repository.RecordPresenceAsync(outgoingPresence);
+
+        // Prepare the mutation state for substitution
+        outgoingPresence.TimeOut = substitutionTime;
+
+        var incomingPresence = new PlayerPresence
+        {
+            Id = explicitIncomingId,
+            MatchLineupId = context.LineupId2,
+            PeriodNumber = 1,
+            TimeIn = substitutionTime,
+            TimeOut = null
+        };
+
+        // Act
+        var resultId = await _repository.RecordSubstitutionAsync(outgoingPresence, incomingPresence);
+
+        // Assert
+        resultId.Should().Be(explicitIncomingId);
+
+        var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
+
+        var persistedOutgoing = matchPresences.FirstOrDefault(p => p.Id == outgoingPresence.Id);
+        persistedOutgoing.Should().NotBeNull();
+        persistedOutgoing!.TimeOut.Should().BeCloseTo(substitutionTime, TimeSpan.FromMilliseconds(100));
+
+        var persistedIncoming = matchPresences.FirstOrDefault(p => p.Id == explicitIncomingId);
+        persistedIncoming.Should().NotBeNull();
+        persistedIncoming!.MatchLineupId.Should().Be(context.LineupId2);
+        persistedIncoming.TimeIn.Should().BeCloseTo(substitutionTime, TimeSpan.FromMilliseconds(100));
+        persistedIncoming.TimeOut.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.RecordSubstitutionAsync"/> completely rolls back the transaction if a database constraint fails.
+    /// </summary>
+    [Fact]
+    public async Task RecordSubstitutionAsync_ShouldRollbackTransaction_WhenDatabaseThrowsException()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var baseTime = DateTime.UtcNow;
+        var substitutionTime = baseTime.AddMinutes(15);
+
+        // Record initial active presence for the outgoing player
+        var outgoingPresence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = baseTime,
+            TimeOut = null
+        };
+        await _repository.RecordPresenceAsync(outgoingPresence);
+
+        // Prepare INVALID mutation state to force a database CHECK constraint violation
+        // (TimeOut is set to be BEFORE TimeIn, which violates 'chk_timeout_after_timein' constraint)
+        outgoingPresence.TimeOut = baseTime.AddMinutes(-5);
+
+        var incomingPresence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId2,
+            PeriodNumber = 1,
+            TimeIn = substitutionTime,
+            TimeOut = null
+        };
+
+        // Act
+        var act = async () => await _repository.RecordSubstitutionAsync(outgoingPresence, incomingPresence);
+
+        // Assert
+        await act.Should().ThrowAsync<PostgresException>(); // The DB constraint violation triggers a PostgresException
+
+        // Verify Rollback: Outgoing should NOT have its TimeOut updated, Incoming should NOT be inserted
+        var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
+
+        var persistedOutgoing = matchPresences.FirstOrDefault(p => p.Id == outgoingPresence.Id);
+        persistedOutgoing.Should().NotBeNull();
+        persistedOutgoing!.TimeOut.Should().BeNull(); // Confirms rollback: the session remains active
+
+        var persistedIncoming = matchPresences.FirstOrDefault(p => p.Id == incomingPresence.Id);
+        persistedIncoming.Should().BeNull(); // Confirms rollback: the incoming player was never inserted
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.GetMatchPresenceAsync"/> retrieves chronological history of a match.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchPresenceAsync_ShouldReturnChronologicalTimeline_ForMatch()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var baseTime = DateTime.UtcNow;
+
+        // Player 1 plays Period 1
+        await _repository.RecordPresenceAsync(new PlayerPresence { Id = Guid.NewGuid(), MatchLineupId = context.LineupId1, PeriodNumber = 1, TimeIn = baseTime });
+
+        // Player 2 plays Period 2 (Should appear later in the list)
+        await _repository.RecordPresenceAsync(new PlayerPresence { Id = Guid.NewGuid(), MatchLineupId = context.LineupId2, PeriodNumber = 2, TimeIn = baseTime.AddMinutes(20) });
+
+        // Player 1 substitutes in during Period 2
+        await _repository.RecordPresenceAsync(new PlayerPresence { Id = Guid.NewGuid(), MatchLineupId = context.LineupId1, PeriodNumber = 2, TimeIn = baseTime.AddMinutes(25) });
+
+        // Act
+        var timeline = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
+
+        // Assert
+        timeline.Count.Should().Be(3);
+
+        // Verify correct chronological ordering (by PeriodNumber ASC, TimeIn ASC as defined in storage function)
+        timeline[0].PeriodNumber.Should().Be(1);
+        timeline[0].MatchLineupId.Should().Be(context.LineupId1);
+
+        timeline[1].PeriodNumber.Should().Be(2);
+        timeline[1].MatchLineupId.Should().Be(context.LineupId2);
+
+        timeline[2].PeriodNumber.Should().Be(2);
+        timeline[2].MatchLineupId.Should().Be(context.LineupId1);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.InitializePeriodPresenceAsync"/> executes a bulk insert for multiple lineup IDs using client-generated presence IDs,
+    /// and operates idempotently when called multiple times with the same payload.
+    /// </summary>
+    [Fact]
+    public async Task InitializePeriodPresenceAsync_ShouldBulkInsert_ForProvidedLineupIds()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var exactTimeIn = DateTime.UtcNow;
+        var presences = new List<(Guid Id, Guid LineupId)>
+        {
+            (Guid.NewGuid(), context.LineupId1),
+            (Guid.NewGuid(), context.LineupId2)
+        };
+        var precision = TimeSpan.FromMilliseconds(500);
+
+        // Act - First call (initial bulk insert)
+        await _repository.InitializePeriodPresenceAsync(
+            periodNumber: 1,
+            timeIn: exactTimeIn,
+            presences: presences);
+
+        // Act - Second call (idempotency verification)
+        await _repository.InitializePeriodPresenceAsync(
+            periodNumber: 1,
+            timeIn: exactTimeIn,
+            presences: presences);
+
+        // Assert - Exactly two unchanged rows should remain in the DB
+        var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
+
+        matchPresences.Count.Should().Be(2);
+
+        // Verify Player 1 presence
+        var presence1 = matchPresences.FirstOrDefault(p => p.MatchLineupId == context.LineupId1);
+        presence1.Should().NotBeNull();
+        presence1!.Id.Should().Be(presences[0].Id);
+        presence1.TimeIn.Should().BeCloseTo(exactTimeIn, precision);
+        presence1.TimeOut.Should().BeNull();
+        presence1.PeriodNumber.Should().Be(1);
+
+        // Verify Player 2 presence
+        var presence2 = matchPresences.FirstOrDefault(p => p.MatchLineupId == context.LineupId2);
+        presence2.Should().NotBeNull();
+        presence2!.Id.Should().Be(presences[1].Id);
+        presence2.TimeIn.Should().BeCloseTo(exactTimeIn, precision);
+        presence2.TimeOut.Should().BeNull();
+        presence2.PeriodNumber.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.CloseActivePresencesAsync"/> correctly identifies and updates open sessions for a specific period.
+    /// </summary>
+    [Fact]
+    public async Task CloseActivePresencesAsync_ShouldSetTimeout_ForOpenSessionsInPeriod()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var exactTimeIn = DateTime.UtcNow;
+        var exactTimeOut = exactTimeIn.AddMinutes(15);
+        var presences = new List<(Guid Id, Guid LineupId)>
+        {
+            (Guid.NewGuid(), context.LineupId1),
+            (Guid.NewGuid(), context.LineupId2)
+        };
+
+        // Bulk insert two players with open sessions for Period 1
+        await _repository.InitializePeriodPresenceAsync(1, exactTimeIn, presences);
+
+        // Insert a third record that is already CLOSED (TimeOut is not null) - should not be modified
+        var closedPresenceId = Guid.NewGuid();
+        await _repository.RecordPresenceAsync(new PlayerPresence
+        {
+            Id = closedPresenceId,
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = exactTimeIn.AddMinutes(-20),
+            TimeOut = exactTimeIn.AddMinutes(-5)
+        });
+
+        // Act
+        await _repository.CloseActivePresencesAsync(context.MatchId, 1, exactTimeOut);
+
+        // Assert
+        var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
+
+        var closedManually = matchPresences.First(p => p.Id == closedPresenceId);
+        closedManually.TimeOut.Should().NotBe(exactTimeOut); // Ensure it wasn't accidentally overwritten
+
+        var newlyClosedSessions = matchPresences.Where(p => p.Id != closedPresenceId).ToList();
+        newlyClosedSessions.Count.Should().Be(2);
+        newlyClosedSessions.Should().OnlyContain(p => p.TimeOut.HasValue && p.TimeOut.Value.ToString("yyyy-MM-dd HH:mm:ss") == exactTimeOut.ToString("yyyy-MM-dd HH:mm:ss"));
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.CloseActivePresencesAsync"/> sets timeout ONLY for active presences
+    /// belonging to the specified lineup IDs collection.
+    /// </summary>
+    [Fact]
+    public async Task CloseActivePresencesAsync_ShouldSetTimeout_OnlyForSpecifiedLineupIds()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var exactTimeIn = DateTime.UtcNow;
+        var exactTimeOut = exactTimeIn.AddMinutes(15);
+        var presences = new List<(Guid Id, Guid LineupId)>
+        {
+            (Guid.NewGuid(), context.LineupId1),
+            (Guid.NewGuid(), context.LineupId2)
+        };
+
+        // Bulk insert open sessions for Player 1 and Player 2
+        await _repository.InitializePeriodPresenceAsync(1, exactTimeIn, presences);
+
+        // Act - Terminate presence ONLY for Lineup 1
+        await _repository.CloseActivePresencesAsync(
+            context.MatchId,
+            periodNumber: 1,
+            timeOut: exactTimeOut,
+            playerLineupIds: new[] { context.LineupId1 });
+
+        // Assert
+        var matchPresences = (await _repository.GetMatchPresenceAsync(context.MatchId)).ToList();
+
+        var player1Presence = matchPresences.First(p => p.MatchLineupId == context.LineupId1);
+        player1Presence.TimeOut.Should().NotBeNull();
+        player1Presence.TimeOut!.Value.ToString("yyyy-MM-dd HH:mm:ss").Should().Be(exactTimeOut.ToString("yyyy-MM-dd HH:mm:ss"));
+
+        var player2Presence = matchPresences.First(p => p.MatchLineupId == context.LineupId2);
+        player2Presence.TimeOut.Should().BeNull(); // Preserved active session
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.CloseActivePresencesAsync"/> throws a <see cref="PostgresException"/>
+    /// with SQLSTATE P0001 when TimeOut is earlier than the TimeIn timestamp of any selected active presence.
+    /// </summary>
+    [Fact]
+    public async Task CloseActivePresencesAsync_ShouldThrowPostgresException_WhenTimeOutIsBeforeTimeIn()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+        var exactTimeIn = DateTime.UtcNow;
+        var invalidTimeOut = exactTimeIn.AddMinutes(-5); // TimeOut earlier than TimeIn
+        var presences = new List<(Guid Id, Guid LineupId)>
+        {
+            (Guid.NewGuid(), context.LineupId1)
+        };
+
+        await _repository.InitializePeriodPresenceAsync(1, exactTimeIn, presences);
+
+        // Act
+        var act = async () => await _repository.CloseActivePresencesAsync(
+            context.MatchId,
+            periodNumber: 1,
+            timeOut: invalidTimeOut,
+            playerLineupIds: new[] { context.LineupId1 });
+
+        // Assert
+        var exception = await act.Should().ThrowAsync<PostgresException>();
+        exception.Which.SqlState.Should().Be("P0001");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.GetPlayersDirtyTimeByPeriodAsync"/> returns an empty collection
+    /// when no player presence tracking records exist for the given match and team context.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayersDirtyTimeByPeriodAsync_ShouldReturnEmpty_WhenNoPresenceRecordsExist()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var teamId = await conn.QuerySingleAsync<Guid>(
+            "SELECT hometeamid FROM public.matches WHERE id = @MatchId",
+            new { context.MatchId });
+
+        // Act
+        var result = await _repository.GetPlayersDirtyTimeByPeriodAsync(context.MatchId, teamId);
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.GetPlayersDirtyTimeByPeriodAsync"/> correctly calculates
+    /// and groups the total linear elapsed seconds spent in the water per player lineup row and match period scope.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayersDirtyTimeByPeriodAsync_ShouldCalculateCorrectDirtySeconds_WhenPresenceRecordsExist()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var teamId = await conn.QuerySingleAsync<Guid>(
+            "SELECT hometeamid FROM public.matches WHERE id = @MatchId",
+            new { context.MatchId });
+
+        var baseTime = DateTime.UtcNow;
+
+        // Player 1 plays 300 seconds in Period 1
+        var presence1 = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = baseTime,
+            TimeOut = baseTime.AddSeconds(300)
+        };
+        await _repository.RecordPresenceAsync(presence1);
+
+        // Player 1 plays another 150 seconds in Period 2
+        var presence2 = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 2,
+            TimeIn = baseTime.AddHours(1),
+            TimeOut = baseTime.AddHours(1).AddSeconds(150)
+        };
+        await _repository.RecordPresenceAsync(presence2);
+
+        // Player 2 plays 450 seconds in Period 1
+        var presence3 = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId2,
+            PeriodNumber = 1,
+            TimeIn = baseTime,
+            TimeOut = baseTime.AddSeconds(450)
+        };
+        await _repository.RecordPresenceAsync(presence3);
+
+        // Act
+        var result = (await _repository.GetPlayersDirtyTimeByPeriodAsync(context.MatchId, teamId)).ToList();
+
+        // Assert
+        result.Should().HaveCount(3);
+
+        // Verify Player 1 - Period 1 tracking metrics (300.0 seconds expected)
+        var record1 = result.FirstOrDefault(r => r.MatchLineupId == context.LineupId1 && r.PeriodNumber == 1);
+        record1.Should().NotBeNull();
+        record1!.DirtySeconds.Should().Be(300.0);
+
+        // Verify Player 1 - Period 2 tracking metrics (150.0 seconds expected)
+        var record2 = result.FirstOrDefault(r => r.MatchLineupId == context.LineupId1 && r.PeriodNumber == 2);
+        record2.Should().NotBeNull();
+        record2!.DirtySeconds.Should().Be(150.0);
+
+        // Verify Player 2 - Period 1 tracking metrics (450.0 seconds expected)
+        var record3 = result.FirstOrDefault(r => r.MatchLineupId == context.LineupId2 && r.PeriodNumber == 1);
+        record3.Should().NotBeNull();
+        record3!.DirtySeconds.Should().Be(450.0);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PlayerPresenceRepository.GetPlayersDirtyTimeByPeriodAsync"/> handles active presence tracking
+    /// records (where TimeOut is NULL) gracefully by returning 0.0 seconds, leveraging the database COALESCE protection loop.
+    /// </summary>
+    [Fact]
+    public async Task GetPlayersDirtyTimeByPeriodAsync_ShouldReturnZeroDirtySeconds_WhenPresenceRecordIsOpen()
+    {
+        // Arrange
+        var context = await SeedPresenceEnvironmentAsync();
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var teamId = await conn.QuerySingleAsync<Guid>(
+            "SELECT hometeamid FROM public.matches WHERE id = @MatchId",
+            new { context.MatchId });
+
+        var baseTime = DateTime.UtcNow;
+
+        // Record an active player presence with an unset TimeOut (NULL boundary state)
+        var activePresence = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = context.LineupId1,
+            PeriodNumber = 1,
+            TimeIn = baseTime,
+            TimeOut = null
+        };
+        await _repository.RecordPresenceAsync(activePresence);
+
+        // Act
+        var result = (await _repository.GetPlayersDirtyTimeByPeriodAsync(context.MatchId, teamId)).ToList();
+
+        // Assert
+        result.Should().HaveCount(1);
+
+        var record = result.First();
+        record.MatchLineupId.Should().Be(context.LineupId1);
+        record.PeriodNumber.Should().Be(1);
+
+        // COALESCE statement in storage function converts SUM(NULL) directly to 0.0, avoiding Dapper mapping exceptions
+        record.DirtySeconds.Should().Be(0.0);
+    }
+
+    #endregion
+
+    #region Seed Helpers
+
+    /// <summary>
+    /// Seeds the environment for player presence integration tests.
+    /// Uses robust ON CONFLICT DO NOTHING checks to avoid unique constraint violations
+    /// regardless of test execution order or leftover static data.
+    /// Uses explicit transaction to satisfy deferred FK constraints and updated Sport table schema.
+    /// </summary>
+    /// <returns>A tuple containing the generated MatchId and two unique MatchLineupIds.</returns>
+    private async Task<(Guid MatchId, Guid LineupId1, Guid LineupId2)> SeedPresenceEnvironmentAsync()
+    {
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        // 1. Geography (Safe unique constraint handling)
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.countries (name, code) 
+            VALUES ('Ukraine', 'UA') 
+            ON CONFLICT (name) DO NOTHING", transaction: transaction);
+        var countryId = await conn.QuerySingleAsync<int>("SELECT id FROM public.countries WHERE name = 'Ukraine'", transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.regions (countryid, name) 
+            VALUES (@cid, 'Dnipro Region') 
+            ON CONFLICT (countryid, name) DO NOTHING",
+            new { cid = countryId }, transaction: transaction);
+        var regionId = await conn.QuerySingleAsync<int>("SELECT id FROM public.regions WHERE name = 'Dnipro Region' AND countryid = @cid", new { cid = countryId }, transaction: transaction);
+
+        var cityId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.cities (id, regionid, name) 
+            VALUES (@id, @rid, 'Dnipro') 
+            ON CONFLICT (regionid, name) DO NOTHING",
+            new { id = cityId, rid = regionId }, transaction: transaction);
+        cityId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.cities WHERE regionid = @rid AND name = 'Dnipro'", new { rid = regionId }, transaction: transaction);
+
+        // 2. User & Sport (Safe unique constraint handling, updated for Issue #69 schema)
+        var userId = "auth0|presence-tester";
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.users (id, email, displayname, createdat) 
+            VALUES (@id, 'tester@tta.com', 'Tester', NOW()) 
+            ON CONFLICT (id) DO NOTHING",
+            new { id = userId }, transaction: transaction);
+
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
+            SELECT @id, 'Water Polo', 'WP', @configId 
+            WHERE NOT EXISTS (SELECT 1 FROM public.sports WHERE name = 'Water Polo')",
+            new { id = sportId, configId }, transaction: transaction);
+        sportId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sports WHERE name = 'Water Polo'", transaction: transaction);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
+            SELECT @id, @sid, true, 4, 8, '30x20', 15, 7 
+            WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
+            new { id = configId, sid = sportId }, transaction: transaction);
+        configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId }, transaction: transaction);
+
+        var posId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname) 
+            SELECT @id, @sid, 'Center Forward', 'CF' 
+            WHERE NOT EXISTS (SELECT 1 FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF')",
+            new { id = posId, sid = sportId }, transaction: transaction);
+        posId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.playerpositiondefinitions WHERE sportid = @sid AND shortname = 'CF' LIMIT 1", new { sid = sportId }, transaction: transaction);
+
+        // 3. Organization (Club, Tournament, Team)
+        var clubId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @cityid, @name, NOW())",
+            new { id = clubId, cityid = cityId, name = $"WP_Club_{Guid.NewGuid():N}" }, transaction: transaction);
+
+        var tournamentId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, startdate, createdat) 
+            VALUES (@id, @sid, @cfgid, @cityid, @oid, @name, NOW(), NOW())",
+            new { id = tournamentId, sid = sportId, cfgid = configId, cityid = cityId, oid = userId, name = $"WP_Cup_{Guid.NewGuid():N}" }, transaction: transaction);
+
+        var teamId = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @cid, @sid, @name, 0, NOW())",
+            new { id = teamId, cid = clubId, sid = sportId, name = $"WP_Team_{Guid.NewGuid():N}" }, transaction: transaction);
+
+        var matchId = Guid.NewGuid();
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.matches (id, tournamentid, hometeamid, guestteamid, scheduledat, createdat) 
+            VALUES (@id, @tid, @teamid, @teamid, NOW(), NOW())",
+            new { id = matchId, tid = tournamentId, teamid = teamId }, transaction: transaction);
+
+        // 4. Players & Lineups
+        var playerId1 = Guid.NewGuid();
+        var playerId2 = Guid.NewGuid();
+        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'P1', 'L1', '2000-01-01', 0, NOW())", new { id = playerId1, cid = clubId }, transaction: transaction);
+        await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @cid, 'P2', 'L2', '2000-01-02', 0, NOW())", new { id = playerId2, cid = clubId }, transaction: transaction);
+
+        var rosterId1 = Guid.NewGuid();
+        var rosterId2 = Guid.NewGuid();
+        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 1, @posid, NOW())", new { id = rosterId1, pid = playerId1, tid = tournamentId, teamid = teamId, posid = posId }, transaction: transaction);
+        await conn.ExecuteAsync(@"INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat) VALUES (@id, @pid, @tid, @teamid, 2, @posid, NOW())", new { id = rosterId2, pid = playerId2, tid = tournamentId, teamid = teamId, posid = posId }, transaction: transaction);
+
+        var lineupId1 = Guid.NewGuid();
+        var lineupId2 = Guid.NewGuid();
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 1, @posid)", new { id = lineupId1, mid = matchId, rid = rosterId1, posid = posId }, transaction: transaction);
+        await conn.ExecuteAsync(@"INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mid, @rid, 2, @posid)", new { id = lineupId2, mid = matchId, rid = rosterId2, posid = posId }, transaction: transaction);
+
+        await transaction.CommitAsync();
+
+        return (matchId, lineupId1, lineupId2);
+    }
+
+    #endregion
+}
