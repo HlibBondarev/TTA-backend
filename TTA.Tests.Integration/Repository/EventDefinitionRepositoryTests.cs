@@ -568,11 +568,23 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             CreatedAt = DateTime.UtcNow
         };
 
+        var defD = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Delta Action",
+            ShortName = "ACT_D",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
         await _repository.UpsertCustomAsync(defA);
         await _repository.UpsertCustomAsync(defB);
         await _repository.UpsertCustomAsync(defC);
+        await _repository.UpsertCustomAsync(defD);
 
-        // Add presets for defC (sortorder = 10) and defB (sortorder = 5), leaving defA unconfigured
+        // Add presets for defC (sortorder = 10) and defB (sortorder = 5), leaving defA and defD unconfigured
         using (var conn = Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.ExecuteAsync(@"
@@ -588,11 +600,11 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         // Assert
         var result = available.ToList();
-        result.Should().HaveCount(3);
+        result.Should().HaveCount(4);
 
         // Expected sequence: Enabled first ordered by sortorder ASC (defB with 5, then defC with 10),
-        // followed by unconfigured items ordered by name ASC (defA)
-        result.Select(x => x.Id).Should().ContainInConsecutiveOrder(defB.Id, defC.Id, defA.Id);
+        // followed by unconfigured items ordered by name ASC (defA "Alpha Action", then defD "Delta Action")
+        result.Select(x => x.Id).Should().ContainInConsecutiveOrder(defB.Id, defC.Id, defA.Id, defD.Id);
 
         result[0].Id.Should().Be(defB.Id);
         result[0].IsEnabled.Should().BeTrue();
@@ -604,6 +616,9 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         result[2].Id.Should().Be(defA.Id);
         result[2].IsEnabled.Should().BeFalse();
+
+        result[3].Id.Should().Be(defD.Id);
+        result[3].IsEnabled.Should().BeFalse();
     }
 
     #endregion
