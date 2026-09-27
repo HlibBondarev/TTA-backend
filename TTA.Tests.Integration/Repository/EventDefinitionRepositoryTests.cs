@@ -516,6 +516,87 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         systemItem!.IsCustom.Should().BeFalse();
     }
 
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.GetAvailableForUserAsync" /> respects the ordering contract:
+    /// Enabled definitions ordered by sort order ASC, followed by disabled/unconfigured definitions ordered by name ASC.
+    /// </summary>
+    [Fact]
+    public async Task GetAvailableForUserAsync_ShouldObeyOrderingContract_WithPresetsAndUnconfiguredDefinitions()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var defA = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Alpha Action",
+            ShortName = "ACT_A",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var defB = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Beta Action",
+            ShortName = "ACT_B",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var defC = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Charlie Action",
+            ShortName = "ACT_C",
+            IsPositive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _repository.UpsertCustomAsync(defA);
+        await _repository.UpsertCustomAsync(defB);
+        await _repository.UpsertCustomAsync(defC);
+
+        // Add presets for defC (sortorder = 10) and defB (sortorder = 5), leaving defA unconfigured
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat) 
+                VALUES 
+                (@userId, @defCId, 10, NOW()),
+                (@userId, @defBId, 5, NOW())",
+                new { userId, defCId = defC.Id, defBId = defB.Id });
+        }
+
+        // Act
+        var available = await _repository.GetAvailableForUserAsync(userId, sportId);
+
+        // Assert
+        var result = available.ToList();
+        result.Should().HaveCount(3);
+
+        // Expected sequence: Enabled first ordered by sortorder ASC (defB with 5, then defC with 10),
+        // followed by unconfigured items ordered by name ASC (defA)
+        result.Select(x => x.Id).Should().ContainInConsecutiveOrder(defB.Id, defC.Id, defA.Id);
+
+        result[0].Id.Should().Be(defB.Id);
+        result[0].IsEnabled.Should().BeTrue();
+        result[0].SortOrder.Should().Be(5);
+
+        result[1].Id.Should().Be(defC.Id);
+        result[1].IsEnabled.Should().BeTrue();
+        result[1].SortOrder.Should().Be(10);
+
+        result[2].Id.Should().Be(defA.Id);
+        result[2].IsEnabled.Should().BeFalse();
+    }
+
     #endregion
 
     #region Concurrency & Advisory Lock Tests
