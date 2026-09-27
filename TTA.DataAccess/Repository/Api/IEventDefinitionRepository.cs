@@ -10,12 +10,12 @@ namespace TTA.DataAccess.Repository.Api;
 public interface IEventDefinitionRepository : IEntityRepositoryBase<Guid, EventDefinition>
 {
     /// <summary>
-    /// Upserts a custom user-owned event definition and enables it in the user preset.
+    /// Upserts a custom user-owned event definition.
     /// </summary>
     /// <param name="entity">The event definition entity to upsert.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A tuple containing the persisted event definition instance and its assigned sort order in the user's preset.</returns>
-    Task<(EventDefinition? Definition, int SortOrder)> UpsertCustomAsync(EventDefinition entity, CancellationToken cancellationToken = default);
+    /// <returns>The persisted event definition instance.</returns>
+    Task<EventDefinition?> UpsertCustomAsync(EventDefinition entity, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Soft-deletes a custom event definition owned by a specific user.

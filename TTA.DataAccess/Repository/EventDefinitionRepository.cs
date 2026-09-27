@@ -16,7 +16,7 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
     private const string UserIdParameter = "p_user_id";
 
     /// <inheritdoc />
-    public async Task<(EventDefinition? Definition, int SortOrder)> UpsertCustomAsync(EventDefinition entity, CancellationToken cancellationToken = default)
+    public async Task<EventDefinition?> UpsertCustomAsync(EventDefinition entity, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
         parameters.Add("p_id", entity.Id);
@@ -28,20 +28,10 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
-        using var multi = await connection.QueryMultipleAsync(new CommandDefinition(
-            SqlStatements.ForEventDefinitions.UpsertCustomEventDefinitionWithSortOrder,
+        return await connection.QuerySingleOrDefaultAsync<EventDefinition>(new CommandDefinition(
+            SqlStatements.ForEventDefinitions.UpsertCustomEventDefinition,
             parameters,
             cancellationToken: cancellationToken));
-
-        var created = await multi.ReadFirstOrDefaultAsync<EventDefinition>();
-        if (created == null)
-        {
-            return (null, 0);
-        }
-
-        var sortOrder = await multi.ReadSingleOrDefaultAsync<int>();
-
-        return (created, sortOrder);
     }
 
     /// <inheritdoc />
