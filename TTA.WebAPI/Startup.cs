@@ -42,6 +42,26 @@ public static class Startup
         var services = builder.Services;
         var configuration = builder.Configuration;
 
+        // Register CORS policy to support requests from local and production frontends
+        services.AddCors(options =>
+        {
+            options.AddPolicy("AllowFrontend", policy =>
+            {
+                var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+                    ?? new[]
+                    {
+                        "https://localhost:5173",
+                        "http://localhost:5173",
+                        "https://127.0.0.1:5173"
+                    };
+
+                policy.WithOrigins(allowedOrigins)
+                      .AllowAnyHeader()
+                      .AllowAnyMethod()
+                      .AllowCredentials();
+            });
+        });
+
         // 1. Retrieve the base connection string from configuration (secrets.json)
         var connectionString = configuration.GetConnectionString("DefaultConnection");
 
@@ -261,6 +281,9 @@ public static class Startup
         }
 
         app.UseRouting();
+
+        // Ensure CORS is applied immediately after routing and before authentication
+        app.UseCors("AllowFrontend");
 
         app.UseAuthentication(); // Who are you? (JWT check)
         app.UseMiddleware<UserSynchronizationMiddleware>(); // JIT User Sync
