@@ -43,6 +43,7 @@ public class CorsConfigurationTests
         policy.AllowAnyMethod.Should().BeTrue();
         policy.SupportsCredentials.Should().BeTrue();
         policy.Origins.Should().Contain("https://localhost:5173");
+        policy.Origins.Should().Contain("http://localhost:5173");
     }
 
     [Fact]
