@@ -59,10 +59,33 @@ public static class Startup
                         ]
                         : Array.Empty<string>());
 
-                policy.WithOrigins(allowedOrigins)
-                      .AllowAnyHeader()
-                      .AllowAnyMethod()
-                      .AllowCredentials();
+                policy.WithOrigins(allowedOrigins);
+
+                var configuredHeaders = configuration.GetSection("Cors:AllowedHeaders").Get<string[]>();
+                if (configuredHeaders != null && configuredHeaders.Length > 0)
+                {
+                    policy.WithHeaders(configuredHeaders);
+                }
+                else
+                {
+                    policy.AllowAnyHeader();
+                }
+
+                var configuredMethods = configuration.GetSection("Cors:AllowedMethods").Get<string[]>();
+                if (configuredMethods != null && configuredMethods.Length > 0)
+                {
+                    policy.WithMethods(configuredMethods);
+                }
+                else
+                {
+                    policy.AllowAnyMethod();
+                }
+
+                var allowCredentials = configuration.GetValue<bool?>("Cors:AllowCredentials") ?? true;
+                if (allowCredentials)
+                {
+                    policy.AllowCredentials();
+                }
             });
         });
 

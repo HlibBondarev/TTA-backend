@@ -108,4 +108,41 @@ public class CorsConfigurationTests
         policy.Should().NotBeNull();
         policy!.Origins.Should().BeEmpty();
     }
+
+    [Fact]
+    public void AddApplicationServices_ShouldUseConfiguredCorsHeadersMethodsAndCredentials_WhenProvidedInConfiguration()
+    {
+        // Arrange
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            EnvironmentName = Environments.Development
+        });
+
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            { "Auth0:Authority", "https://test.auth0.com/" },
+            { "Auth0:Domain", "test.auth0.com" },
+            { "Auth0:ClientId", "test-client-id" },
+            { "Auth0:Audience", "https://test-api" },
+            { "Auth0:Namespace", "https://test-namespace.com/" },
+            { "Cors:AllowedHeaders:0", "X-Custom-Header" },
+            { "Cors:AllowedMethods:0", "POST" },
+            { "Cors:AllowCredentials", "false" }
+        });
+
+        // Act
+        builder.AddApplicationServices();
+        using var serviceProvider = builder.Services.BuildServiceProvider();
+
+        // Assert
+        var corsOptions = serviceProvider.GetRequiredService<IOptions<CorsOptions>>().Value;
+        var policy = corsOptions.GetPolicy("AllowFrontend");
+
+        policy.Should().NotBeNull();
+        policy!.AllowAnyHeader.Should().BeFalse();
+        policy.Headers.Should().Contain("X-Custom-Header");
+        policy.AllowAnyMethod.Should().BeFalse();
+        policy.Methods.Should().Contain("POST");
+        policy.SupportsCredentials.Should().BeFalse();
+    }
 }
