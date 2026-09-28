@@ -42,6 +42,53 @@ public static class Startup
         var services = builder.Services;
         var configuration = builder.Configuration;
 
+        // Register CORS policy to support requests from local and production frontends
+        services.AddCors(options =>
+        {
+            options.AddPolicy("AllowFrontend", policy =>
+            {
+                var configuredOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+                var allowedOrigins = configuredOrigins != null && configuredOrigins.Length > 0
+                    ? configuredOrigins
+                    : (builder.Environment.IsDevelopment()
+                        ?
+                        [
+                            "https://localhost:5173",
+                            "http://localhost:5173",
+                            "https://127.0.0.1:5173"
+                        ]
+                        : Array.Empty<string>());
+
+                policy.WithOrigins(allowedOrigins);
+
+                var configuredHeaders = configuration.GetSection("Cors:AllowedHeaders").Get<string[]>();
+                if (configuredHeaders != null && configuredHeaders.Length > 0)
+                {
+                    policy.WithHeaders(configuredHeaders);
+                }
+                else
+                {
+                    policy.AllowAnyHeader();
+                }
+
+                var configuredMethods = configuration.GetSection("Cors:AllowedMethods").Get<string[]>();
+                if (configuredMethods != null && configuredMethods.Length > 0)
+                {
+                    policy.WithMethods(configuredMethods);
+                }
+                else
+                {
+                    policy.AllowAnyMethod();
+                }
+
+                var allowCredentials = configuration.GetValue<bool?>("Cors:AllowCredentials") ?? true;
+                if (allowCredentials)
+                {
+                    policy.AllowCredentials();
+                }
+            });
+        });
+
         // 1. Retrieve the base connection string from configuration (secrets.json)
         var connectionString = configuration.GetConnectionString("DefaultConnection");
 
@@ -261,6 +308,9 @@ public static class Startup
         }
 
         app.UseRouting();
+
+        // Ensure CORS is applied immediately after routing and before authentication
+        app.UseCors("AllowFrontend");
 
         app.UseAuthentication(); // Who are you? (JWT check)
         app.UseMiddleware<UserSynchronizationMiddleware>(); // JIT User Sync
