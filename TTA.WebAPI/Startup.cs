@@ -50,12 +50,14 @@ public static class Startup
                 var configuredOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
                 var allowedOrigins = configuredOrigins != null && configuredOrigins.Length > 0
                     ? configuredOrigins
-                    :
-                    [
-                        "https://localhost:5173",
-                        "http://localhost:5173",
-                        "https://127.0.0.1:5173"
-                    ];
+                    : (builder.Environment.IsDevelopment()
+                        ?
+                        [
+                            "https://localhost:5173",
+                            "http://localhost:5173",
+                            "https://127.0.0.1:5173"
+                        ]
+                        : Array.Empty<string>());
 
                 policy.WithOrigins(allowedOrigins)
                       .AllowAnyHeader()
