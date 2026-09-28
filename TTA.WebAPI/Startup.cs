@@ -47,13 +47,15 @@ public static class Startup
         {
             options.AddPolicy("AllowFrontend", policy =>
             {
-                var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-                    ?? new[]
-                    {
+                var configuredOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+                var allowedOrigins = configuredOrigins != null && configuredOrigins.Length > 0
+                    ? configuredOrigins
+                    :
+                    [
                         "https://localhost:5173",
                         "http://localhost:5173",
                         "https://127.0.0.1:5173"
-                    };
+                    ];
 
                 policy.WithOrigins(allowedOrigins)
                       .AllowAnyHeader()

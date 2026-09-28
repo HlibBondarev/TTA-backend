@@ -10,7 +10,7 @@ namespace TTA.WebAPI.Tests.Configuration;
 public class CorsConfigurationTests
 {
     [Fact]
-    public void AddApplicationServices_ShouldRegisterAllowFrontendCorsPolicy()
+    public void AddApplicationServices_ShouldRegisterAllowFrontendCorsPolicyWithDefaultOrigins()
     {
         // Arrange
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -41,5 +41,38 @@ public class CorsConfigurationTests
         policy.AllowAnyMethod.Should().BeTrue();
         policy.SupportsCredentials.Should().BeTrue();
         policy.Origins.Should().Contain("https://localhost:5173");
+    }
+
+    [Fact]
+    public void AddApplicationServices_ShouldUseConfiguredCorsOrigins_WhenProvidedInConfiguration()
+    {
+        // Arrange
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            EnvironmentName = "Testing"
+        });
+
+        var customOrigin = "https://custom-frontend.com";
+
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            { "Auth0:Domain", "test.auth0.com" },
+            { "Auth0:ClientId", "test-client-id" },
+            { "Auth0:Audience", "https://test-api" },
+            { "Auth0:Namespace", "https://test-namespace.com/" },
+            { "Cors:AllowedOrigins:0", customOrigin }
+        });
+
+        // Act
+        builder.AddApplicationServices();
+        using var serviceProvider = builder.Services.BuildServiceProvider();
+
+        // Assert
+        var corsOptions = serviceProvider.GetRequiredService<IOptions<CorsOptions>>().Value;
+        var policy = corsOptions.GetPolicy("AllowFrontend");
+
+        policy.Should().NotBeNull();
+        policy!.Origins.Should().Contain(customOrigin);
+        policy.Origins.Should().NotContain("https://localhost:5173");
     }
 }
