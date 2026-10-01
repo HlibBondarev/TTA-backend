@@ -1,23 +1,23 @@
 ﻿-- ==========================================
--- 1. GEOGRAPHY (Minimal Seed for Dnipro)
+-- 1. GEOGRAPHY (Minimal Seed for Dummy Environment)
 -- ==========================================
 
 DO $$ 
 DECLARE 
-    v_ukraine_id INT;
+    v_country_id INT;
 BEGIN
     INSERT INTO countries (name, code) 
-    VALUES ('Ukraine', 'UKR')
+    VALUES ('country', 'CTR')
     ON CONFLICT DO NOTHING;
 
-    SELECT id INTO v_ukraine_id FROM countries WHERE code = 'UKR';
+    SELECT id INTO v_country_id FROM countries WHERE code = 'CTR';
 
     INSERT INTO regions (countryid, name) VALUES 
-    (v_ukraine_id, 'Dnipropetrovsk Oblast')
+    (v_country_id, 'region')
     ON CONFLICT DO NOTHING;
 
     INSERT INTO cities (id, regionid, name) VALUES 
-    ('c0000000-0000-0000-0000-000000000005', (SELECT id FROM regions WHERE name = 'Dnipropetrovsk Oblast' AND countryid = v_ukraine_id), 'Dnipro')
+    ('c0000000-0000-0000-0000-000000000005', (SELECT id FROM regions WHERE name = 'region' AND countryid = v_country_id), 'city')
     ON CONFLICT DO NOTHING;
 
     RAISE NOTICE 'Minimal geography seeding completed successfully.';
@@ -29,7 +29,7 @@ END $$;
 
 DO $$ 
 DECLARE 
-    -- Water Polo IDs
+    -- Waterpolo IDs
     wp_sport_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f';
     wp_config_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70';
     wp_config_alt_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f71';
@@ -42,9 +42,9 @@ DECLARE
     bb_sport_id uuid := '8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b7c';
     bb_config_id uuid := '8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b80';
 BEGIN
-    -- A. WATER POLO SEEDING
+    -- A. WATERPOLO SEEDING
     INSERT INTO sports (id, name, shortname, defaultconfigid) 
-    VALUES (wp_sport_id, 'Water Polo', 'WP', wp_config_id)
+    VALUES (wp_sport_id, 'Waterpolo', 'WP', wp_config_id)
     ON CONFLICT DO NOTHING;
 
     INSERT INTO playerpositiondefinitions (id, sportid, name, shortname) VALUES 
@@ -56,17 +56,17 @@ BEGIN
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', wp_sport_id, 'Utility', 'UTL')
     ON CONFLICT DO NOTHING;
 
-    -- Standard Water Polo Configuration
+    -- Standard Waterpolo Configuration
     INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
     VALUES (wp_config_id, wp_sport_id, true, 4, 8, '25x20 sq.m.', 15, 13, 7)
     ON CONFLICT DO NOTHING;
 
-    -- Alternative Water Polo Configuration (Smaller field 25x15 sq.m., 6 active players)
+    -- Alternative Waterpolo Configuration (Smaller field 25x15 sq.m., 6 active players)
     INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
     VALUES (wp_config_alt_id, wp_sport_id, true, 4, 7, '25x15 sq.m.', 13, 11, 6)
     ON CONFLICT DO NOTHING;
 
-    -- Water Polo Event Definitions
+    -- Waterpolo Event Definitions
     INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat) VALUES 
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f51', wp_sport_id, NULL, 'Goal', 'GOAL+', true, false, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f52', wp_sport_id, NULL, 'Assist', 'ASST+', true, false, NOW()),
@@ -154,7 +154,7 @@ END $$;
 INSERT INTO clubs (id, cityid, name, createdat) VALUES 
 ('11111111-1111-1111-1111-000000000001', 
     (SELECT c.id FROM cities c JOIN regions r ON c.regionid = r.id JOIN countries co ON r.countryid = co.id 
-     WHERE c.name = 'Dnipro' AND r.name = 'Dnipropetrovsk Oblast' AND co.code = 'UKR' LIMIT 1), 'TTA Training Club', NOW())
+     WHERE c.name = 'city' AND r.name = 'region' AND co.code = 'CTR' LIMIT 1), 'TTA Training Club', NOW())
 ON CONFLICT DO NOTHING;
 
 -- ==========================================

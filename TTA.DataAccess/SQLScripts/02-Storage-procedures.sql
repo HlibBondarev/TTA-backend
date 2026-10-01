@@ -968,7 +968,7 @@ AS $$
 #variable_conflict use_column
 DECLARE
     v_club_id UUID := '11111111-1111-1111-1111-000000000001';
-    v_city_id UUID := '11111111-1111-1111-1111-111111111111';
+    v_city_id UUID := 'c0000000-0000-0000-0000-000000000005';
     v_owner_id VARCHAR(64);
     v_country_id INT;
     v_region_id INT;
@@ -1038,18 +1038,18 @@ BEGIN
 
     -- 1. Ensure JIT base infrastructure (Geography, Base Club) exists if missing
     INSERT INTO public.countries (name, code)
-    SELECT 'Ukraine', 'UA' WHERE NOT EXISTS (SELECT 1 FROM public.countries c WHERE c.name = 'Ukraine');
+    SELECT 'country', 'CTR' WHERE NOT EXISTS (SELECT 1 FROM public.countries c WHERE c.name = 'country');
     
-    SELECT c.id INTO v_country_id FROM public.countries c WHERE c.name = 'Ukraine' LIMIT 1;
+    SELECT c.id INTO v_country_id FROM public.countries c WHERE c.name = 'country' LIMIT 1;
 
     INSERT INTO public.regions (countryid, name)
-    SELECT v_country_id, 'Dnipro Region' WHERE NOT EXISTS (SELECT 1 FROM public.regions r WHERE r.name = 'Dnipro Region' AND r.countryid = v_country_id);
+    SELECT v_country_id, 'region' WHERE NOT EXISTS (SELECT 1 FROM public.regions r WHERE r.name = 'region' AND r.countryid = v_country_id);
     
-    SELECT r.id INTO v_region_id FROM public.regions r WHERE r.name = 'Dnipro Region' AND r.countryid = v_country_id LIMIT 1;
+    SELECT r.id INTO v_region_id FROM public.regions r WHERE r.name = 'region' AND r.countryid = v_country_id LIMIT 1;
 
     INSERT INTO public.cities (id, regionid, name)
-    VALUES (v_city_id, v_region_id, 'Dnipro')
-    ON CONFLICT DO NOTHING;
+    VALUES (v_city_id, v_region_id, 'city')
+    ON CONFLICT (regionid, name) DO NOTHING;
 
     INSERT INTO public.clubs (id, cityid, name, createdat)
     VALUES (v_club_id, v_city_id, 'TTA Training Club', v_now)
