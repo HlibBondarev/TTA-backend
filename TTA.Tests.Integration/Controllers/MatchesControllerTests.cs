@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
@@ -2230,7 +2231,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.SyncBatch"/> returns HTTP 400 Bad Request 
-    /// when the request payload fails validation.
+    /// with ValidationProblemDetails payload when the request payload fails validation.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
@@ -2258,13 +2259,18 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             Presences: []
         );
 
-        var url = BaseUrl + "/" + matchId + "/sync-batch";
+        var url = $"{BaseUrl}/{matchId}/sync-batch";
 
         // Act
         var response = await Client.PostAsJsonAsync(url, request);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // Additional verification for ValidationProblemDetails (RFC 7807) payload
+        var problemDetails = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+        problemDetails.Should().NotBeNull();
+        problemDetails!.Errors.Should().NotBeEmpty();
     }
 
     /// <summary>

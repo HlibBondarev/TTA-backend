@@ -477,7 +477,7 @@ public class MatchesController(
     /// <response code="409">If a business rule or database integrity constraint is violated.</response>
     [HttpPost("{id:guid}/sync-batch")]
     [ProducesResponseType(typeof(MatchSyncBatchResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -495,7 +495,7 @@ public class MatchesController(
         if (!validationResult.IsValid)
         {
             _logger.LogWarning("Validation collapse occurred for MatchSyncBatchRequest payload in Match {MatchId}.", id);
-            return BadRequest(validationResult.Errors);
+            return ValidationProblem(new ValidationProblemDetails(validationResult.ToDictionary()));
         }
 
         // 2. Validate edit access permissions (Tournament Owner or Team Editor)
