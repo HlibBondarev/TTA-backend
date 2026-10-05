@@ -461,6 +461,57 @@ public class MatchesController(
         return Ok(result);
     }
 
+    /// <summary>
+    /// Atomically ingests and synchronizes a batch of match timeline entities (events, anchors, presences) recorded offline.
+    /// </summary>
+    /// <param name="id">The unique identifier of the target match context.</param>
+    /// <param name="request">The batch request payload containing collections of events, anchors, and presences.</param>
+    /// <param name="validator">The fluent validator instance for the batch sync request.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A response payload containing collections of confirmed synchronized entity identifiers.</returns>
+    /// <response code="200">Returns the collections of confirmed entity IDs.</response>
+    /// <response code="400">If the request payload is invalid or validation fails.</response>
+    /// <response code="401">If the user is not authenticated.</response>
+    /// <response code="403">If the user lacks edit rights for the match.</response>
+    /// <response code="404">If the specified match was not found.</response>
+    /// <response code="409">If a business rule or database integrity constraint is violated.</response>
+    [HttpPost("{id:guid}/sync-batch")]
+    [ProducesResponseType(typeof(MatchSyncBatchResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> SyncBatch(
+        [FromRoute] Guid id,
+        [FromBody] MatchSyncBatchRequest request,
+        [FromServices] IValidator<MatchSyncBatchRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Received request for batch synchronization for Match {MatchId}.", id);
+
+        // 1. Explicit FluentValidation invocation inside controller layer
+        var validationResult = await validator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            _logger.LogWarning("Validation collapse occurred for MatchSyncBatchRequest payload in Match {MatchId}.", id);
+            return BadRequest(validationResult.Errors);
+        }
+
+        // 2. Validate edit access permissions (Tournament Owner or Team Editor)
+        var authResult = await ValidateMatchEditAccess(id, cancellationToken);
+        if (authResult != null)
+        {
+            return authResult;
+        }
+
+        // 3. Transformation mapping conversion and mediator request dispatch routing execution
+        var command = new SyncMatchBatchCommand(id, request);
+        var result = await _mediator.Send(command, cancellationToken);
+
+        return Ok(result);
+    }
+
     #endregion
 
     #region Game Events section

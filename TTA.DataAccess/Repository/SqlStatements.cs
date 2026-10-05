@@ -336,6 +336,21 @@ public static class SqlStatements
         /// </summary>
         public const string GetUserCatchedMatches =
             "SELECT * FROM public.get_user_catched_matches(@p_user_id);";
+
+        /// <summary>
+        /// Executes the storage function to atomically persist batch arrays of game events, time anchors, and player presences.
+        /// </summary>
+        public const string SyncMatchBatch = @"
+            SELECT 
+                synced_event_ids AS SyncedEventIds,
+                synced_anchor_ids AS SyncedAnchorIds,
+                synced_presence_ids AS SyncedPresenceIds
+            FROM public.sync_match_batch(
+                @p_match_id, 
+                @p_events::jsonb, 
+                @p_anchors::jsonb, 
+                @p_presences::jsonb
+            );";
     }
 
     /// <summary>

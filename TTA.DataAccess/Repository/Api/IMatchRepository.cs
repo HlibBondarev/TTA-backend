@@ -113,4 +113,20 @@ public interface IMatchRepository : IEntityRepositoryBase<Guid, Match>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A collection of detailed match projections tracked by the user.</returns>
     Task<IEnumerable<MatchWithDetailsProjection>> GetCatchedMatchesByUserIdAsync(string userId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Persists a batch of game events, time anchors, and player presences for a match in a single atomic transaction.
+    /// </summary>
+    /// <param name="matchId">The unique database reference key for the target match.</param>
+    /// <param name="events">Collection of game event entities to sync.</param>
+    /// <param name="anchors">Collection of time anchor entities to sync.</param>
+    /// <param name="presences">Collection of player presence entities to sync.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>A projection containing arrays of successfully synchronized entity identifiers.</returns>
+    Task<MatchSyncBatchProjection> SyncMatchBatchAsync(
+        Guid matchId,
+        IEnumerable<GameEvent> events,
+        IEnumerable<TimeAnchor> anchors,
+        IEnumerable<PlayerPresence> presences,
+        CancellationToken cancellationToken = default);
 }

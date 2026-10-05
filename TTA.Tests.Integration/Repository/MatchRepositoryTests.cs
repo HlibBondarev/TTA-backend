@@ -1210,6 +1210,240 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     #endregion
 
+    #region SyncMatchBatchAsync Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> atomically persists a batch of 
+    /// game events, time anchors, and player presences, returning confirmed synchronized entity IDs.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task SyncMatchBatchAsync_ShouldPersistAllEntities_WhenDataIsValid()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // 1. Seed MatchLineup for the Home Team
+        var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+            "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+            new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+        var lineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 10, @posId)",
+            new { id = lineupId, mId = match.Id, rId = rosterData.id, posId = rosterData.positionid });
+
+        // 2. Seed EventDefinition for the sport
+        var sportId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT sportid FROM public.tournaments WHERE id = @tId",
+            new { tId = context.TournamentId });
+
+        var eventDefId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
+            new { id = eventDefId, sId = sportId });
+
+        // 3. Prepare batch entities
+        var eventEntity = new GameEvent
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = lineupId,
+            EventDefinitionId = eventDefId,
+            PeriodNumber = 1,
+            EventTimestamp = DateTime.UtcNow,
+            IsLeadToGoal = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var anchorEntity = new TimeAnchor
+        {
+            Id = Guid.NewGuid(),
+            MatchId = match.Id,
+            PeriodNumber = 1,
+            Type = TTA.DataAccess.Enums.TimeAnchorType.PeriodStart,
+            Timestamp = DateTime.UtcNow
+        };
+
+        var presenceEntity = new PlayerPresence
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = lineupId,
+            PeriodNumber = 1,
+            TimeIn = DateTime.UtcNow,
+            TimeOut = null
+        };
+
+        // Act
+        var result = await _repository.SyncMatchBatchAsync(
+            match.Id,
+            [eventEntity],
+            [anchorEntity],
+            [presenceEntity],
+            CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.SyncedEventIds.Should().ContainSingle().Which.Should().Be(eventEntity.Id);
+        result.SyncedAnchorIds.Should().ContainSingle().Which.Should().Be(anchorEntity.Id);
+        result.SyncedPresenceIds.Should().ContainSingle().Which.Should().Be(presenceEntity.Id);
+
+        // Verify direct database state persistence
+        var dbEventExists = await conn.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS(SELECT 1 FROM public.gameevents WHERE id = @id)", new { id = eventEntity.Id });
+        var dbAnchorExists = await conn.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS(SELECT 1 FROM public.timeanchors WHERE id = @id)", new { id = anchorEntity.Id });
+        var dbPresenceExists = await conn.ExecuteScalarAsync<bool>(
+            "SELECT EXISTS(SELECT 1 FROM public.playerpresences WHERE id = @id)", new { id = presenceEntity.Id });
+
+        dbEventExists.Should().BeTrue("synced game event record must exist in public.gameevents");
+        dbAnchorExists.Should().BeTrue("synced time anchor record must exist in public.timeanchors");
+        dbPresenceExists.Should().BeTrue("synced player presence record must exist in public.playerpresences");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> performs an upsert (DO UPDATE) 
+    /// when syncing entities with existing primary key IDs.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task SyncMatchBatchAsync_ShouldUpdateExistingEntities_OnConflict()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+            "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+            new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+        var lineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 10, @posId)",
+            new { id = lineupId, mId = match.Id, rId = rosterData.id, posId = rosterData.positionid });
+
+        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
+        var eventDefId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
+            new { id = eventDefId, sId = sportId });
+
+        var eventId = Guid.NewGuid();
+        var initialEvent = new GameEvent
+        {
+            Id = eventId,
+            MatchLineupId = lineupId,
+            EventDefinitionId = eventDefId,
+            PeriodNumber = 1,
+            EventTimestamp = DateTime.UtcNow,
+            IsLeadToGoal = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Seed initial record
+        await _repository.SyncMatchBatchAsync(match.Id, [initialEvent], [], [], CancellationToken.None);
+
+        // Prepare updated record with changed IsLeadToGoal property
+        var updatedEvent = new GameEvent
+        {
+            Id = eventId,
+            MatchLineupId = lineupId,
+            EventDefinitionId = eventDefId,
+            PeriodNumber = 1,
+            EventTimestamp = DateTime.UtcNow,
+            IsLeadToGoal = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var result = await _repository.SyncMatchBatchAsync(match.Id, [updatedEvent], [], [], CancellationToken.None);
+
+        // Assert
+        result.SyncedEventIds.Should().ContainSingle().Which.Should().Be(eventId);
+
+        var isLeadToGoal = await conn.ExecuteScalarAsync<bool>(
+            "SELECT isleadtogoal FROM public.gameevents WHERE id = @id", new { id = eventId });
+        isLeadToGoal.Should().BeTrue("existing event record must be updated upon batch re-sync");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> raises a PostgreSQL error (P0002) 
+    /// when attempting to sync data for a non-existent match ID.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task SyncMatchBatchAsync_ShouldThrowPostgresException_WhenMatchDoesNotExist()
+    {
+        // Arrange
+        var nonExistentMatchId = Guid.NewGuid();
+
+        // Act
+        Func<Task> act = async () => await _repository.SyncMatchBatchAsync(
+            nonExistentMatchId,
+            [],
+            [],
+            [],
+            CancellationToken.None);
+
+        // Assert
+        var exception = await act.Should().ThrowAsync<Npgsql.PostgresException>();
+        exception.Which.SqlState.Should().Be("P0002");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> raises a PostgreSQL error (P0001) 
+    /// when the input array payload contains duplicate identifiers.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task SyncMatchBatchAsync_ShouldThrowPostgresException_WhenPayloadContainsDuplicateIds()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        var duplicateId = Guid.NewGuid();
+        var event1 = new GameEvent
+        {
+            Id = duplicateId,
+            MatchLineupId = Guid.NewGuid(),
+            EventDefinitionId = Guid.NewGuid(),
+            PeriodNumber = 1,
+            EventTimestamp = DateTime.UtcNow
+        };
+        var event2 = new GameEvent
+        {
+            Id = duplicateId,
+            MatchLineupId = Guid.NewGuid(),
+            EventDefinitionId = Guid.NewGuid(),
+            PeriodNumber = 1,
+            EventTimestamp = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.SyncMatchBatchAsync(
+            match.Id,
+            [event1, event2],
+            [],
+            [],
+            CancellationToken.None);
+
+        // Assert
+        var exception = await act.Should().ThrowAsync<Npgsql.PostgresException>();
+        exception.Which.SqlState.Should().Be("P0001");
+    }
+
+    #endregion
+
     #region Helpers
 
     /// <summary>
