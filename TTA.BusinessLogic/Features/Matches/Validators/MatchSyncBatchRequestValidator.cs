@@ -27,12 +27,15 @@ public class MatchSyncBatchRequestValidator : AbstractValidator<MatchSyncBatchRe
             .NotNull().WithMessage("Presences collection cannot be null.");
 
         RuleForEach(x => x.Events)
+            .NotNull()
             .SetValidator(new CreateGameEventRequestValidator());
 
         RuleForEach(x => x.Anchors)
+            .NotNull()
             .SetValidator(new CreateTimeAnchorRequestValidator());
 
         RuleForEach(x => x.Presences)
+            .NotNull()
             .SetValidator(new CreatePlayerPresenceRequestValidator());
     }
 }

@@ -98,4 +98,25 @@ public class MatchSyncBatchRequestValidatorTests
         result.ShouldHaveValidationErrorFor("Presences[0].MatchLineupId");
         result.ShouldHaveValidationErrorFor("Presences[0].PeriodNumber");
     }
+
+    /// <summary>
+    /// Verifies that the validator returns errors when collections contain null items.
+    /// </summary>
+    [Fact]
+    public void Validator_Should_HaveErrors_When_CollectionsContainNullItems()
+    {
+        // Arrange
+        var request = new MatchSyncBatchRequest(
+            Events: [null!],
+            Anchors: [null!],
+            Presences: [null!]);
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldHaveValidationErrorFor("Events[0]");
+        result.ShouldHaveValidationErrorFor("Anchors[0]");
+        result.ShouldHaveValidationErrorFor("Presences[0]");
+    }
 }
