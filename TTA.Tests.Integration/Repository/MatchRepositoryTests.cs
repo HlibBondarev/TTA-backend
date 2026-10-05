@@ -1442,6 +1442,150 @@ public class MatchRepositoryTests : BaseIntegrationTest
         exception.Which.SqlState.Should().Be("P0001");
     }
 
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> raises a PostgreSQL error (P0001)
+    /// when a game event references a lineup belonging to a different match.
+    /// </summary>
+    [Fact]
+    public async Task SyncMatchBatchAsync_ShouldThrowPostgresException_WhenLineupBelongsToDifferentMatch()
+    {
+        // Arrange
+        var context1 = await SeedMatchEnvironmentAsync();
+        var match1 = CreateMatchModel(context1.TournamentId, context1.HomeTeamId, context1.GuestTeamId, "M-01");
+        await _repository.UpsertMatchAsync(match1, CancellationToken.None);
+
+        var context2 = await SeedMatchEnvironmentAsync();
+        var match2 = CreateMatchModel(context2.TournamentId, context2.HomeTeamId, context2.GuestTeamId, "M-02");
+        await _repository.UpsertMatchAsync(match2, CancellationToken.None);
+
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // Create lineup entry for Match 2
+        var rosterData2 = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+            "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+            new { tId = context2.TournamentId, teamId = context2.HomeTeamId });
+
+        var lineupIdMatch2 = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 10, @posId)",
+            new { id = lineupIdMatch2, mId = match2.Id, rId = rosterData2.id, posId = rosterData2.positionid });
+
+        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context1.TournamentId });
+        var eventDefId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
+            new { id = eventDefId, sId = sportId });
+
+        // Event in Match 1 batch attempts to reference Match 2's lineup
+        var invalidEvent = new GameEvent
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = lineupIdMatch2,
+            EventDefinitionId = eventDefId,
+            PeriodNumber = 1,
+            EventTimestamp = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.SyncMatchBatchAsync(
+            match1.Id,
+            [invalidEvent],
+            [],
+            [],
+            CancellationToken.None);
+
+        // Assert
+        var exception = await act.Should().ThrowAsync<Npgsql.PostgresException>();
+        exception.Which.SqlState.Should().Be("P0001");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> raises a PostgreSQL error (P0001)
+    /// when a time anchor in the payload references a match ID different from p_match_id.
+    /// </summary>
+    [Fact]
+    public async Task SyncMatchBatchAsync_ShouldThrowPostgresException_WhenAnchorRefersToDifferentMatch()
+    {
+        // Arrange
+        var context1 = await SeedMatchEnvironmentAsync();
+        var match1 = CreateMatchModel(context1.TournamentId, context1.HomeTeamId, context1.GuestTeamId);
+        await _repository.UpsertMatchAsync(match1, CancellationToken.None);
+
+        var match2Id = Guid.NewGuid();
+
+        var invalidAnchor = new TimeAnchor
+        {
+            Id = Guid.NewGuid(),
+            MatchId = match2Id,
+            PeriodNumber = 1,
+            Type = TTA.DataAccess.Enums.TimeAnchorType.PeriodStart,
+            Timestamp = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.SyncMatchBatchAsync(
+            match1.Id,
+            [],
+            [invalidAnchor],
+            [],
+            CancellationToken.None);
+
+        // Assert
+        var exception = await act.Should().ThrowAsync<Npgsql.PostgresException>();
+        exception.Which.SqlState.Should().Be("P0001");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> raises a PostgreSQL error (P0001)
+    /// when attempting to update an entity ID that belongs to a different match (ID Hijacking protection).
+    /// </summary>
+    [Fact]
+    public async Task SyncMatchBatchAsync_ShouldThrowPostgresException_WhenAttemptingCrossMatchIdHijacking()
+    {
+        // Arrange
+        var context1 = await SeedMatchEnvironmentAsync();
+        var match1 = CreateMatchModel(context1.TournamentId, context1.HomeTeamId, context1.GuestTeamId);
+        await _repository.UpsertMatchAsync(match1, CancellationToken.None);
+
+        var context2 = await SeedMatchEnvironmentAsync();
+        var match2 = CreateMatchModel(context2.TournamentId, context2.HomeTeamId, context2.GuestTeamId);
+        await _repository.UpsertMatchAsync(match2, CancellationToken.None);
+
+        // Seed Time Anchor explicitly into Match 2
+        var anchorIdInMatch2 = Guid.NewGuid();
+        using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp)
+                VALUES (@id, @mId, 1, 0, NOW())",
+                new { id = anchorIdInMatch2, mId = match2.Id });
+        }
+
+        // Try to update anchorIdInMatch2 via Match 1's batch sync
+        var hijackingAnchor = new TimeAnchor
+        {
+            Id = anchorIdInMatch2,
+            MatchId = match1.Id,
+            PeriodNumber = 1,
+            Type = TTA.DataAccess.Enums.TimeAnchorType.PeriodEnd,
+            Timestamp = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.SyncMatchBatchAsync(
+            match1.Id,
+            [],
+            [hijackingAnchor],
+            [],
+            CancellationToken.None);
+
+        // Assert
+        var exception = await act.Should().ThrowAsync<Npgsql.PostgresException>();
+        exception.Which.SqlState.Should().Be("P0001");
+    }
+
     #endregion
 
     #region Helpers
