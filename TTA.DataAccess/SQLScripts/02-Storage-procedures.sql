@@ -1342,7 +1342,7 @@ BEGIN
                 eventdefinitionid = EXCLUDED.eventdefinitionid,
                 periodnumber = EXCLUDED.periodnumber,
                 eventtimestamp = EXCLUDED.eventtimestamp,
-                normalizedmatchtime = EXCLUDED.normalizedmatchtime,
+                normalizedmatchtime = COALESCE(EXCLUDED.normalizedmatchtime, public.gameevents.normalizedmatchtime),
                 isleadtogoal = EXCLUDED.isleadtogoal
             WHERE EXISTS (
                 SELECT 1 FROM public.matchlineups ml
