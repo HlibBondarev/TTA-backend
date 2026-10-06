@@ -1,4 +1,5 @@
 ﻿using Dapper;
+using System.Text.Json;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Base;
@@ -177,5 +178,63 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
             SqlStatements.ForMatches.GetUserCatchedMatches,
             parameters,
             cancellationToken: cancellationToken));
+    }
+
+    /// <inheritdoc />
+    public async Task<MatchSyncBatchProjection> SyncMatchBatchAsync(
+        Guid matchId,
+        IEnumerable<GameEvent> events,
+        IEnumerable<TimeAnchor> anchors,
+        IEnumerable<PlayerPresence> presences,
+        CancellationToken cancellationToken = default)
+    {
+        var eventsList = events.ToList();
+        var anchorsList = anchors.ToList();
+        var presencesList = presences.ToList();
+
+        var eventsJson = JsonSerializer.Serialize(eventsList.Select(e => new
+        {
+            id = e.Id,
+            matchlineupid = e.MatchLineupId,
+            eventdefinitionid = e.EventDefinitionId,
+            periodnumber = e.PeriodNumber,
+            eventtimestamp = e.EventTimestamp,
+            normalizedmatchtime = e.NormalizedMatchTime,
+            isleadtogoal = e.IsLeadToGoal,
+            createdat = e.CreatedAt
+        }));
+
+        var anchorsJson = JsonSerializer.Serialize(anchorsList.Select(a => new
+        {
+            id = a.Id,
+            matchid = a.MatchId,
+            periodnumber = a.PeriodNumber,
+            type = a.Type,
+            timestamp = a.Timestamp
+        }));
+
+        var presencesJson = JsonSerializer.Serialize(presencesList.Select(p => new
+        {
+            id = p.Id,
+            matchlineupid = p.MatchLineupId,
+            periodnumber = p.PeriodNumber,
+            timein = p.TimeIn,
+            timeout = p.TimeOut
+        }));
+
+        var parameters = new DynamicParameters();
+        parameters.Add("p_match_id", matchId);
+        parameters.Add("p_events", eventsJson);
+        parameters.Add("p_anchors", anchorsJson);
+        parameters.Add("p_presences", presencesJson);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+
+        var result = await connection.QueryFirstOrDefaultAsync<MatchSyncBatchProjection>(new CommandDefinition(
+            SqlStatements.ForMatches.SyncMatchBatch,
+            parameters,
+            cancellationToken: cancellationToken));
+
+        return result ?? new MatchSyncBatchProjection([], [], []);
     }
 }

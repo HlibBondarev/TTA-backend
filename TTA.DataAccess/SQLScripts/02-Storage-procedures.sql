@@ -1218,6 +1218,232 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+/**********************************************************************************
+ * Atomically ingests and upserts batch arrays of game events, time anchors, 
+ * and player presences for a specific match within a single transaction.
+ * Validates match existence and checks for duplicate IDs in input payloads.
+ * Preserves existing createdat timestamps during conflict updates.
+ * Returns arrays of successfully processed client-generated GUIDs.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.sync_match_batch(
+    p_match_id UUID,
+    p_events JSONB DEFAULT '[]'::jsonb,
+    p_anchors JSONB DEFAULT '[]'::jsonb,
+    p_presences JSONB DEFAULT '[]'::jsonb
+)
+RETURNS TABLE (
+    synced_event_ids UUID[],
+    synced_anchor_ids UUID[],
+    synced_presence_ids UUID[]
+) AS $$
+DECLARE
+    v_event_ids UUID[] := ARRAY[]::UUID[];
+    v_anchor_ids UUID[] := ARRAY[]::UUID[];
+    v_presence_ids UUID[] := ARRAY[]::UUID[];
+    v_events_count INT := 0;
+    v_anchors_count INT := 0;
+    v_presences_count INT := 0;
+BEGIN
+    -- 0. Validate Match existence
+    IF NOT EXISTS (SELECT 1 FROM public.matches WHERE id = p_match_id) THEN
+        RAISE EXCEPTION 'Match with ID % not found.', p_match_id USING ERRCODE = 'P0002';
+    END IF;
+
+    v_events_count := COALESCE(jsonb_array_length(p_events), 0);
+    v_anchors_count := COALESCE(jsonb_array_length(p_anchors), 0);
+    v_presences_count := COALESCE(jsonb_array_length(p_presences), 0);
+
+    -- 1. Validate payload arrays for duplicate identifiers
+    IF v_events_count > 0 THEN
+        IF EXISTS (
+            SELECT 1 FROM jsonb_to_recordset(p_events) AS x(id UUID)
+            GROUP BY x.id HAVING count(*) > 1
+        ) THEN
+            RAISE EXCEPTION 'Batch events payload contains duplicate identifiers.' USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    IF v_anchors_count > 0 THEN
+        IF EXISTS (
+            SELECT 1 FROM jsonb_to_recordset(p_anchors) AS x(id UUID)
+            GROUP BY x.id HAVING count(*) > 1
+        ) THEN
+            RAISE EXCEPTION 'Batch anchors payload contains duplicate identifiers.' USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    IF v_presences_count > 0 THEN
+        IF EXISTS (
+            SELECT 1 FROM jsonb_to_recordset(p_presences) AS x(id UUID)
+            GROUP BY x.id HAVING count(*) > 1
+        ) THEN
+            RAISE EXCEPTION 'Batch presences payload contains duplicate identifiers.' USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    -- 2. Validate line-up and match ownership boundaries
+    IF (v_events_count > 0 OR v_presences_count > 0) THEN
+        IF EXISTS (
+            SELECT 1 FROM (
+                SELECT x.matchlineupid FROM jsonb_to_recordset(COALESCE(p_events, '[]'::jsonb)) AS x(matchlineupid UUID)
+                UNION ALL
+                SELECT x.matchlineupid FROM jsonb_to_recordset(COALESCE(p_presences, '[]'::jsonb)) AS x(matchlineupid UUID)
+            ) r
+            LEFT JOIN public.matchlineups ml ON ml.id = r.matchlineupid AND ml.matchid = p_match_id
+            WHERE ml.id IS NULL
+        ) THEN
+            RAISE EXCEPTION 'Batch references lineups outside match %.', p_match_id USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    IF v_anchors_count > 0 THEN
+        IF EXISTS (
+            SELECT 1 FROM jsonb_to_recordset(p_anchors) AS x(matchid UUID)
+            WHERE x.matchid <> p_match_id
+        ) THEN
+            RAISE EXCEPTION 'Batch anchors reference match outside %.', p_match_id USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    -- 3. Upsert Game Events (if payload is non-empty)
+    IF v_events_count > 0 THEN
+        WITH upserted_events AS (
+            INSERT INTO public.gameevents (
+                id, 
+                matchlineupid, 
+                eventdefinitionid, 
+                periodnumber, 
+                eventtimestamp, 
+                normalizedmatchtime, 
+                isleadtogoal, 
+                createdat
+            )
+            SELECT 
+                x.id, 
+                x.matchlineupid, 
+                x.eventdefinitionid, 
+                x.periodnumber, 
+                x.eventtimestamp, 
+                x.normalizedmatchtime, 
+                x.isleadtogoal, 
+                COALESCE(x.createdat, CURRENT_TIMESTAMP)
+            FROM jsonb_to_recordset(p_events) AS x(
+                id UUID,
+                matchlineupid UUID,
+                eventdefinitionid UUID,
+                periodnumber INT,
+                eventtimestamp TIMESTAMPTZ,
+                normalizedmatchtime INTERVAL,
+                isleadtogoal BOOLEAN,
+                createdat TIMESTAMPTZ
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                matchlineupid = EXCLUDED.matchlineupid,
+                eventdefinitionid = EXCLUDED.eventdefinitionid,
+                periodnumber = EXCLUDED.periodnumber,
+                eventtimestamp = EXCLUDED.eventtimestamp,
+                normalizedmatchtime = COALESCE(EXCLUDED.normalizedmatchtime, public.gameevents.normalizedmatchtime),
+                isleadtogoal = EXCLUDED.isleadtogoal
+            WHERE EXISTS (
+                SELECT 1 FROM public.matchlineups ml
+                WHERE ml.id = public.gameevents.matchlineupid AND ml.matchid = p_match_id
+            )
+            RETURNING id
+        )
+        SELECT COALESCE(array_agg(id), ARRAY[]::UUID[]) INTO v_event_ids FROM upserted_events;
+
+        IF CARDINALITY(v_event_ids) <> v_events_count THEN
+            RAISE EXCEPTION 'Batch event upsert count mismatch for match %.', p_match_id USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    -- 4. Upsert Time Anchors (if payload is non-empty)
+    IF v_anchors_count > 0 THEN
+        WITH upserted_anchors AS (
+            INSERT INTO public.timeanchors (
+                id,
+                matchid,
+                periodnumber,
+                type,
+                timestamp
+            )
+            SELECT 
+                x.id, 
+                x.matchid, 
+                x.periodnumber, 
+                x.type, 
+                x.timestamp
+            FROM jsonb_to_recordset(p_anchors) AS x(
+                id UUID,
+                matchid UUID,
+                periodnumber INT,
+                type INT,
+                timestamp TIMESTAMPTZ
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                periodnumber = EXCLUDED.periodnumber,
+                type = EXCLUDED.type,
+                timestamp = EXCLUDED.timestamp
+            WHERE public.timeanchors.matchid = p_match_id
+            RETURNING id
+        )
+        SELECT COALESCE(array_agg(id), ARRAY[]::UUID[]) INTO v_anchor_ids FROM upserted_anchors;
+
+        IF CARDINALITY(v_anchor_ids) <> v_anchors_count THEN
+            RAISE EXCEPTION 'Batch anchor upsert count mismatch for match %.', p_match_id USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    -- 5. Upsert Player Presences (if payload is non-empty)
+    IF v_presences_count > 0 THEN
+        WITH upserted_presences AS (
+            INSERT INTO public.playerpresences (
+                id,
+                matchlineupid,
+                periodnumber,
+                timein,
+                timeout
+            )
+            SELECT 
+                x.id, 
+                x.matchlineupid, 
+                x.periodnumber, 
+                x.timein, 
+                x.timeout
+            FROM jsonb_to_recordset(p_presences) AS x(
+                id UUID,
+                matchlineupid UUID,
+                periodnumber INT,
+                timein TIMESTAMPTZ,
+                timeout TIMESTAMPTZ
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                matchlineupid = EXCLUDED.matchlineupid,
+                periodnumber = EXCLUDED.periodnumber,
+                timein = EXCLUDED.timein,
+                timeout = EXCLUDED.timeout
+            WHERE EXISTS (
+                SELECT 1 FROM public.matchlineups ml
+                WHERE ml.id = public.playerpresences.matchlineupid AND ml.matchid = p_match_id
+            )
+            RETURNING id
+        )
+        SELECT COALESCE(array_agg(id), ARRAY[]::UUID[]) INTO v_presence_ids FROM upserted_presences;
+
+        IF CARDINALITY(v_presence_ids) <> v_presences_count THEN
+            RAISE EXCEPTION 'Batch presence upsert count mismatch for match %.', p_match_id USING ERRCODE = 'P0001';
+        END IF;
+    END IF;
+
+    -- Return confirmed sets of client UUIDs
+    RETURN QUERY
+    SELECT 
+        v_event_ids AS synced_event_ids,
+        v_anchor_ids AS synced_anchor_ids,
+        v_presence_ids AS synced_presence_ids;
+END;
+$$ LANGUAGE plpgsql;
+
 -- =============================================================
 -- MATCHLINEUP MANAGEMENT FUNCTIONS
 -- =============================================================

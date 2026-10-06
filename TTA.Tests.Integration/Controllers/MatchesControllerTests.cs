@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
@@ -2151,6 +2152,182 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         catchedMatches.Should().NotBeNull();
         var list = catchedMatches!.ToList();
         list.Should().Contain(m => m.Id == matchId);
+    }
+
+    #endregion
+
+    #region SyncBatch Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.SyncBatch"/> returns HTTP 200 OK 
+    /// and confirmed synchronized entity identifiers when an authorized user submits a valid batch.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task SyncBatch_ShouldReturnOk_WhenRequestIsValidAndUserIsAuthorized()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home Sync FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Sync FC");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SYNC-01");
+
+        var lineupId = await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", true);
+
+        var eventId = Guid.NewGuid();
+        var anchorId = Guid.NewGuid();
+        var presenceId = Guid.NewGuid();
+
+        var eventDto = new CreateGameEventRequest(
+            Id: eventId,
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: true
+        );
+
+        var anchorDto = new CreateTimeAnchorRequest(
+            Id: anchorId,
+            PeriodNumber: 1,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: DateTime.UtcNow
+        );
+
+        var presenceDto = new CreatePlayerPresenceRequest(
+            Id: presenceId,
+            MatchLineupId: lineupId,
+            PeriodNumber: 1,
+            TimeIn: DateTime.UtcNow,
+            TimeOut: null
+        );
+
+        var request = new MatchSyncBatchRequest(
+            Events: [eventDto],
+            Anchors: [anchorDto],
+            Presences: [presenceDto]
+        );
+
+        var url = BaseUrl + "/" + matchId + "/sync-batch";
+
+        // Act
+        var response = await Client.PostAsJsonAsync(url, request);
+
+        // Assert
+        if (response.StatusCode != HttpStatusCode.OK)
+            _output.WriteLine(await response.Content.ReadAsStringAsync());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var result = await response.Content.ReadFromJsonAsync<MatchSyncBatchResponse>();
+        result.Should().NotBeNull();
+        result!.SyncedEventIds.Should().ContainSingle().Which.Should().Be(eventId);
+        result.SyncedAnchorIds.Should().ContainSingle().Which.Should().Be(anchorId);
+        result.SyncedPresenceIds.Should().ContainSingle().Which.Should().Be(presenceId);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.SyncBatch"/> returns HTTP 400 Bad Request 
+    /// with ValidationProblemDetails payload when the request payload fails validation.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task SyncBatch_ShouldReturnBadRequest_WhenValidationFails()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home Sync FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Sync FC");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SYNC-02");
+
+        // Invalid period number = 0 triggers FluentValidation collapse
+        var invalidAnchorDto = new CreateTimeAnchorRequest(
+            Id: Guid.NewGuid(),
+            PeriodNumber: 0,
+            Type: TimeAnchorType.PeriodStart,
+            Timestamp: DateTime.UtcNow
+        );
+
+        var request = new MatchSyncBatchRequest(
+            Events: [],
+            Anchors: [invalidAnchorDto],
+            Presences: []
+        );
+
+        var url = $"{BaseUrl}/{matchId}/sync-batch";
+
+        // Act
+        var response = await Client.PostAsJsonAsync(url, request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // Additional verification for ValidationProblemDetails (RFC 7807) payload
+        var problemDetails = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+        problemDetails.Should().NotBeNull();
+        problemDetails!.Errors.Should().NotBeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.SyncBatch"/> returns HTTP 403 Forbidden 
+    /// when the user lacks edit access to the match.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task SyncBatch_ShouldReturnForbidden_WhenUserLacksEditAccess()
+    {
+        // Arrange
+        const string otherOwnerId = "auth0|stranger-sync-owner";
+        var context = await SetupTournamentContextAsync(otherOwnerId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home Sync FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Sync FC");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SYNC-03");
+
+        var request = new MatchSyncBatchRequest(
+            Events: [],
+            Anchors: [],
+            Presences: []
+        );
+
+        var url = BaseUrl + "/" + matchId + "/sync-batch";
+
+        // Act
+        var response = await Client.PostAsJsonAsync(url, request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.SyncBatch"/> returns HTTP 404 Not Found 
+    /// when the match does not exist.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task SyncBatch_ShouldReturnNotFound_WhenMatchDoesNotExist()
+    {
+        // Arrange
+        var nonExistentMatchId = Guid.NewGuid();
+        var request = new MatchSyncBatchRequest(
+            Events: [],
+            Anchors: [],
+            Presences: []
+        );
+
+        var url = BaseUrl + "/" + nonExistentMatchId + "/sync-batch";
+
+        // Act
+        var response = await Client.PostAsJsonAsync(url, request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     #endregion
