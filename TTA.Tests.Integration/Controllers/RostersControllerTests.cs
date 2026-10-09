@@ -321,7 +321,7 @@ public class RostersControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var configId = Guid.NewGuid();
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
-        const string sql = "INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) VALUES (@id, @sportId, false, 2, 45, 'Standard', 25, 11)";
+        const string sql = "INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) VALUES (@id, @sportId, false, 2, 45, 'Standard', 15, 12, 7, 'Playground', 25, 20)";
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", configId);
         cmd.Parameters.AddWithValue("sportId", sportId);
@@ -394,8 +394,8 @@ public class RostersControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // 2. Insert SportConfiguration
         var configSql = @"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-            VALUES (@configId, @sportId, false, 2, 45, '105x68', 25, 11)
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth)
+            VALUES (@configId, @sportId, false, 2, 45, 'Standard', 25, 12, 7, 'Playground', 25, 20)
             ON CONFLICT DO NOTHING;";
 
         using (var cmd = new NpgsqlCommand(configSql, conn, tx))

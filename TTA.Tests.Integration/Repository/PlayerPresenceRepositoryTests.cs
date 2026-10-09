@@ -595,8 +595,8 @@ public class PlayerPresenceRepositoryTests : BaseIntegrationTest
         sportId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sports WHERE name = 'Water Polo'", transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            SELECT @id, @sid, true, 4, 8, '30x20', 15, 7 
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) 
+            SELECT @id, @sid, true, 4, 8, '25x20', 15, 12, 7, 'Playground', 25, 20
             WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
             new { id = configId, sid = sportId }, transaction: transaction);
         configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId }, transaction: transaction);

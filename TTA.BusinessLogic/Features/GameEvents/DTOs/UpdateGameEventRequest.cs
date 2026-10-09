@@ -9,11 +9,15 @@ namespace TTA.BusinessLogic.Features.GameEvents.DTOs;
 /// <param name="EventDefinitionId">The updated event definition identifier.</param>
 /// <param name="PeriodNumber">The updated period number.</param>
 /// <param name="IsLeadToGoal">The updated goal lead status.</param>
+/// <param name="LocationX">The updated optional X coordinate on the field (0.00 to 100.00 percentage scale).</param>
+/// <param name="LocationY">The updated optional Y coordinate on the field (0.00 to 100.00 percentage scale).</param>
 public record UpdateGameEventRequest(
     Guid MatchLineupId,
     Guid EventDefinitionId,
     int PeriodNumber,
-    bool IsLeadToGoal);
+    bool IsLeadToGoal,
+    decimal? LocationX = null,
+    decimal? LocationY = null);
 
 /// <summary>
 /// Mapping extensions for <see cref="UpdateGameEventRequest"/>.
@@ -33,5 +37,7 @@ public static class UpdateGameEventRequestExtensions
         MatchLineupId: request.MatchLineupId,
         EventDefinitionId: request.EventDefinitionId,
         PeriodNumber: request.PeriodNumber,
-        IsLeadToGoal: request.IsLeadToGoal);
+        IsLeadToGoal: request.IsLeadToGoal,
+        LocationX: request.LocationX,
+        LocationY: request.LocationY);
 }

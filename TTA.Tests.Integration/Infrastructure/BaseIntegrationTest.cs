@@ -38,9 +38,9 @@ public abstract class BaseIntegrationTest(DatabaseFixture fixture) : IAsyncLifet
 
         const string configSql = @"
             INSERT INTO public.sportconfigurations (
-                id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit
+                id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth
             ) VALUES (
-                @configId, @sportId, false, 2, 45, 'Standard', 25, 11, 7)";
+                @configId, @sportId, false, 2, 45, 'Standard', 25, 11, 7, 'Playground', 25, 20)";
 
         await conn.ExecuteAsync(configSql, new { configId, sportId }, transaction: tx);
 

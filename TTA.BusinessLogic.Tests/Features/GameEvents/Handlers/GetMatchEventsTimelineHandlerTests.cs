@@ -270,6 +270,8 @@ public class GetMatchEventsTimelineHandlerTests
             // But if we use a specific sentinel or call it via named parameters, we handle it.
             NormalizedMatchTime: normalizedMatchTime ?? TimeSpan.FromMinutes(20),
             IsLeadToGoal: false,
+            LocationX: 5.25m,
+            LocationY: 8.00m,
             PlayerName: "Player Name",
             PlayerNumber: 7,
             TeamId: Guid.NewGuid(),

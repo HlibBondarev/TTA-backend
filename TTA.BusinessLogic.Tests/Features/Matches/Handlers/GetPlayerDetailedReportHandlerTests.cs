@@ -72,7 +72,9 @@ public class GetPlayerDetailedReportHandlerTests
                 PeriodNumber: 2,
                 EventTimestamp: baseTimestamp.AddMinutes(15), // LATER real time
                 NormalizedMatchTime: TimeSpan.FromMinutes(5), // EARLIER period-relative time
-                IsLeadToGoal: false
+                IsLeadToGoal: false,
+                LocationX: 3.5m,
+                LocationY: 8.00m
             ),
             // Event A: Period 1, happens EARLIER in real time, but has a LATER relative match time (e.g., 40th minute of 1st period)
             new(
@@ -86,7 +88,9 @@ public class GetPlayerDetailedReportHandlerTests
                 PeriodNumber: 1,
                 EventTimestamp: baseTimestamp,                 // EARLIER real time
                 NormalizedMatchTime: TimeSpan.FromMinutes(40), // LATER period-relative time
-                IsLeadToGoal: true
+                IsLeadToGoal: true,
+                LocationX: 5.25m,
+                LocationY: 8.00m
             )
         };
 
@@ -154,7 +158,9 @@ public class GetPlayerDetailedReportHandlerTests
                 PeriodNumber: null,
                 EventTimestamp: null,
                 NormalizedMatchTime: null,
-                IsLeadToGoal: null
+                IsLeadToGoal: null,
+                LocationX: null,
+                LocationY: null
             )
         };
 

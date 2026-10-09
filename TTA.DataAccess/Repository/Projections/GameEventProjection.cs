@@ -13,6 +13,8 @@
 /// <param name="EventTimestamp">The absolute UTC timestamp of when the event was recorded.</param>
 /// <param name="NormalizedMatchTime">The relative time from the start of the match (e.g., 00:15:00 for the 15th minute).</param>
 /// <param name="IsLeadToGoal">Flag indicating if this event directly resulted in a goal.</param>
+/// <param name="LocationX">Optional X coordinate on field percentage scale (0.00 to 100.00).</param>
+/// <param name="LocationY">Optional Y coordinate on field percentage scale (0.00 to 100.00).</param>
 /// <param name="PlayerName">The name of the player associated with the event, if applicable.</param>
 /// <param name="PlayerNumber">The jersey number of the player, if applicable.</param>
 /// <param name="TeamId">The unique identifier of the team the player belongs to.</param>
@@ -27,6 +29,8 @@ public record GameEventProjection(
     DateTime EventTimestamp,
     TimeSpan? NormalizedMatchTime,
     bool IsLeadToGoal,
+    decimal? LocationX,
+    decimal? LocationY,
     string? PlayerName,
     int? PlayerNumber,
     Guid? TeamId,

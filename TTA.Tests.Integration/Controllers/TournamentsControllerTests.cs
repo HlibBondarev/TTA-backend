@@ -560,9 +560,9 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
         var configId = Guid.NewGuid();
         const string sql = @"
             INSERT INTO public.sportconfigurations (
-                id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit
+                id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth
             ) VALUES (
-                @id, @sid, false, 2, 45, 'Standard', 25, 11, 7)
+                @id, @sid, false, 2, 45, 'Standard', 25, 11, 7, 'Playground', 25, 20)
             ON CONFLICT DO NOTHING";
 
         using var cmd = new NpgsqlCommand(sql, conn);
@@ -670,9 +670,9 @@ public class TournamentsControllerTests(DatabaseFixture fixture, ITestOutputHelp
 
         const string configSql = @"
             INSERT INTO public.sportconfigurations (
-                id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit
+                id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth
             ) VALUES (
-                @configId, @sportId, false, 2, 45, 'Standard', 25, 11, 7)";
+                @configId, @sportId, false, 2, 45, 'Standard', 25, 11, 7, 'Playground', 25, 20)";
 
         using (var cmd = new NpgsqlCommand(configSql, conn, tx))
         {

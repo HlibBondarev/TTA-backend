@@ -13,6 +13,8 @@
 /// <param name="EventTimestamp">The UTC timestamp of the event.</param>
 /// <param name="NormalizedMatchTime">The calculated match time (interval) when the event occurred.</param>
 /// <param name="IsLeadToGoal">Indicates if the event was a direct lead to a goal.</param>
+/// <param name="LocationX">The optional X coordinate of the event on the field (0.00 to 100.00 percentage scale).</param>
+/// <param name="LocationY">The optional Y coordinate of the event on the field (0.00 to 100.00 percentage scale).</param>
 /// <param name="PlayerName">The full name of the player (combined first and last name).</param>
 /// <param name="PlayerNumber">The jersey number of the player from the match lineup.</param>
 /// <param name="TeamId">The unique identifier of the team associated with the event.</param>
@@ -27,6 +29,8 @@ public record GameEventResponse(
     DateTime EventTimestamp,
     TimeSpan? NormalizedMatchTime,
     bool IsLeadToGoal,
+    decimal? LocationX,
+    decimal? LocationY,
     string? PlayerName,
     int? PlayerNumber,
     Guid? TeamId,

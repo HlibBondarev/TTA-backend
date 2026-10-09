@@ -53,6 +53,8 @@ public class GetGameEventByIdHandlerTests
             EventTimestamp: DateTime.UtcNow,
             NormalizedMatchTime: TimeSpan.FromMinutes(15),
             IsLeadToGoal: false,
+            LocationX: 5.25m,
+            LocationY: 8.00m,
             PlayerName: "John Doe",
             PlayerNumber: 10,
             TeamId: Guid.NewGuid(),

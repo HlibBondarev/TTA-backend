@@ -201,6 +201,8 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
             eventtimestamp = e.EventTimestamp,
             normalizedmatchtime = e.NormalizedMatchTime,
             isleadtogoal = e.IsLeadToGoal,
+            locationx = e.LocationX,
+            locationy = e.LocationY,
             createdat = e.CreatedAt
         }));
 

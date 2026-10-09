@@ -48,6 +48,9 @@ public class GetSportConfigurationsBySportIdHandler(
             c.FieldSize,
             c.RosterLimit,
             c.LineupLimit,
-            c.ActivePlayersLimit));
+            c.ActivePlayersLimit,
+            c.Playground,
+            c.FieldLength,
+            c.FieldWidth));
     }
 }
