@@ -400,9 +400,9 @@ public class TeamsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
         {
             await conn.ExecuteAsync(@"
                 INSERT INTO public.sportconfigurations (
-                    id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit
+                    id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth
                 ) VALUES (
-                    @defaultConfigId, @sportId, false, 2, 45, 'Standard', 18, 11, 7)
+                    @defaultConfigId, @sportId, false, 2, 45, 'Standard', 18, 11, 7, 'Playground', 25, 20)
                 ON CONFLICT DO NOTHING",
                 new { defaultConfigId, sportId }, tx);
         }

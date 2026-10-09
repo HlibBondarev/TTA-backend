@@ -365,8 +365,8 @@ public class ClubsControllerTests(DatabaseFixture fixture, ITestOutputHelper out
 
         // 2. Insert SportConfiguration
         var configSql = @"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-            VALUES (@configId, @sportId, false, 2, 45, '105x68', 25, 11)
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth)
+            VALUES (@configId, @sportId, false, 2, 45, '105x68', 25, 12, 7, 'Playground', 25, 20)
             ON CONFLICT DO NOTHING;";
 
         using (var cmd = new NpgsqlCommand(configSql, conn, tx))

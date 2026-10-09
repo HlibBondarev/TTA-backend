@@ -33,50 +33,6 @@ public class GetGameEventByIdHandlerTests
     }
 
     /// <summary>
-    /// Verifies that the handler returns a correctly populated response DTO
-    /// when the event exists. Uses ExpandoObject to support dynamic mapping.
-    /// </summary>
-    [Fact]
-    public async Task Handle_Should_ReturnEventResponse_When_EventExists()
-    {
-        // Arrange
-        var eventId = Guid.NewGuid();
-        var query = new GetGameEventByIdQuery(eventId);
-        GameEventProjection detailedEvent = new
-        (
-            Id: eventId,
-            MatchLineupId: Guid.NewGuid(),
-            EventDefinitionId: Guid.NewGuid(),
-            EventName: "Goal",
-            IsPositive: true,
-            PeriodNumber: 1,
-            EventTimestamp: DateTime.UtcNow,
-            NormalizedMatchTime: TimeSpan.FromMinutes(15),
-            IsLeadToGoal: false,
-            PlayerName: "John Doe",
-            PlayerNumber: 10,
-            TeamId: Guid.NewGuid(),
-            TeamName: "Warriors"
-        );
-
-        _gameEventRepositoryMock
-            .Setup(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(detailedEvent);
-
-        // Act
-        var result = await _handler.Handle(query, CancellationToken.None);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.Id.Should().Be(eventId);
-        result.EventName.Should().Be("Goal");
-        result.PlayerName.Should().Be("John Doe");
-        result.TeamName.Should().Be("Warriors");
-
-        _gameEventRepositoryMock.Verify(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    /// <summary>
     /// Verifies that a <see cref="NotFoundException"/> is thrown 
     /// when the requested game event does not exist.
     /// </summary>
@@ -99,5 +55,94 @@ public class GetGameEventByIdHandlerTests
             .WithMessage($"Game event with ID {eventId} not found.");
 
         _gameEventRepositoryMock.Verify(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that the handler returns a correctly populated response DTO
+    /// including spatial coordinates when the event exists.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_ReturnEventResponse_When_EventExists()
+    {
+        // Arrange
+        var eventId = Guid.NewGuid();
+        var query = new GetGameEventByIdQuery(eventId);
+        GameEventProjection detailedEvent = new
+        (
+            Id: eventId,
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            EventName: "Goal",
+            IsPositive: true,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            NormalizedMatchTime: TimeSpan.FromMinutes(15),
+            IsLeadToGoal: false,
+            LocationX: 45.50m,
+            LocationY: 82.25m,
+            PlayerName: "John Doe",
+            PlayerNumber: 10,
+            TeamId: Guid.NewGuid(),
+            TeamName: "Warriors"
+        );
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(detailedEvent);
+
+        // Act
+        var result = await _handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Id.Should().Be(eventId);
+        result.EventName.Should().Be("Goal");
+        result.PlayerName.Should().Be("John Doe");
+        result.TeamName.Should().Be("Warriors");
+        result.LocationX.Should().Be(45.50m);
+        result.LocationY.Should().Be(82.25m);
+
+        _gameEventRepositoryMock.Verify(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that spatial coordinates are mapped to null when projection coordinates are null.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_MapNullCoordinates_When_CoordinatesAreNullInProjection()
+    {
+        // Arrange
+        var eventId = Guid.NewGuid();
+        var query = new GetGameEventByIdQuery(eventId);
+        GameEventProjection detailedEvent = new
+        (
+            Id: eventId,
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            EventName: "Foul",
+            IsPositive: false,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            NormalizedMatchTime: TimeSpan.FromMinutes(5),
+            IsLeadToGoal: false,
+            LocationX: null,
+            LocationY: null,
+            PlayerName: "Jane Doe",
+            PlayerNumber: 5,
+            TeamId: Guid.NewGuid(),
+            TeamName: "Warriors"
+        );
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(detailedEvent);
+
+        // Act
+        var result = await _handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.LocationX.Should().BeNull();
+        result.LocationY.Should().BeNull();
     }
 }

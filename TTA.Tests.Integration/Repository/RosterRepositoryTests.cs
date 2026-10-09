@@ -197,8 +197,8 @@ public class RosterRepositoryTests : BaseIntegrationTest
 
         await conn.ExecuteAsync(@"
             INSERT INTO public.sportconfigurations 
-            (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            VALUES (@id, @sportId, true, 2, 45, 'Standard', 25, 11)",
+            (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) 
+            VALUES (@id, @sportId, true, 2, 45, 'Standard', 25, 12, 7, 'Playground', 25, 20)",
             new { id = configId, sportId }, transaction: transaction);
 
         var clubId = Guid.NewGuid();

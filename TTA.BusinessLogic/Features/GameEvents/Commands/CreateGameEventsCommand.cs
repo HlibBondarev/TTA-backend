@@ -19,7 +19,7 @@ public record CreateGameEventsCommand(
 public static class CreateGameEventsCommandExtensions
 {
     /// <summary>
-    /// Maps a request DTO to a domain entity preserving client-supplied Id and Timestamp.
+    /// Maps a request DTO to a domain entity preserving client-supplied Id, Timestamp, and field coordinates.
     /// </summary>
     public static GameEvent ToModel(this CreateGameEventRequest req) => new()
     {
@@ -33,6 +33,8 @@ public static class CreateGameEventsCommandExtensions
             _ => req.EventTimestamp.ToUniversalTime()
         },
         IsLeadToGoal = req.IsLeadToGoal,
+        LocationX = req.LocationX,
+        LocationY = req.LocationY,
         CreatedAt = DateTime.UtcNow
     };
 

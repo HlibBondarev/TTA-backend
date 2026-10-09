@@ -13,13 +13,17 @@ namespace TTA.BusinessLogic.Features.GameEvents.Commands;
 /// <param name="EventDefinitionId">The updated identifier of the event type definition.</param>
 /// <param name="PeriodNumber">The updated match period.</param>
 /// <param name="IsLeadToGoal">The updated goal lead status.</param>
+/// <param name="LocationX">The updated optional X coordinate on the field (0.00 to 100.00 percentage scale).</param>
+/// <param name="LocationY">The updated optional Y coordinate on the field (0.00 to 100.00 percentage scale).</param>
 public record UpdateGameEventCommand(
     Guid Id,
     Guid MatchId,
     Guid MatchLineupId,
     Guid EventDefinitionId,
     int PeriodNumber,
-    bool IsLeadToGoal) : IRequest<Guid>;
+    bool IsLeadToGoal,
+    decimal? LocationX = null,
+    decimal? LocationY = null) : IRequest<Guid>;
 
 /// <summary>
 /// Extensions for mapping UpdateGameEventCommand to domain models.
@@ -38,6 +42,8 @@ public static class UpdateGameEventCommandExtensions
         model.EventDefinitionId = cmd.EventDefinitionId;
         model.PeriodNumber = cmd.PeriodNumber;
         model.IsLeadToGoal = cmd.IsLeadToGoal;
+        model.LocationX = cmd.LocationX;
+        model.LocationY = cmd.LocationY;
 
         return model;
     }

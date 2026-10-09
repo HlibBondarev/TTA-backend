@@ -225,8 +225,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
             new { sportId, configId }, transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-            VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth)
+            VALUES (@configId, @sportId, true, 4, 8, '25x20', 3, 2, 7, 'Playground', 25, 20)",
             new { configId, sportId }, transaction: transaction);
 
         await transaction.CommitAsync();
@@ -317,8 +317,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { sportId, name = $"SharedPolo_{Guid.NewGuid():N}", configId }, transaction: transaction);
 
             await conn.ExecuteAsync(@"
-                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth)
+                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2, 7, 'Playground', 25, 20)",
                 new { configId, sportId }, transaction: transaction);
 
             await transaction.CommitAsync();
@@ -401,8 +401,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { sportId, name = $"GCPolo_{Guid.NewGuid():N}", configId }, transaction: transaction);
 
             await conn.ExecuteAsync(@"
-                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth)
+                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2, 7, 'Playground', 25, 20)",
                 new { configId, sportId }, transaction: transaction);
 
             await transaction.CommitAsync();
@@ -491,8 +491,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
             new { sportId, configId }, transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-            VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth)
+            VALUES (@configId, @sportId, true, 4, 8, '25x20', 3, 2, 7, 'Playground', 25, 20)",
             new { configId, sportId }, transaction: transaction);
 
         await transaction.CommitAsync();
@@ -560,8 +560,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { sportId, name = $"AnchorPolo_{Guid.NewGuid():N}", configId }, transaction: transaction);
 
             await conn.ExecuteAsync(@"
-                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2)",
+                INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth)
+                VALUES (@configId, @sportId, true, 4, 8, '30x20', 3, 2, 7, 'Playground', 25, 20)",
                 new { configId, sportId }, transaction: transaction);
 
             await transaction.CommitAsync();
@@ -1214,7 +1214,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> atomically persists a batch of 
-    /// game events, time anchors, and player presences, returning confirmed synchronized entity IDs.
+    /// game events (including spatial coordinates), time anchors, and player presences, returning confirmed synchronized entity IDs.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
@@ -1248,7 +1248,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
             "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
             new { id = eventDefId, sId = sportId });
 
-        // 3. Prepare batch entities
+        // 3. Prepare batch entities including LocationX and LocationY coordinates
         var eventEntity = new GameEvent
         {
             Id = Guid.NewGuid(),
@@ -1257,6 +1257,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
             PeriodNumber = 1,
             EventTimestamp = DateTime.UtcNow,
             IsLeadToGoal = true,
+            LocationX = 33.30m,
+            LocationY = 66.60m,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1292,15 +1294,20 @@ public class MatchRepositoryTests : BaseIntegrationTest
         result.SyncedAnchorIds.Should().ContainSingle().Which.Should().Be(anchorEntity.Id);
         result.SyncedPresenceIds.Should().ContainSingle().Which.Should().Be(presenceEntity.Id);
 
-        // Verify direct database state persistence
-        var dbEventExists = await conn.ExecuteScalarAsync<bool>(
-            "SELECT EXISTS(SELECT 1 FROM public.gameevents WHERE id = @id)", new { id = eventEntity.Id });
+        // Verify direct database state persistence and spatial coordinates matching
+        var dbEventData = await conn.QueryFirstOrDefaultAsync<(bool Exists, decimal? LocationX, decimal? LocationY)>(
+            "SELECT EXISTS(SELECT 1 FROM public.gameevents WHERE id = @id) AS Exists, locationx AS LocationX, locationy AS LocationY FROM public.gameevents WHERE id = @id",
+            new { id = eventEntity.Id });
+
         var dbAnchorExists = await conn.ExecuteScalarAsync<bool>(
             "SELECT EXISTS(SELECT 1 FROM public.timeanchors WHERE id = @id)", new { id = anchorEntity.Id });
         var dbPresenceExists = await conn.ExecuteScalarAsync<bool>(
             "SELECT EXISTS(SELECT 1 FROM public.playerpresences WHERE id = @id)", new { id = presenceEntity.Id });
 
-        dbEventExists.Should().BeTrue("synced game event record must exist in public.gameevents");
+        dbEventData.Exists.Should().BeTrue("synced game event record must exist in public.gameevents");
+        dbEventData.LocationX.Should().Be(33.30m, "persisted LocationX must match the provided value");
+        dbEventData.LocationY.Should().Be(66.60m, "persisted LocationY must match the provided value");
+
         dbAnchorExists.Should().BeTrue("synced time anchor record must exist in public.timeanchors");
         dbPresenceExists.Should().BeTrue("synced player presence record must exist in public.playerpresences");
     }
@@ -1654,8 +1661,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
             new { id = sportId, n = $"Sport_{suffix}", sn = shortName, cfg = configId }, transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            VALUES (@id, @s, false, 2, 45, 'Large', 20, 11)",
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) 
+            VALUES (@id, @s, false, 2, 45, 'Large', 20, 11, 7, 'Playground', 25, 20)",
             new { id = configId, s = sportId }, transaction: transaction);
 
         var tournamentId = Guid.NewGuid();
