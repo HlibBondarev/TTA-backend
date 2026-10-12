@@ -773,6 +773,111 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         definitions.Should().NotContain(d => d.Id == foreignCustomDefId);
     }
 
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetEventDefinitionsForMatch"/> 
+    /// includes custom event definitions owned by the authenticated user when included in the user's preset layout.
+    /// </summary>
+    [Fact]
+    public async Task GetEventDefinitionsForMatch_ShouldIncludeUserCustomDefinitions_WhenUserIsAuthenticatedAndOwnsCustomDefinitions()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC Custom");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC Custom");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-EVDEF-CUST");
+
+        var sysDefId = await SeedEventDefinitionAsync(context.SportId, "System Goal", true);
+
+        var userCustomDefId = Guid.NewGuid();
+        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat)
+                VALUES (@defId, @sportId, @userId, 'User Custom Action', 'UCA', true, false, NOW());
+
+                INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
+                VALUES 
+                (@userId, @sysDefId, 1, NOW()),
+                (@userId, @defId, 2, NOW());",
+                new { defId = userCustomDefId, sysDefId, sportId = context.SportId, userId = TestUserId });
+        }
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/event-definitions");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+
+        result.Should().NotBeNull();
+        var definitions = result!.ToList();
+        definitions.Should().HaveCount(2);
+
+        var customDef = definitions.FirstOrDefault(d => d.Id == userCustomDefId);
+        customDef.Should().NotBeNull();
+        customDef!.Name.Should().Be("User Custom Action");
+        customDef.IsCustom.Should().BeTrue();
+
+        var systemDef = definitions.FirstOrDefault(d => d.Id == sysDefId);
+        systemDef.Should().NotBeNull();
+        systemDef!.IsCustom.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetEventDefinitionsForMatch"/> 
+    /// returns event definitions sorted by positivity (positive first) and default position ASC.
+    /// </summary>
+    [Fact]
+    public async Task GetEventDefinitionsForMatch_ShouldReturnDefinitionsOrderedByPositivityAndSortOrder()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC Order");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC Order");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-EVDEF-ORD");
+
+        var posDef1 = Guid.NewGuid();
+        var posDef2 = Guid.NewGuid();
+        var negDef1 = Guid.NewGuid();
+
+        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, defaultposition, issoftdeleted, createdat)
+                VALUES 
+                (@posDef2, @sportId, NULL, 'Assist', 'AST', true, 2, false, NOW()),
+                (@posDef1, @sportId, NULL, 'Goal', 'GL', true, 1, false, NOW()),
+                (@negDef1, @sportId, NULL, 'Foul', 'FL', false, 1, false, NOW())",
+                new { posDef1, posDef2, negDef1, sportId = context.SportId });
+        }
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/event-definitions");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+
+        result.Should().NotBeNull();
+        var definitions = result!.ToList();
+        definitions.Should().HaveCount(3);
+
+        definitions[0].Id.Should().Be(posDef1);
+        definitions[0].IsPositive.Should().BeTrue();
+
+        definitions[1].Id.Should().Be(posDef2);
+        definitions[1].IsPositive.Should().BeTrue();
+
+        definitions[2].Id.Should().Be(negDef1);
+        definitions[2].IsPositive.Should().BeFalse();
+    }
+
     #endregion
 
     #region Game Events Tests
