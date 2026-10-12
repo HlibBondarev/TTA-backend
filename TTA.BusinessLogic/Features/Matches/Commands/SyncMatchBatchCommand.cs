@@ -22,7 +22,7 @@ public record SyncMatchBatchCommand(
 public static class SyncMatchBatchCommandExtensions
 {
     /// <summary>
-    /// Maps a <see cref="CreateGameEventRequest"/> to a <see cref="GameEvent"/> domain model with UTC normalization.
+    /// Maps a <see cref="CreateGameEventRequest"/> to a <see cref="GameEvent"/> domain model with UTC normalization and spatial coordinates.
     /// </summary>
     public static GameEvent ToModel(this CreateGameEventRequest req) => new()
     {
@@ -36,6 +36,8 @@ public static class SyncMatchBatchCommandExtensions
             _ => req.EventTimestamp.ToUniversalTime()
         },
         IsLeadToGoal = req.IsLeadToGoal,
+        LocationX = req.LocationX,
+        LocationY = req.LocationY,
         CreatedAt = DateTime.UtcNow
     };
 

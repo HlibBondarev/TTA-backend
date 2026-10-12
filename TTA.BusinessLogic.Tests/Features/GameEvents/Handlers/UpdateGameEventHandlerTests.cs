@@ -222,6 +222,50 @@ public class UpdateGameEventHandlerTests
     }
 
     /// <summary>
+    /// Verifies that the handler updates LocationX and LocationY coordinates on the existing domain model.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_UpdateCoordinates_When_CoordinatesProvidedInCommand()
+    {
+        // Arrange
+        var command = new UpdateGameEventCommand(
+            Id: Guid.NewGuid(),
+            MatchId: Guid.NewGuid(),
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            IsLeadToGoal: false,
+            LocationX: 10.00m,
+            LocationY: 20.00m);
+
+        var existingEvent = new GameEvent { Id = command.Id, LocationX = null, LocationY = null };
+        var matchLineup = new MatchLineup { Id = command.MatchLineupId, MatchId = command.MatchId };
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingEvent);
+
+        _matchLineupRepositoryMock
+            .Setup(r => r.GetByIdAsync(command.MatchLineupId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(matchLineup);
+
+        _gameEventRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([existingEvent]);
+
+        // Act
+        await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        _gameEventRepositoryMock.Verify(r => r.UpsertAsync(
+            It.Is<IEnumerable<GameEvent>>(events =>
+                events.Single().LocationX == 10.00m &&
+                events.Single().LocationY == 20.00m),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    /// <summary>
     /// Helper method to create a valid <see cref="UpdateGameEventCommand"/> for testing.
     /// </summary>
     /// <returns>A populated command instance.</returns>

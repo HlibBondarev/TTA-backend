@@ -12,6 +12,9 @@
 /// <param name="RosterLimit">The maximum allowed players on a tournament roster.</param>
 /// <param name="LineupLimit">The maximum allowed players in a match lineup.</param>
 /// <param name="ActivePlayersLimit">The maximum allowed active players on the field simultaneously.</param>
+/// <param name="Playground">The raw vector SVG string markup for rendering the interactive field layout.</param>
+/// <param name="FieldLength">The exact physical length of the playing field in meters.</param>
+/// <param name="FieldWidth">The exact physical width of the playing field in meters.</param>
 public record SportConfigurationResponse(
     Guid Id,
     Guid SportId,
@@ -21,4 +24,7 @@ public record SportConfigurationResponse(
     string? FieldSize,
     int RosterLimit,
     int LineupLimit,
-    int ActivePlayersLimit);
+    int ActivePlayersLimit,
+    string Playground,
+    decimal FieldLength,
+    decimal FieldWidth);

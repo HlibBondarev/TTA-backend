@@ -23,11 +23,15 @@ public record PlayerDetailedMatchReportResponse(
 /// <param name="EventTimestamp">The absolute UTC timestamp of the event.</param>
 /// <param name="NormalizedMatchTime">The normalized match time interval.</param>
 /// <param name="IsLeadToGoal">Indicates whether the event led to a goal.</param>
+/// <param name="LocationX">The optional X coordinate of the event on the field (0.00 to 100.00 percentage scale).</param>
+/// <param name="LocationY">The optional Y coordinate of the event on the field (0.00 to 100.00 percentage scale).</param>
 public record PlayerDetailedEventResponse(
     string EventName,
     bool IsPositive,
     int PeriodNumber,
     DateTime EventTimestamp,
     TimeSpan? NormalizedMatchTime,
-    bool IsLeadToGoal
+    bool IsLeadToGoal,
+    decimal? LocationX,
+    decimal? LocationY
 );

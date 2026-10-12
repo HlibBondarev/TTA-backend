@@ -16,9 +16,16 @@ public class UpdateGameEventRequestValidator : AbstractValidator<UpdateGameEvent
         RuleFor(x => x.PeriodNumber)
             .GreaterThan(0).WithMessage("Period number must be greater than zero.");
 
-        // Optional: If MatchLineupId is provided, it should not be an empty Guid
         RuleFor(x => x.MatchLineupId)
             .NotEqual(Guid.Empty)
             .WithMessage("MatchLineupId cannot be an empty GUID.");
+
+        RuleFor(x => x.LocationX)
+            .InclusiveBetween(0.00m, 100.00m)
+            .WithMessage("LocationX must be between 0.00 and 100.00.");
+
+        RuleFor(x => x.LocationY)
+            .InclusiveBetween(0.00m, 100.00m)
+            .WithMessage("LocationY must be between 0.00 and 100.00.");
     }
 }

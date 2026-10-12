@@ -29,5 +29,13 @@ public class CreateGameEventRequestValidator : AbstractValidator<CreateGameEvent
             .NotEmpty().WithMessage("EventTimestamp is required.")
             .LessThanOrEqualTo(_ => DateTime.UtcNow.AddMinutes(5))
             .WithMessage("EventTimestamp cannot be in the future.");
+
+        RuleFor(x => x.LocationX)
+            .InclusiveBetween(0.00m, 100.00m)
+            .WithMessage("LocationX must be between 0.00 and 100.00.");
+
+        RuleFor(x => x.LocationY)
+            .InclusiveBetween(0.00m, 100.00m)
+            .WithMessage("LocationY must be between 0.00 and 100.00.");
     }
 }

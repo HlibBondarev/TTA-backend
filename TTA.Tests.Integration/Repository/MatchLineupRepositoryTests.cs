@@ -430,8 +430,8 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             new { sportId, sportName, shortName, configId }, transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-            VALUES (@configId, @sportId, false, 2, 45, 'Standard', 25, 11)",
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth)
+            VALUES (@configId, @sportId, false, 2, 45, 'Standard', 25, 11, 7, 'Playground', 25, 20)",
             new { configId, sportId }, transaction: transaction);
 
         // 4. Tournament
@@ -567,8 +567,8 @@ public class MatchLineupRepositoryTests : BaseIntegrationTest
             new { sportId, sportName, shortName, configId }, transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            VALUES (@id, @sportId, true, 2, 45, 'Standard', 25, 11)",
+            INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) 
+            VALUES (@id, @sportId, true, 2, 45, 'Standard', 25, 11, 7, 'Playground', 25, 20)",
             new { id = configId, sportId }, transaction: transaction);
 
         var tournamentId = Guid.NewGuid();

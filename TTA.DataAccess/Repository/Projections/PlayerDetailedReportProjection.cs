@@ -14,6 +14,8 @@
 /// <param name="EventTimestamp">The absolute UTC timestamp of the event, if present.</param>
 /// <param name="NormalizedMatchTime">The relative normalized time within the match, if present.</param>
 /// <param name="IsLeadToGoal">Flag indicating if the event led to a goal, if present.</param>
+/// <param name="LocationX">The X-coordinate of the event location, if present.</param>
+/// <param name="LocationY">The Y-coordinate of the event location, if present.</param>
 public record PlayerDetailedReportProjection(
     Guid MatchLineupId,
     string FirstName,
@@ -25,5 +27,7 @@ public record PlayerDetailedReportProjection(
     int? PeriodNumber,
     DateTime? EventTimestamp,
     TimeSpan? NormalizedMatchTime,
-    bool? IsLeadToGoal
+    bool? IsLeadToGoal,
+    decimal? LocationX,
+    decimal? LocationY
 );
