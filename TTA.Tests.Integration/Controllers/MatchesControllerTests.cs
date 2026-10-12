@@ -911,6 +911,90 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
     }
 
     /// <summary>
+    /// Verifies that <see cref="MatchesController.RecordMatchEvent"/> returns HTTP 400 Bad Request
+    /// when spatial coordinates (LocationX or LocationY) are out of valid bounds (0.00 - 100.00).
+    /// </summary>
+    [Fact]
+    public async Task RecordMatchEvent_ShouldReturnBadRequest_WhenCoordinatesAreOutOfBounds()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-VAL-COORD");
+
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Out of Bounds Shot", false);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+
+        var invalidRequest = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false,
+            LocationX: -5.00m, // Invalid negative coordinate
+            LocationY: 50.00m
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", new[] { invalidRequest });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.RecordMatchEvent"/> correctly accepts, persists,
+    /// and retrieves spatial coordinates (LocationX, LocationY) in the database upon successful event creation.
+    /// </summary>
+    [Fact]
+    public async Task RecordMatchEvent_ShouldReturnCreatedAndPersistCoordinates_WhenCoordinatesAreValid()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-COORD-OK");
+
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Valid Shot", true);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+
+        var validEventId = Guid.NewGuid();
+        var request = new CreateGameEventRequest(
+            Id: validEventId,
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: true,
+            LocationX: 42.50m,
+            LocationY: 88.00m
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", new[] { request });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Verify database persistence of spatial coordinates
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var dbCoordinates = await conn.QueryFirstOrDefaultAsync<(decimal? LocationX, decimal? LocationY)>(
+            "SELECT locationx AS LocationX, locationy AS LocationY FROM public.gameevents WHERE id = @id",
+            new { id = validEventId });
+
+        dbCoordinates.LocationX.Should().Be(42.50m);
+        dbCoordinates.LocationY.Should().Be(88.00m);
+    }
+
+    /// <summary>
     /// Verifies recording events in a batch specifically for a team side within a match.
     /// </summary>
     [Fact]
@@ -976,6 +1060,92 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.RecordMatchEventByTeam"/> returns HTTP 400 Bad Request
+    /// when spatial coordinates (LocationX or LocationY) are out of valid bounds (0.00 - 100.00).
+    /// </summary>
+    [Fact]
+    public async Task RecordMatchEventByTeam_ShouldReturnBadRequest_WhenCoordinatesAreOutOfBounds()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-VAL-COORD-TEAM");
+        await SeedAccessPolicyAsync(TestUserId, 0, 2, homeTeamId);
+
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Out of Bounds Shot", false);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+
+        var invalidRequest = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false,
+            LocationX: 105.00m, // Invalid coordinate (> 100.00)
+            LocationY: 50.00m
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events", new[] { invalidRequest });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.RecordMatchEventByTeam"/> correctly accepts, persists,
+    /// and retrieves spatial coordinates (LocationX, LocationY) in the database when executed by an authorized team editor.
+    /// </summary>
+    [Fact]
+    public async Task RecordMatchEventByTeam_ShouldReturnCreatedAndPersistCoordinates_WhenCoordinatesAreValid()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-COORD-TEAM-OK");
+        await SeedAccessPolicyAsync(TestUserId, 0, 2, homeTeamId);
+
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Valid Shot", true);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+
+        var validEventId = Guid.NewGuid();
+        var request = new CreateGameEventRequest(
+            Id: validEventId,
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: true,
+            LocationX: 15.25m,
+            LocationY: 75.80m
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/teams/{homeTeamId}/events", new[] { request });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Verify database persistence of spatial coordinates
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var dbCoordinates = await conn.QueryFirstOrDefaultAsync<(decimal? LocationX, decimal? LocationY)>(
+            "SELECT locationx AS LocationX, locationy AS LocationY FROM public.gameevents WHERE id = @id",
+            new { id = validEventId });
+
+        dbCoordinates.LocationX.Should().Be(15.25m);
+        dbCoordinates.LocationY.Should().Be(75.80m);
     }
 
     /// <summary>
@@ -2378,8 +2548,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         sportId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sports WHERE name = 'Integration Sport'", transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            SELECT @id, @sid, true, 4, 8, '30x20', 15, 7 
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) 
+            SELECT @id, @sid, true, 4, 8, '30x20', 15, 7, 7, 'Playground', 25, 20
             WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
             new { id = configId, sid = sportId }, transaction: transaction);
         configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId }, transaction: transaction);
@@ -2505,8 +2675,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         sportId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sports WHERE name = 'Water Polo Request'", transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            SELECT @id, @sid, true, 4, 8, '30x20', 15, 7 WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) 
+            SELECT @id, @sid, true, 4, 8, '25x20', 15, 12, 7, 'Playground', 25, 20 WHERE NOT EXISTS (SELECT 1 FROM public.sportconfigurations WHERE sportid = @sid)",
             new { id = configId, sid = sportId }, transaction: transaction);
         configId = await conn.QuerySingleAsync<Guid>("SELECT id FROM public.sportconfigurations WHERE sportid = @sid LIMIT 1", new { sid = sportId }, transaction: transaction);
 
@@ -2827,7 +2997,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         var id = Guid.NewGuid();
-        const string sql = "INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) VALUES (@id, @sid, false, 2, 45, 'Standard', 20, 11)";
+        const string sql = "INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) VALUES (@id, @sid, false, 2, 45, 'Standard', 20, 12, 7, 'Playground', 25, 20)";
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", id);
         cmd.Parameters.AddWithValue("sid", sportId);
@@ -2877,8 +3047,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         }
 
         var configSql = @"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-            VALUES (@configId, @sportId, false, 2, 45, '105x68', 25, 11)
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth)
+            VALUES (@configId, @sportId, false, 2, 45, 'Standard', 25, 12, 7, 'Playground', 25, 20)
             ON CONFLICT DO NOTHING;";
 
         using (var cmd = new NpgsqlCommand(configSql, conn, tx))

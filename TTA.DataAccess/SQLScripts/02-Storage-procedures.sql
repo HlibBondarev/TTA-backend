@@ -1219,11 +1219,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 /**********************************************************************************
- * Atomically ingests and upserts batch arrays of game events, time anchors, 
- * and player presences for a specific match within a single transaction.
- * Validates match existence and checks for duplicate IDs in input payloads.
- * Preserves existing createdat timestamps during conflict updates.
- * Returns arrays of successfully processed client-generated GUIDs.
+ * Atomically ingests and upserts batch arrays of game events (including coordinates), 
+ * time anchors, and player presences for a specific match within a single transaction.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.sync_match_batch(
     p_match_id UUID,
@@ -1316,6 +1313,8 @@ BEGIN
                 eventtimestamp, 
                 normalizedmatchtime, 
                 isleadtogoal, 
+                locationx,
+                locationy,
                 createdat
             )
             SELECT 
@@ -1326,6 +1325,8 @@ BEGIN
                 x.eventtimestamp, 
                 x.normalizedmatchtime, 
                 x.isleadtogoal, 
+                x.locationx,
+                x.locationy,
                 COALESCE(x.createdat, CURRENT_TIMESTAMP)
             FROM jsonb_to_recordset(p_events) AS x(
                 id UUID,
@@ -1335,6 +1336,8 @@ BEGIN
                 eventtimestamp TIMESTAMPTZ,
                 normalizedmatchtime INTERVAL,
                 isleadtogoal BOOLEAN,
+                locationx NUMERIC(5,2),
+                locationy NUMERIC(5,2),
                 createdat TIMESTAMPTZ
             )
             ON CONFLICT (id) DO UPDATE SET
@@ -1343,7 +1346,9 @@ BEGIN
                 periodnumber = EXCLUDED.periodnumber,
                 eventtimestamp = EXCLUDED.eventtimestamp,
                 normalizedmatchtime = COALESCE(EXCLUDED.normalizedmatchtime, public.gameevents.normalizedmatchtime),
-                isleadtogoal = EXCLUDED.isleadtogoal
+                isleadtogoal = EXCLUDED.isleadtogoal,
+                locationx = EXCLUDED.locationx,
+                locationy = EXCLUDED.locationy
             WHERE EXISTS (
                 SELECT 1 FROM public.matchlineups ml
                 WHERE ml.id = public.gameevents.matchlineupid AND ml.matchid = p_match_id
@@ -2099,7 +2104,7 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 /**********************************************************************************
  * Ingests a JSONB array of game events and performs set-based upsert operations.
- * Maps JSON properties directly to public.gameevents table columns.
+ * Maps JSON properties directly to public.gameevents table columns including spatial coordinates.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_game_event(
     p_events JSONB
@@ -2126,6 +2131,8 @@ BEGIN
         eventtimestamp, 
         normalizedmatchtime, 
         isleadtogoal, 
+        locationx,
+        locationy,
         createdat
     )
     SELECT 
@@ -2136,6 +2143,8 @@ BEGIN
         x.eventtimestamp, 
         x.normalizedmatchtime, 
         x.isleadtogoal, 
+        x.locationx,
+        x.locationy,
         COALESCE(x.createdat, CURRENT_TIMESTAMP)
     FROM jsonb_to_recordset(p_events) AS x(
         id UUID,
@@ -2145,6 +2154,8 @@ BEGIN
         eventtimestamp TIMESTAMPTZ,
         normalizedmatchtime INTERVAL,
         isleadtogoal BOOLEAN,
+        locationx NUMERIC(5,2),
+        locationy NUMERIC(5,2),
         createdat TIMESTAMPTZ
     )
     ON CONFLICT (id) DO UPDATE SET
@@ -2153,13 +2164,15 @@ BEGIN
         periodnumber = EXCLUDED.periodnumber,
         eventtimestamp = EXCLUDED.eventtimestamp,
         normalizedmatchtime = EXCLUDED.normalizedmatchtime,
-        isleadtogoal = EXCLUDED.isleadtogoal
+        isleadtogoal = EXCLUDED.isleadtogoal,
+        locationx = EXCLUDED.locationx,
+        locationy = EXCLUDED.locationy
     RETURNING *;
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
  * Retrieves a single game event record by its primary key.
- * Strictly returns columns defined in the public.gameevents table.
+ * Strictly returns columns defined in the public.gameevents table including coordinates.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_game_event_by_id(p_id UUID)
 RETURNS TABLE (
@@ -2170,6 +2183,8 @@ RETURNS TABLE (
     eventtimestamp TIMESTAMPTZ,
     normalizedmatchtime INTERVAL,
     isleadtogoal BOOLEAN,
+    locationx NUMERIC(5,2),
+    locationy NUMERIC(5,2),
     createdat TIMESTAMPTZ
 ) AS $$
 BEGIN
@@ -2182,13 +2197,15 @@ BEGIN
         ge.eventtimestamp, 
         ge.normalizedmatchtime, 
         ge.isleadtogoal, 
+        ge.locationx,
+        ge.locationy,
         ge.createdat
     FROM public.gameevents ge
     WHERE ge.id = p_id;
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
- * Retrieves a single game event enriched with metadata.
+ * Retrieves a single game event enriched with metadata and spatial coordinates.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_game_event_by_id_with_details(p_id UUID)
 RETURNS TABLE (
@@ -2201,6 +2218,8 @@ RETURNS TABLE (
     eventtimestamp TIMESTAMPTZ,
     normalizedmatchtime INTERVAL,
     isleadtogoal BOOLEAN,
+    locationx NUMERIC(5,2),
+    locationy NUMERIC(5,2),
     playername TEXT,
     playernumber INT,
     teamid UUID,
@@ -2211,6 +2230,7 @@ BEGIN
     SELECT 
         ge.id, ge.matchlineupid, ge.eventdefinitionid, ed.name AS eventname, ed.ispositive,
         ge.periodnumber, ge.eventtimestamp, ge.normalizedmatchtime, ge.isleadtogoal,
+        ge.locationx, ge.locationy,
         (p.firstname || ' ' || p.lastname) AS playername, ml.number AS playernumber,
         pr.teamid, t.name AS teamname
     FROM public.gameevents ge
@@ -2223,7 +2243,7 @@ BEGIN
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
- * Retrieves all events for a specific match.
+ * Retrieves all events for a specific match including spatial coordinates.
  * Mapped to TTA.BusinessLogic.Features.GameEvents.DTOs.GameEventResponse.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_match_events(
@@ -2237,8 +2257,10 @@ RETURNS TABLE (
     ispositive BOOLEAN,
     periodnumber INT,
     eventtimestamp TIMESTAMPTZ,
-    normalizedmatchtime INTERVAL, -- Matches TimeSpan? in C#
+    normalizedmatchtime INTERVAL,
     isleadtogoal BOOLEAN,
+    locationx NUMERIC(5,2),
+    locationy NUMERIC(5,2),
     playername TEXT,
     playernumber INT,
     teamid UUID,
@@ -2254,16 +2276,16 @@ BEGIN
         ed.ispositive,
         ge.periodnumber, 
         ge.eventtimestamp, 
-        ge.normalizedmatchtime, -- Now correctly maps to nullable TimeSpan?
+        ge.normalizedmatchtime,
         ge.isleadtogoal,
-        -- Combined name from player record (remains nullable)
+        ge.locationx,
+        ge.locationy,
         (p.firstname || ' ' || p.lastname)::TEXT AS playername,
         ml.number AS playernumber,
         pr.teamid,
         t.name AS teamname
     FROM public.gameevents ge
     INNER JOIN public.eventdefinitions ed ON ge.eventdefinitionid = ed.id
-    -- Mandatory join: ensures event is linked to a valid lineup entry
     INNER JOIN public.matchlineups ml ON ge.matchlineupid = ml.id
     LEFT JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
     LEFT JOIN public.players p ON pr.playerid = p.id
@@ -2772,8 +2794,7 @@ $$ LANGUAGE plpgsql;
 /**********************************************************************************
  * Function: public.get_match_player_detailed_report
  * Description: Retrieves detailed event chronologies for a specific player lineup 
- *              entry across match periods (Type 2 report) with minimized fields.
- *              Uses LEFT JOIN to ensure player info is returned even with 0 events.
+ *              entry across match periods with spatial event coordinates.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_match_player_detailed_report(
     p_match_id UUID,
@@ -2790,7 +2811,9 @@ RETURNS TABLE (
     periodnumber INT,
     eventtimestamp TIMESTAMPTZ,
     normalizedmatchtime INTERVAL,
-    isleadtogoal BOOLEAN
+    isleadtogoal BOOLEAN,
+    locationx NUMERIC(5,2),
+    locationy NUMERIC(5,2)
 ) AS $$
 BEGIN
     RETURN QUERY
@@ -2805,7 +2828,9 @@ BEGIN
         ge.periodnumber,
         ge.eventtimestamp,
         ge.normalizedmatchtime,
-        ge.isleadtogoal
+        ge.isleadtogoal,
+        ge.locationx,
+        ge.locationy
     FROM public.matchlineups ml
     INNER JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
     INNER JOIN public.players p ON pr.playerid = p.id

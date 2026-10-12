@@ -215,8 +215,8 @@ public class TeamRepositoryTests(DatabaseFixture fixture) : BaseIntegrationTest(
     private static async Task SeedSportConfigurationAsync(NpgsqlConnection conn, NpgsqlTransaction tx, Guid id, Guid sportId)
     {
         var sql = @"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit)
-            VALUES (@id, @sportId, false, 2, 45, '105x68', 25, 11) ON CONFLICT DO NOTHING";
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth)
+            VALUES (@id, @sportId, false, 2, 45, '25x20', 25, 12, 7, 'Playground', 25, 20) ON CONFLICT DO NOTHING";
         await conn.ExecuteAsync(sql, new { id, sportId }, tx);
     }
 

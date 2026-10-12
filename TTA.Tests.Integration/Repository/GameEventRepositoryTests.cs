@@ -239,6 +239,28 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         }
     }
 
+    /// <summary>
+    /// Verifies that <see cref="GameEventRepository.UpsertAsync"/> correctly persists and retrieves spatial coordinates (LocationX, LocationY).
+    /// </summary>
+    [Fact]
+    public async Task UpsertAsync_ShouldPersistAndRetrieveCoordinates_WhenCoordinatesProvided()
+    {
+        // Arrange
+        var context = await SeedEventEnvironmentAsync();
+        var gameEvent = CreateEventModel(context.LineupId, context.DefinitionId);
+        gameEvent.LocationX = 4.50m;
+        gameEvent.LocationY = 8.25m;
+
+        // Act
+        await _repository.UpsertAsync([gameEvent]);
+
+        // Assert
+        var persisted = await _repository.GetByIdAsync(gameEvent.Id);
+        persisted.Should().NotBeNull();
+        persisted!.LocationX.Should().Be(4.50m);
+        persisted.LocationY.Should().Be(8.25m);
+    }
+
     #endregion
 
     #region Seed Helpers
@@ -293,8 +315,8 @@ public class GameEventRepositoryTests : BaseIntegrationTest
             new { id = sportId, name = sportName, shortName, configId }, transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            VALUES (@id, @sid, false, 2, 45, '105x68', 25, 11)",
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) 
+            VALUES (@id, @sid, false, 2, 45, '105x68', 25, 11, 7, 'Playground', 25, 20)",
             new { id = configId, sid = sportId }, transaction: transaction);
 
         // Transactional Data

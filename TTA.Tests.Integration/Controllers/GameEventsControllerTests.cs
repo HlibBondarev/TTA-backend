@@ -172,8 +172,8 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
             new { id = sportId, name = $"Sport_{suffix}", shortName, configId }, transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            VALUES (@id, @sId, true, 2, 45, 'Standard', 11, 11)",
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) 
+            VALUES (@id, @sId, true, 2, 45, 'Standard', 11, 11, 7, 'Playground', 25, 20)",
             new { id = configId, sId = sportId }, transaction: transaction);
 
         // 4. Tournament

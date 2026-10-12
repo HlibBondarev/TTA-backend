@@ -47,6 +47,8 @@ public class GetMatchEventsTimelineHandler(
                 EventTimestamp: e.EventTimestamp,
                 NormalizedMatchTime: e.NormalizedMatchTime,
                 IsLeadToGoal: e.IsLeadToGoal,
+                LocationX: e.LocationX,
+                LocationY: e.LocationY,
                 PlayerName: e.PlayerName,
                 PlayerNumber: e.PlayerNumber,
                 TeamId: e.TeamId,

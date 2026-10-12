@@ -61,7 +61,10 @@ CREATE TABLE sportconfigurations (
     fieldsize VARCHAR(50) NOT NULL,
     rosterlimit INT NOT NULL,
     lineuplimit INT NOT NULL,
-    activeplayerslimit INT NOT NULL DEFAULT 7, -- Max active players inside the field during a match
+    activeplayerslimit INT NOT NULL,
+    playground TEXT NOT NULL,
+    fieldlength NUMERIC(5,2) NOT NULL,
+    fieldwidth NUMERIC(5,2) NOT NULL,
     UNIQUE (sportid, id)
 );
 
@@ -307,9 +310,10 @@ CREATE TABLE gameevents (
     eventtimestamp TIMESTAMPTZ NOT NULL,
     normalizedmatchtime INTERVAL NULL,
     isleadtogoal BOOLEAN NOT NULL DEFAULT FALSE, 
+    locationx NUMERIC(5,2) NULL,
+    locationy NUMERIC(5,2) NULL,
     createdat TIMESTAMPTZ NOT NULL,
 
-    -- Updated FK constraint to ON DELETE CASCADE to allow automated cleanup during match deletion
     CONSTRAINT fk_gameevents_matchlineup
         FOREIGN KEY (matchlineupid)
         REFERENCES public.matchlineups (id) ON DELETE CASCADE

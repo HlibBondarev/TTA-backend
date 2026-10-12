@@ -43,6 +43,16 @@ public class GameEvent : IKeyedEntity<Guid>
     public bool IsLeadToGoal { get; set; }
 
     /// <summary>
+    /// Gets or sets the optional X coordinate of the event on the field (0.00 to 100.00 percentage scale).
+    /// </summary>
+    public decimal? LocationX { get; set; }
+
+    /// <summary>
+    /// Gets or sets the optional Y coordinate of the event on the field (0.00 to 100.00 percentage scale).
+    /// </summary>
+    public decimal? LocationY { get; set; }
+
+    /// <summary>
     /// Gets or sets the creation timestamp of the record.
     /// </summary>
     public DateTime CreatedAt { get; set; }

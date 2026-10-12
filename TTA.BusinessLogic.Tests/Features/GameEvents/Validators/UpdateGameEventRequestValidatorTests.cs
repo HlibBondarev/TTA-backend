@@ -109,4 +109,30 @@ public class UpdateGameEventRequestValidatorTests
         result.ShouldHaveValidationErrorFor(x => x.MatchLineupId)
             .WithErrorMessage("MatchLineupId cannot be an empty GUID.");
     }
+
+    /// <summary>
+    /// Verifies that validation fails when updated coordinates are outside 0.00-100.00 percentage bounds.
+    /// </summary>
+    [Theory]
+    [InlineData(-5.0, 50.0)]
+    [InlineData(105.0, 50.0)]
+    public void Validator_Should_HaveError_When_LocationXIsInvalid(decimal invalidX, decimal validY)
+    {
+        // Arrange
+        var request = new UpdateGameEventRequest(
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            IsLeadToGoal: false,
+            LocationX: invalidX,
+            LocationY: validY
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldHaveValidationErrorFor(x => x.LocationX)
+            .WithErrorMessage("LocationX must be between 0.00 and 100.00.");
+    }
 }

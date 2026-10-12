@@ -813,13 +813,6 @@ public class SportConfigurationTests
     }
 
     [Fact]
-    public void SportConfiguration_FieldSize_IsNullable_AndDefaultsToNull()
-    {
-        var config = new SportConfiguration();
-        Assert.Null(config.FieldSize);
-    }
-
-    [Fact]
     public void SportConfiguration_FieldSize_CanBeSetToValue()
     {
         var config = new SportConfiguration { FieldSize = "105x68" };

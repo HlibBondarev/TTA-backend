@@ -238,12 +238,48 @@ public class GetMatchEventsTimelineHandlerTests
     }
 
     /// <summary>
+    /// Verifies that spatial coordinates (LocationX and LocationY) are correctly mapped for each timeline event.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldMapSpatialCoordinatesCorrectly()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var query = new GetMatchEventsTimelineQuery(matchId);
+
+        var event1 = CreateRawEvent(Guid.NewGuid(), "Shot", 1) with { LocationX = 12.34m, LocationY = 56.78m };
+        var event2 = CreateRawEvent(Guid.NewGuid(), "Foul", 1) with { LocationX = null, LocationY = null };
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetMatchEventsAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([event1, event2]);
+
+        // Act
+        var result = (await _handler.Handle(query, CancellationToken.None)).ToList();
+
+        // Assert
+        result.Should().HaveCount(2);
+
+        var mappedEvent1 = result.First(e => e.Id == event1.Id);
+        mappedEvent1.LocationX.Should().Be(12.34m);
+        mappedEvent1.LocationY.Should().Be(56.78m);
+
+        var mappedEvent2 = result.First(e => e.Id == event2.Id);
+        mappedEvent2.LocationX.Should().BeNull();
+        mappedEvent2.LocationY.Should().BeNull();
+    }
+
+    /// <summary>
     /// Helper method to create a GameEventProjection object.
     /// Matches the property naming expected by the handler.
     /// </summary>
     /// <param name="id">The event ID.</param>
     /// <param name="name">The event name.</param>
     /// <param name="period">The match period.</param>
+    /// <param name="eventTimestamp">The timestamp of the event.</param>
+    /// <param name="normalizedMatchTime">The normalized match time.</param>
+    /// <param name="locationX">The X coordinate of the event location.</param>
+    /// <param name="locationY">The Y coordinate of the event location.</param>
     /// <returns>A GameEventProjection object with populated event data.</returns>
     /// <summary>
     /// Helper method to create a GameEventProjection object with populated event data.
@@ -254,7 +290,9 @@ public class GetMatchEventsTimelineHandlerTests
         string name,
         int period,
         DateTime? eventTimestamp = null,
-        TimeSpan? normalizedMatchTime = null)
+        TimeSpan? normalizedMatchTime = null,
+        decimal? locationX = null,
+        decimal? locationY = null)
     {
         return new GameEventProjection
         (
@@ -265,11 +303,10 @@ public class GetMatchEventsTimelineHandlerTests
             IsPositive: true,
             PeriodNumber: period,
             EventTimestamp: eventTimestamp ?? DateTime.UtcNow,
-            // Specific logic: 
-            // If the parameter is not provided (null), default to 20 minutes for legacy tests.
-            // But if we use a specific sentinel or call it via named parameters, we handle it.
             NormalizedMatchTime: normalizedMatchTime ?? TimeSpan.FromMinutes(20),
             IsLeadToGoal: false,
+            LocationX: locationX,
+            LocationY: locationY,
             PlayerName: "Player Name",
             PlayerNumber: 7,
             TeamId: Guid.NewGuid(),

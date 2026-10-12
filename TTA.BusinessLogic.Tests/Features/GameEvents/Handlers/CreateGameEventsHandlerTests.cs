@@ -289,4 +289,45 @@ public class CreateGameEventsHandlerTests
         var command = new CreateGameEventsCommand(matchId, [request]);
         return (command, request);
     }
+
+    /// <summary>
+    /// Verifies that the handler correctly maps LocationX and LocationY coordinates to domain entities before persisting.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_MapCoordinatesToDomainModel_When_CoordinatesProvided()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var request = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false,
+            LocationX: 25.50m,
+            LocationY: 75.00m);
+
+        var command = new CreateGameEventsCommand(matchId, [request]);
+        var matchLineup = new MatchLineup { Id = request.MatchLineupId, MatchId = matchId };
+
+        _matchLineupRepositoryMock
+            .Setup(r => r.GetByIdAsync(request.MatchLineupId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(matchLineup);
+
+        _gameEventRepositoryMock
+            .Setup(r => r.UpsertAsync(It.IsAny<IEnumerable<GameEvent>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([request.ToModel()]);
+
+        // Act
+        await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        _gameEventRepositoryMock.Verify(r => r.UpsertAsync(
+            It.Is<IEnumerable<GameEvent>>(events =>
+                events.Single().LocationX == 25.50m &&
+                events.Single().LocationY == 75.00m),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 }

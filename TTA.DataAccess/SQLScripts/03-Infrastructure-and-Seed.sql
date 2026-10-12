@@ -33,7 +33,8 @@ DECLARE
     wp_sport_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f';
     wp_config_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70';
     wp_config_alt_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f71';
-
+    
+    /*
     -- Football IDs
     fb_sport_id uuid := '7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a6b';
     fb_config_id uuid := '7a3f9c2b-8c4d-5e6f-9a0b-1c2d3e4f5a70';
@@ -41,6 +42,8 @@ DECLARE
     -- Basketball IDs
     bb_sport_id uuid := '8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b7c';
     bb_config_id uuid := '8b4c0e3c-9d5e-6f7a-0b1c-2d3e4f5a6b80';
+    */
+
 BEGIN
     -- A. WATERPOLO SEEDING
     INSERT INTO sports (id, name, shortname, defaultconfigid) 
@@ -56,14 +59,44 @@ BEGIN
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', wp_sport_id, 'Utility', 'UTL')
     ON CONFLICT DO NOTHING;
 
-    -- Standard Waterpolo Configuration
-    INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
-    VALUES (wp_config_id, wp_sport_id, true, 4, 8, '25x20 sq.m.', 15, 13, 7)
+    -- Standard Waterpolo Configuration (25x20 m)
+    INSERT INTO sportconfigurations (
+        id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth
+    )
+    VALUES (
+        wp_config_id, 
+        wp_sport_id, 
+        true, 
+        4, 
+        8, 
+        '25x20 sq.m.', 
+        15, 
+        13, 
+        7, 
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 250"><defs><linearGradient id="poolWater" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#38bdf8"/><stop offset="50%" stop-color="#0284c7"/><stop offset="100%" stop-color="#38bdf8"/></linearGradient></defs><rect x="0" y="0" width="200" height="250" fill="url(#poolWater)" rx="4"/><rect x="0" y="0" width="200" height="250" fill="none" stroke="#0369a1" stroke-width="3"/><g id="opponent-goal"><rect x="85" y="-8" width="30" height="8" fill="#e0f2fe" fill-opacity="0.3" stroke="#ffffff" stroke-width="1.5"/><line x1="85" y1="0" x2="115" y2="0" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round"/></g><g id="home-goal"><rect x="85" y="250" width="30" height="8" fill="#e0f2fe" fill-opacity="0.3" stroke="#ffffff" stroke-width="1.5"/><line x1="85" y1="250" x2="115" y2="250" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round"/></g><line x1="0" y1="125" x2="200" y2="125" stroke="#ffffff" stroke-width="2" stroke-dasharray="4 2" opacity="0.9"/><circle cx="100" cy="125" r="3" fill="#ffffff"/><line x1="0" y1="20" x2="200" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="65" y1="0" x2="65" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="135" y1="0" x2="135" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="50" x2="200" y2="50" stroke="#eab308" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="60" x2="200" y2="60" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="190" x2="200" y2="190" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="200" x2="200" y2="200" stroke="#eab308" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="230" x2="200" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="65" y1="250" x2="65" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="135" y1="250" x2="135" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><g id="side-markers" opacity="0.9"><rect x="0" y="18" width="4" height="4" fill="#ef4444"/><rect x="196" y="18" width="4" height="4" fill="#ef4444"/><rect x="0" y="48" width="4" height="4" fill="#eab308"/><rect x="196" y="48" width="4" height="4" fill="#eab308"/><rect x="0" y="58" width="4" height="4" fill="#22c55e"/><rect x="196" y="58" width="4" height="4" fill="#22c55e"/><rect x="0" y="123" width="4" height="4" fill="#ffffff"/><rect x="196" y="123" width="4" height="4" fill="#ffffff"/><rect x="0" y="188" width="4" height="4" fill="#22c55e"/><rect x="196" y="188" width="4" height="4" fill="#22c55e"/><rect x="0" y="198" width="4" height="4" fill="#eab308"/><rect x="196" y="198" width="4" height="4" fill="#eab308"/><rect x="0" y="228" width="4" height="4" fill="#ef4444"/><rect x="196" y="228" width="4" height="4" fill="#ef4444"/></g></svg>',
+        25.00,
+        20.00
+    )
     ON CONFLICT DO NOTHING;
 
-    -- Alternative Waterpolo Configuration (Smaller field 25x15 sq.m., 6 active players)
-    INSERT INTO sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit)
-    VALUES (wp_config_alt_id, wp_sport_id, true, 4, 7, '25x15 sq.m.', 13, 11, 6)
+    -- Alternative Waterpolo Configuration (25x15 m)
+    INSERT INTO sportconfigurations (
+        id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth
+    )
+    VALUES (
+        wp_config_alt_id, 
+        wp_sport_id, 
+        true, 
+        4, 
+        7, 
+        '25x15 sq.m.', 
+        13, 
+        11, 
+        6, 
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 250"><defs><linearGradient id="poolWaterAlt" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#38bdf8"/><stop offset="50%" stop-color="#0284c7"/><stop offset="100%" stop-color="#38bdf8"/></linearGradient></defs><rect x="0" y="0" width="150" height="250" fill="url(#poolWaterAlt)" rx="4"/><rect x="0" y="0" width="150" height="250" fill="none" stroke="#0369a1" stroke-width="3"/><g id="opponent-goal"><rect x="60" y="-8" width="30" height="8" fill="#e0f2fe" fill-opacity="0.3" stroke="#ffffff" stroke-width="1.5"/><line x1="60" y1="0" x2="90" y2="0" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round"/></g><g id="home-goal"><rect x="60" y="250" width="30" height="8" fill="#e0f2fe" fill-opacity="0.3" stroke="#ffffff" stroke-width="1.5"/><line x1="60" y1="250" x2="90" y2="250" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round"/></g><line x1="0" y1="125" x2="150" y2="125" stroke="#ffffff" stroke-width="2" stroke-dasharray="4 2" opacity="0.9"/><circle cx="75" cy="125" r="3" fill="#ffffff"/><line x1="0" y1="20" x2="150" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="40" y1="0" x2="40" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="110" y1="0" x2="110" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="50" x2="150" y2="50" stroke="#eab308" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="60" x2="150" y2="60" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="190" x2="150" y2="190" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="200" x2="150" y2="200" stroke="#eab308" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="230" x2="150" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="40" y1="250" x2="40" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="110" y1="250" x2="110" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><g id="side-markers" opacity="0.9"><rect x="0" y="18" width="4" height="4" fill="#ef4444"/><rect x="146" y="18" width="4" height="4" fill="#ef4444"/><rect x="0" y="48" width="4" height="4" fill="#eab308"/><rect x="146" y="48" width="4" height="4" fill="#eab308"/><rect x="0" y="58" width="4" height="4" fill="#22c55e"/><rect x="146" y="58" width="4" height="4" fill="#22c55e"/><rect x="0" y="123" width="4" height="4" fill="#ffffff"/><rect x="146" y="123" width="4" height="4" fill="#ffffff"/><rect x="0" y="188" width="4" height="4" fill="#22c55e"/><rect x="146" y="188" width="4" height="4" fill="#22c55e"/><rect x="0" y="198" width="4" height="4" fill="#eab308"/><rect x="146" y="198" width="4" height="4" fill="#eab308"/><rect x="0" y="228" width="4" height="4" fill="#ef4444"/><rect x="146" y="228" width="4" height="4" fill="#ef4444"/></g></svg>',
+        25.00,
+        15.00
+    )
     ON CONFLICT DO NOTHING;
 
     -- Waterpolo Event Definitions

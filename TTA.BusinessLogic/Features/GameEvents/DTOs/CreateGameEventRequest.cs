@@ -11,13 +11,17 @@ namespace TTA.BusinessLogic.Features.GameEvents.DTOs;
 /// <param name="PeriodNumber">The period number when the event occurred.</param>
 /// <param name="EventTimestamp">The client-side UTC timestamp when the event occurred.</param>
 /// <param name="IsLeadToGoal">Indicates whether this event leads to a goal.</param>
+/// <param name="LocationX">The optional X coordinate of the event on the field (0.00 to 100.00 percentage scale).</param>
+/// <param name="LocationY">The optional Y coordinate of the event on the field (0.00 to 100.00 percentage scale).</param>
 public record CreateGameEventRequest(
     Guid Id,
     Guid MatchLineupId,
     Guid EventDefinitionId,
     int PeriodNumber,
     DateTime EventTimestamp,
-    bool IsLeadToGoal);
+    bool IsLeadToGoal,
+    decimal? LocationX = null,
+    decimal? LocationY = null);
 
 /// <summary>
 /// Mapping extensions for <see cref="CreateGameEventRequest"/>.

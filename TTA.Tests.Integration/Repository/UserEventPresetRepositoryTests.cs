@@ -293,8 +293,8 @@ public class UserEventPresetRepositoryTests : BaseIntegrationTest
             transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            VALUES (@id, @sid, false, 2, 45, '105x68', 25, 11)",
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) 
+            VALUES (@id, @sid, false, 2, 45, '105x68', 25, 12, 7, 'Playground', 25, 20)",
             new { id = configId, sid = sportId },
             transaction: transaction);
 
@@ -342,8 +342,8 @@ public class UserEventPresetRepositoryTests : BaseIntegrationTest
             transaction: transaction);
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit) 
-            VALUES (@id, @sid, false, 2, 45, '105x68', 25, 11)",
+            INSERT INTO public.sportconfigurations (id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth) 
+            VALUES (@id, @sid, false, 2, 45, '105x68', 25, 12, 7, 'Playground', 25, 20)",
             new { id = configId, sid = sportId },
             transaction: transaction);
 

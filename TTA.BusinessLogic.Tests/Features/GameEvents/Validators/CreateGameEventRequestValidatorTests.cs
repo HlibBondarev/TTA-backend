@@ -189,4 +189,70 @@ public class CreateGameEventRequestValidatorTests
         result.ShouldHaveValidationErrorFor(x => x.EventTimestamp)
             .WithErrorMessage("EventTimestamp cannot be in the future.");
     }
+
+    /// <summary>
+    /// Verifies that the validator does not return errors when valid coordinates within 0.00-100.00 range are provided.
+    /// </summary>
+    [Fact]
+    public void Validator_Should_NotHaveErrors_When_CoordinatesAreValid()
+    {
+        // Arrange
+        var request = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false,
+            LocationX: 50.25m,
+            LocationY: 88.00m
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldNotHaveAnyValidationErrors();
+    }
+
+    /// <summary>
+    /// Verifies that validation fails when LocationX or LocationY coordinates are outside the 0.00-100.00 percentage bounds.
+    /// </summary>
+    /// <param name="invalidX">Invalid X coordinate.</param>
+    /// <param name="invalidY">Invalid Y coordinate.</param>
+    [Theory]
+    [InlineData(-0.01, 50.00)]
+    [InlineData(100.01, 50.00)]
+    [InlineData(50.00, -0.01)]
+    [InlineData(50.00, 100.01)]
+    public void Validator_Should_HaveError_When_CoordinatesAreOutOfBounds(decimal invalidX, decimal invalidY)
+    {
+        // Arrange
+        var request = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false,
+            LocationX: invalidX,
+            LocationY: invalidY
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        if (invalidX is < 0 or > 100)
+        {
+            result.ShouldHaveValidationErrorFor(x => x.LocationX)
+                .WithErrorMessage("LocationX must be between 0.00 and 100.00.");
+        }
+
+        if (invalidY is < 0 or > 100)
+        {
+            result.ShouldHaveValidationErrorFor(x => x.LocationY)
+                .WithErrorMessage("LocationY must be between 0.00 and 100.00.");
+        }
+    }
 }
