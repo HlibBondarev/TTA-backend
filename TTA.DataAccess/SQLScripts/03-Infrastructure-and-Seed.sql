@@ -99,31 +99,41 @@ BEGIN
     )
     ON CONFLICT DO NOTHING;
 
-    -- Waterpolo Event Definitions
-    INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat) VALUES 
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f51', wp_sport_id, NULL, 'Goal', 'GOAL+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f52', wp_sport_id, NULL, 'Assist', 'ASST+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f53', wp_sport_id, NULL, 'Sprint', 'SPR+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f54', wp_sport_id, NULL, 'Exclusion', 'EXCL+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f55', wp_sport_id, NULL, 'Penalty', 'PEN+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f56', wp_sport_id, NULL, 'Steal', 'STL+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57', wp_sport_id, NULL, 'Shot Saved', 'SAVE+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f58', wp_sport_id, NULL, 'Block', 'BLOK', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f59', wp_sport_id, NULL, 'Turnover', 'T-OVER+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f60', wp_sport_id, NULL, 'Defensive Transition', 'D-TRANS+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', wp_sport_id, NULL, 'Offensive Transition', 'O-TRANS+', true, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', wp_sport_id, NULL, 'Shot Missed', 'MISS-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', wp_sport_id, NULL, 'Turnover', 'T-OVER-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', wp_sport_id, NULL, 'Exclusion', 'EXCL-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', wp_sport_id, NULL, 'Penalty', 'PEN-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', wp_sport_id, NULL, 'Sprint', 'SPR-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f67', wp_sport_id, NULL, 'Critical Foul', 'C-FOUL-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f68', wp_sport_id, NULL, 'Blocked shot', 'B-SHOT-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f69', wp_sport_id, NULL, 'Tactical Error', 'T-ERR-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70', wp_sport_id, NULL, 'Defensive Transition', 'D-TRANS-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f71', wp_sport_id, NULL, 'Offensive Transition', 'O-TRANS-', false, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f72', wp_sport_id, NULL, 'Steal', 'STL-', false, false, NOW())
-    ON CONFLICT DO NOTHING;
+    -- Waterpolo Event Definitions (13 Positive, 17 Negative)
+    INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, defaultposition, issoftdeleted, createdat) VALUES 
+    -- Positive Actions (1..13)
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f51', wp_sport_id, NULL, 'Steal', 'ST', true, 1, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f52', wp_sport_id, NULL, 'Key Pass', 'SP', true, 2, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f53', wp_sport_id, NULL, 'Dribble Advance', 'DA', true, 3, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f54', wp_sport_id, NULL, 'Shot on Goal', 'SOG', true, 4, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f55', wp_sport_id, NULL, 'Save', 'ASV', true, 5, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f56', wp_sport_id, NULL, 'Field Block', 'FB', true, 6, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57', wp_sport_id, NULL, 'Goal', 'G', true, 7, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f58', wp_sport_id, NULL, 'Assist', 'A', true, 8, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f59', wp_sport_id, NULL, 'Fast Transition', 'FT', true, 9, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f60', wp_sport_id, NULL, 'Exclusion Earned', 'EE', true, 10, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', wp_sport_id, NULL, 'Counter-Attack Stopped', 'CAS', true, 11, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', wp_sport_id, NULL, 'Sprint Won', 'SW', true, 12, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', wp_sport_id, NULL, 'Penalty Earned', 'PE', true, 13, false, NOW()),
+    -- Negative Actions (1..17)
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', wp_sport_id, NULL, 'Turnover', 'TO', false, 1, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', wp_sport_id, NULL, 'Bad Pass', 'BP', false, 2, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', wp_sport_id, NULL, 'Positional Error in Offense', 'PEO', false, 3, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f67', wp_sport_id, NULL, 'Positional Error in Defense', 'PED', false, 4, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f68', wp_sport_id, NULL, 'Player Beaten', 'PB', false, 5, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f69', wp_sport_id, NULL, 'Offensive Foul', 'OF', false, 6, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70', wp_sport_id, NULL, 'Missed Shot', 'MS', false, 7, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f71', wp_sport_id, NULL, 'Shot Blocked', 'SB', false, 8, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f72', wp_sport_id, NULL, 'Goal Conceded', 'GC', false, 9, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f73', wp_sport_id, NULL, 'Exclusion', 'E', false, 10, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f74', wp_sport_id, NULL, 'Slow Transition Offense', 'STO', false, 11, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f75', wp_sport_id, NULL, 'Slow Transition Defense', 'STD', false, 12, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f76', wp_sport_id, NULL, 'Counter-Attack Conceded', 'CAC', false, 13, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f77', wp_sport_id, NULL, 'Ball Under', 'BU', false, 14, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f78', wp_sport_id, NULL, 'Sprint Lost', 'SL', false, 15, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f79', wp_sport_id, NULL, 'Penalty Committed', 'PC', false, 16, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f80', wp_sport_id, NULL, 'Red Card', 'RC', false, 17, false, NOW())
+    ON CONFLICT (id) DO NOTHING;
 
     /*
     -- B. FOOTBALL SEEDING

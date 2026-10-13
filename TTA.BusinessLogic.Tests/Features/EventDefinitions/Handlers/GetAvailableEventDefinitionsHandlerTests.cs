@@ -25,7 +25,7 @@ public class GetAvailableEventDefinitionsHandlerTests
     }
 
     /// <summary>
-    /// Verifies that <see cref="GetAvailableEventDefinitionsHandler.Handle"/> returns mapped event definition responses
+    /// Verifies that <see cref="GetAvailableEventDefinitionsHandler.Handle"/> returns fully mapped event definition responses
     /// enriched with user preset state and layout sort order when repository projections exist.
     /// </summary>
     [Fact]
@@ -34,28 +34,30 @@ public class GetAvailableEventDefinitionsHandlerTests
         // Arrange
         var sportId = Guid.NewGuid();
         var userId = "auth0|user123";
+        var def1Id = Guid.NewGuid();
+        var def2Id = Guid.NewGuid();
 
         var mockProjections = new List<UserEventDefinitionProjection>
         {
             new(
-                Id: Guid.NewGuid(),
+                Id: def1Id,
                 SportId: sportId,
-                Name: "Goal",
-                ShortName: "GOAL",
+                Name: "Steal",
+                ShortName: "ST",
                 IsPositive: true,
                 IsCustom: false,
                 IsEnabled: true,
-                SortOrder: 0
+                SortOrder: 1
             ),
             new(
-                Id: Guid.NewGuid(),
+                Id: def2Id,
                 SportId: sportId,
-                Name: "Custom Block",
-                ShortName: "C-BLK",
-                IsPositive: true,
+                Name: "Turnover",
+                ShortName: "TO",
+                IsPositive: false,
                 IsCustom: true,
                 IsEnabled: false,
-                SortOrder: 1
+                SortOrder: 2
             )
         };
 
@@ -73,25 +75,63 @@ public class GetAvailableEventDefinitionsHandlerTests
         var list = result.ToList();
         list.Should().HaveCount(2);
 
-        list[0].Id.Should().Be(mockProjections[0].Id);
+        // Verify full field mapping for Item 0 (System positive action)
+        list[0].Id.Should().Be(def1Id);
         list[0].SportId.Should().Be(sportId);
-        list[0].Name.Should().Be("Goal");
-        list[0].ShortName.Should().Be("GOAL");
+        list[0].Name.Should().Be("Steal");
+        list[0].ShortName.Should().Be("ST");
         list[0].IsPositive.Should().BeTrue();
         list[0].IsCustom.Should().BeFalse();
         list[0].IsEnabled.Should().BeTrue();
-        list[0].SortOrder.Should().Be(0);
+        list[0].SortOrder.Should().Be(1);
 
-        list[1].Id.Should().Be(mockProjections[1].Id);
+        // Verify full field mapping for Item 1 (Custom negative action)
+        list[1].Id.Should().Be(def2Id);
         list[1].SportId.Should().Be(sportId);
-        list[1].Name.Should().Be("Custom Block");
-        list[1].ShortName.Should().Be("C-BLK");
-        list[1].IsPositive.Should().BeTrue();
+        list[1].Name.Should().Be("Turnover");
+        list[1].ShortName.Should().Be("TO");
+        list[1].IsPositive.Should().BeFalse();
         list[1].IsCustom.Should().BeTrue();
         list[1].IsEnabled.Should().BeFalse();
-        list[1].SortOrder.Should().Be(1);
+        list[1].SortOrder.Should().Be(2);
 
         _repositoryMock.Verify(r => r.GetAvailableForUserAsync(userId, sportId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="GetAvailableEventDefinitionsHandler.Handle"/> preserves the exact projection sequence
+    /// returned by the repository layer.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldPreserveProjectionSequence_WhenMappedToDTOs()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var userId = "auth0|user123";
+
+        var id1 = Guid.NewGuid();
+        var id2 = Guid.NewGuid();
+        var id3 = Guid.NewGuid();
+
+        var mockProjections = new List<UserEventDefinitionProjection>
+        {
+            new(id1, sportId, "Action 1", "A1", true, false, true, 1),
+            new(id2, sportId, "Action 2", "A2", true, false, true, 2),
+            new(id3, sportId, "Action 3", "A3", false, false, false, 3)
+        };
+
+        _repositoryMock
+            .Setup(r => r.GetAvailableForUserAsync(userId, sportId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mockProjections);
+
+        var query = new GetAvailableEventDefinitionsQuery(sportId, userId);
+
+        // Act
+        var result = (await _handler.Handle(query, CancellationToken.None)).ToList();
+
+        // Assert
+        result.Select(x => x.Id).Should().ContainInConsecutiveOrder(id1, id2, id3);
+        result.Select(x => x.SortOrder).Should().ContainInConsecutiveOrder(1, 2, 3);
     }
 
     /// <summary>

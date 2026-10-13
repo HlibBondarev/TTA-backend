@@ -9,7 +9,7 @@ public class EventDefinition : IKeyedEntity<Guid>
 {
     /// <summary>
     /// Gets or sets the unique identifier of the event definition.
-    /// </summary >
+    /// </summary>
     public Guid Id { get; set; }
 
     /// <summary>
@@ -24,12 +24,12 @@ public class EventDefinition : IKeyedEntity<Guid>
 
     /// <summary>
     /// Gets or sets the display name of the event definition.
-    /// </summary >
+    /// </summary>
     public string Name { get; set; } = null!;
 
     /// <summary>
     /// Gets or sets the short display name or code of the event definition.
-    /// </summary >
+    /// </summary>
     public string ShortName { get; set; } = null!;
 
     /// <summary>
@@ -38,12 +38,17 @@ public class EventDefinition : IKeyedEntity<Guid>
     public bool IsPositive { get; set; }
 
     /// <summary>
+    /// Gets or sets the default frequency rank position for system default event definitions.
+    /// </summary>
+    public int? DefaultPosition { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether the record is soft deleted.
     /// </summary>
     public bool IsSoftDeleted { get; set; }
 
     /// <summary>
     /// Gets or sets the creation date and time of the record.
-    /// </summary >
+    /// </summary>
     public DateTime CreatedAt { get; set; }
 }

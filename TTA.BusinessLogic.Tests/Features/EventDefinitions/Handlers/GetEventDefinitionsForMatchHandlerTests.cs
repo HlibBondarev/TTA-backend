@@ -32,8 +32,8 @@ public class GetEventDefinitionsForMatchHandlerTests
     }
 
     /// <summary>
-    /// Verifies that <see cref="GetEventDefinitionsForMatchHandler.Handle"/> returns mapped event definition responses
-    /// enriched with custom and preset metadata when a user identifier is provided.
+    /// Verifies that <see cref="GetEventDefinitionsForMatchHandler.Handle"/> returns fully mapped event definition responses
+    /// enriched with custom, positivity, and preset metadata when a user identifier is provided.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldReturnMappedDefinitions_WhenUserIsProvided()
@@ -47,26 +47,29 @@ public class GetEventDefinitionsForMatchHandlerTests
             .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Match { Id = matchId });
 
+        var def1Id = Guid.NewGuid();
+        var def2Id = Guid.NewGuid();
+
         var mockProjections = new List<UserEventDefinitionProjection>
         {
             new(
-                Id: Guid.NewGuid(),
+                Id: def1Id,
                 SportId: sportId,
                 Name: "Goal",
-                ShortName: "GOAL",
+                ShortName: "G",
                 IsPositive: true,
                 IsCustom: false,
                 IsEnabled: true,
                 SortOrder: 1
             ),
             new(
-                Id: Guid.NewGuid(),
+                Id: def2Id,
                 SportId: sportId,
                 Name: "Custom TTA",
                 ShortName: "CTTA",
-                IsPositive: true,
+                IsPositive: false,
                 IsCustom: true,
-                IsEnabled: false, // Configured IsEnabled to false for metadata assertion coverage
+                IsEnabled: false,
                 SortOrder: 2
             )
         };
@@ -85,12 +88,22 @@ public class GetEventDefinitionsForMatchHandlerTests
         var list = result.ToList();
         list.Should().HaveCount(2);
 
+        // Verify full field mapping for Item 0
+        list[0].Id.Should().Be(def1Id);
+        list[0].SportId.Should().Be(sportId);
         list[0].Name.Should().Be("Goal");
+        list[0].ShortName.Should().Be("G");
+        list[0].IsPositive.Should().BeTrue();
         list[0].IsCustom.Should().BeFalse();
         list[0].IsEnabled.Should().BeTrue();
         list[0].SortOrder.Should().Be(1);
 
+        // Verify full field mapping for Item 1
+        list[1].Id.Should().Be(def2Id);
+        list[1].SportId.Should().Be(sportId);
         list[1].Name.Should().Be("Custom TTA");
+        list[1].ShortName.Should().Be("CTTA");
+        list[1].IsPositive.Should().BeFalse();
         list[1].IsCustom.Should().BeTrue();
         list[1].IsEnabled.Should().BeFalse();
         list[1].SortOrder.Should().Be(2);
@@ -120,7 +133,7 @@ public class GetEventDefinitionsForMatchHandlerTests
                 Id: Guid.NewGuid(),
                 SportId: sportId,
                 Name: "Goal",
-                ShortName: "GOAL",
+                ShortName: "G",
                 IsPositive: true,
                 IsCustom: false,
                 IsEnabled: true,

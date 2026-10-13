@@ -146,6 +146,58 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         definitions.Should().NotContain(d => d.Id == foreignDefId);
     }
 
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.GetMatchEventDefinitionsAsync" /> orders 
+    /// system default definitions by positivity (positive first) and default position rank ASC when no user preset exists.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchEventDefinitionsAsync_ShouldOrderByPositivityAndDefaultPosition_WhenNoUserPresetExists()
+    {
+        // Arrange
+        var (matchId, sportId, _, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var posDef1 = Guid.NewGuid();
+        var posDef2 = Guid.NewGuid();
+        var negDef1 = Guid.NewGuid();
+        var negDef2 = Guid.NewGuid();
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, defaultposition, createdat)
+                VALUES 
+                (@posDef2, @sportId, NULL, 'Goal', 'G', true, 2, NOW()),
+                (@posDef1, @sportId, NULL, 'Steal', 'ST', true, 1, NOW()),
+                (@negDef2, @sportId, NULL, 'Exclusion', 'E', false, 2, NOW()),
+                (@negDef1, @sportId, NULL, 'Turnover', 'TO', false, 1, NOW())",
+                new { posDef1, posDef2, negDef1, negDef2, sportId });
+        }
+
+        // Act
+        var definitions = (await _repository.GetMatchEventDefinitionsAsync(matchId)).ToList();
+
+        // Assert
+        definitions.Should().HaveCount(4);
+
+        // Positive actions first, ordered by defaultposition ASC (1, then 2)
+        definitions[0].Id.Should().Be(posDef1);
+        definitions[0].IsPositive.Should().BeTrue();
+        definitions[0].SortOrder.Should().Be(1);
+
+        definitions[1].Id.Should().Be(posDef2);
+        definitions[1].IsPositive.Should().BeTrue();
+        definitions[1].SortOrder.Should().Be(2);
+
+        // Negative actions second, ordered by defaultposition ASC (1, then 2)
+        definitions[2].Id.Should().Be(negDef1);
+        definitions[2].IsPositive.Should().BeFalse();
+        definitions[2].SortOrder.Should().Be(1);
+
+        definitions[3].Id.Should().Be(negDef2);
+        definitions[3].IsPositive.Should().BeFalse();
+        definitions[3].SortOrder.Should().Be(2);
+    }
+
     #endregion
 
     #region UpsertCustomAsync Tests
@@ -619,6 +671,44 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         result[3].Id.Should().Be(defD.Id);
         result[3].IsEnabled.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.GetAvailableForUserAsync" /> populates 
+    /// <c>SortOrder</c> using <c>DefaultPosition</c> when no user preset is configured for the definition.
+    /// </summary>
+    [Fact]
+    public async Task GetAvailableForUserAsync_ShouldFallbackSortOrderToDefaultPosition_WhenNoPresetConfigured()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var def1 = Guid.NewGuid();
+        var def2 = Guid.NewGuid();
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, defaultposition, createdat)
+                VALUES 
+                (@def1, @sportId, NULL, 'Steal', 'ST', true, 1, NOW()),
+                (@def2, @sportId, NULL, 'Key Pass', 'SP', true, 2, NOW())",
+                new { def1, def2, sportId });
+        }
+
+        // Act
+        var available = (await _repository.GetAvailableForUserAsync(userId, sportId)).ToList();
+
+        // Assert
+        available.Should().HaveCount(2);
+
+        var item1 = available.First(x => x.Id == def1);
+        item1.SortOrder.Should().Be(1);
+        item1.IsEnabled.Should().BeFalse();
+
+        var item2 = available.First(x => x.Id == def2);
+        item2.SortOrder.Should().Be(2);
+        item2.IsEnabled.Should().BeFalse();
     }
 
     #endregion
