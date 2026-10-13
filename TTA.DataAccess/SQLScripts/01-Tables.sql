@@ -260,6 +260,7 @@ CREATE TABLE eventdefinitions (
     name VARCHAR(50) NOT NULL,
     shortname VARCHAR(10) NOT NULL,
     ispositive BOOLEAN NOT NULL,
+    defaultposition INT NULL, -- Default frequency rank index for system default definitions
     issoftdeleted BOOLEAN NOT NULL DEFAULT FALSE, -- Soft delete flag to preserve historical game events analytics
     createdat TIMESTAMPTZ NOT NULL
 );

@@ -1952,8 +1952,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 /**********************************************************************************
- * Retrieves all available active event definitions (system defaults + user custom ones)
- * for a specific sport, enriched with user enablement status and layout sortorder.
+ * Retrieves all available event definitions for a user and sport context
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_user_available_event_definitions(
     p_user_id VARCHAR(64),
@@ -1979,7 +1978,7 @@ BEGIN
         ed.ispositive,
         (ed.ownerid IS NOT NULL) AS iscustom,
         (uep.eventdefinitionid IS NOT NULL) AS isenabled,
-        COALESCE(uep.sortorder, 0) AS sortorder
+        COALESCE(uep.sortorder, ed.defaultposition, 0) AS sortorder
     FROM public.eventdefinitions ed
     LEFT JOIN public.usereventpresets uep 
         ON ed.id = uep.eventdefinitionid AND uep.userid = p_user_id
@@ -1989,6 +1988,8 @@ BEGIN
     ORDER BY 
         (uep.eventdefinitionid IS NOT NULL) DESC,
         uep.sortorder ASC NULLS LAST,
+        ed.ispositive DESC,
+        ed.defaultposition ASC NULLS LAST,
         ed.name ASC;
 END;
 $$ LANGUAGE plpgsql;
@@ -2060,7 +2061,7 @@ BEGIN
           AND (ed.ownerid IS NULL OR ed.ownerid = p_user_id)
         ORDER BY uep.sortorder ASC, ed.name ASC;
     ELSE
-        -- Fallback: Return all active system default definitions for the sport
+        -- Fallback: Return all active system default definitions for the sport ordered by defaultposition
         RETURN QUERY
         SELECT 
             ed.id,
@@ -2070,12 +2071,15 @@ BEGIN
             ed.ispositive,
             FALSE AS iscustom,
             TRUE AS isenabled,
-            0 AS sortorder
+            COALESCE(ed.defaultposition, 0) AS sortorder
         FROM public.eventdefinitions ed
         WHERE ed.sportid = v_sport_id
           AND ed.ownerid IS NULL
           AND ed.issoftdeleted = FALSE
-        ORDER BY ed.name ASC;
+        ORDER BY 
+            ed.ispositive DESC, 
+            ed.defaultposition ASC NULLS LAST, 
+            ed.name ASC;
     END IF;
 END;
 $$ LANGUAGE plpgsql;

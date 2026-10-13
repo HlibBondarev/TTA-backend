@@ -152,6 +152,20 @@ public class EventDefinitionTests
     }
 
     [Fact]
+    public void EventDefinition_DefaultPosition_IsNullable_AndDefaultsToNull()
+    {
+        var def = new EventDefinition();
+        Assert.Null(def.DefaultPosition);
+    }
+
+    [Fact]
+    public void EventDefinition_DefaultPosition_CanBeSetAndRetrieved()
+    {
+        var def = new EventDefinition { DefaultPosition = 1 };
+        Assert.Equal(1, def.DefaultPosition);
+    }
+
+    [Fact]
     public void EventDefinition_CreatedAt_CanBeSetAndRetrieved()
     {
         var now = DateTime.UtcNow;
