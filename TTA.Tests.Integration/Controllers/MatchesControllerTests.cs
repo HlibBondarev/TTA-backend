@@ -259,6 +259,78 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.GetTeamSummaryReport"/> returns HTTP 200 OK
+    /// with correctly aggregated metrics via End-to-End HTTP request when game events exist.
+    /// </summary>
+    [Fact]
+    public async Task GetTeamSummaryReport_ShouldReturnOkWithAccurateMetrics_WhenEventsExist()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SUM-E2E", homeScore: 2, guestScore: 1);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
+
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        // 1. Seed Time Anchors
+        var startTime = DateTime.UtcNow.AddMinutes(-20);
+        var endTime = startTime.AddMinutes(10);
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) 
+            VALUES 
+            (@id1, @mId, 1, 0, @startTs),
+            (@id2, @mId, 1, 1, @endTs);",
+            new { id1 = Guid.NewGuid(), id2 = Guid.NewGuid(), mId = matchId, startTs = startTime, endTs = endTime });
+
+        // 2. Seed Presence
+        await conn.ExecuteAsync(
+            "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) VALUES (@id, @lId, 1, @in, @out)",
+            new { id = Guid.NewGuid(), lId = lineupId, @in = startTime, @out = endTime });
+
+        // 3. Seed Event Definitions (exact name 'Goal' with positive and negative flags)
+        var posGoalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", isPositive: true);
+        var negGoalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", isPositive: false);
+
+        // 4. Seed Events
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES 
+            (@e1, @lId, @posDef, 1, @ts1, '00:03:00', true, NOW()),
+            (@e2, @lId, @negDef, 1, @ts2, '00:07:00', false, NOW());",
+            new
+            {
+                e1 = Guid.NewGuid(),
+                e2 = Guid.NewGuid(),
+                lId = lineupId,
+                posDef = posGoalDefId,
+                negDef = negGoalDefId,
+                ts1 = startTime.AddMinutes(3),
+                ts2 = startTime.AddMinutes(7)
+            });
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{matchId}/teams/{homeId}/reports/summary");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var result = (await response.Content.ReadFromJsonAsync<IEnumerable<TeamMatchSummaryReportResponse>>())?.ToList();
+
+        result.Should().NotBeNull().And.NotBeEmpty();
+        var playerReport = result!.FirstOrDefault(r => r.MatchLineupId == lineupId);
+        playerReport.Should().NotBeNull();
+
+        playerReport!.Goals.Should().Be(1, "only positive Goal events should count towards Goals");
+        playerReport.PositiveGoalLeadingActions.Should().Be(1);
+        playerReport.TotalPositiveActions.Should().Be(1);
+        playerReport.TotalNegativeActions.Should().Be(1);
+        playerReport.PlayPercentage.Should().Be(100.0);
+    }
+
     #endregion
 
     #region Command Tests

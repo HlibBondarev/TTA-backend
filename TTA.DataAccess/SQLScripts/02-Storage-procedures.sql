@@ -2756,8 +2756,8 @@ BEGIN
         p.firstname,
         p.lastname,
         ml.number,
-        -- Goals scored (event name = 'Goal')
-        COALESCE(SUM(CASE WHEN ed.name ILIKE 'Goal' THEN 1 ELSE 0 END), 0)::INT AS goals,
+        -- Goals scored (event name = 'Goal' AND ispositive = TRUE)
+        COALESCE(SUM(CASE WHEN ed.name ILIKE 'Goal' AND ed.ispositive = TRUE THEN 1 ELSE 0 END), 0)::INT AS goals,
         -- Positive goal-leading actions
         COALESCE(SUM(CASE WHEN ge.isleadtogoal = TRUE AND ed.ispositive = TRUE THEN 1 ELSE 0 END), 0)::INT AS positivegoalleadingactions,
         -- Negative goal-leading actions

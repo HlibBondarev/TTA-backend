@@ -743,92 +743,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
     #region Report Repository Tests
 
     /// <summary>
-    /// Verifies that <see cref="MatchRepository.GetTeamSummaryReportAsync"/> correctly aggregates 
-    /// player statistics, action counts, and play percentage for a specific team in a match.
-    /// </summary>
-    /// <returns>A task representing the asynchronous test operation.</returns>
-    [Fact]
-    public async Task GetTeamSummaryReportAsync_ShouldReturnTeamSummary_WhenDataExists()
-    {
-        // Arrange
-        var context = await SeedMatchEnvironmentAsync();
-        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
-        await _repository.UpsertMatchAsync(match, CancellationToken.None);
-
-        // 1. Seed Time Anchors to establish match duration (Period 1: 0 to 10 minutes)
-        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
-        await conn.OpenAsync();
-
-        var startTime = DateTime.UtcNow.AddMinutes(-30);
-        var endTime = startTime.AddMinutes(10);
-
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) 
-            VALUES 
-            (@idStart, @matchId, 1, 0, @startTs),
-            (@idEnd, @matchId, 1, 1, @endTs);",
-            new
-            {
-                idStart = Guid.NewGuid(),
-                idEnd = Guid.NewGuid(),
-                matchId = match.Id,
-                startTs = startTime,
-                endTs = endTime
-            });
-
-        // 2. Fetch a lineup entry for the Home team
-        var matchLineupId = await conn.ExecuteScalarAsync<Guid>(
-            "SELECT ml.id FROM public.matchlineups ml JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = @matchId AND pr.teamid = @teamId LIMIT 1",
-            new { matchId = match.Id, teamId = context.HomeTeamId });
-
-        // If no lineup entry exists from seed, create one for testing
-        Guid targetLineupId = matchLineupId;
-        if (targetLineupId == Guid.Empty)
-        {
-            var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
-                "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
-                new { tId = context.TournamentId, teamId = context.HomeTeamId });
-
-            Guid rosterId = rosterData.id;
-            Guid positionId = rosterData.positionid;
-
-            targetLineupId = Guid.NewGuid();
-            await conn.ExecuteAsync(
-                "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 10, @posId)",
-                new { id = targetLineupId, mId = match.Id, rId = rosterId, posId = positionId });
-        }
-
-        // 3. Seed Player Presence (full 10 minutes duration -> 100% play percentage)
-        await conn.ExecuteAsync(
-            "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) VALUES (@id, @lineupId, 1, @in, @out)",
-            new { id = Guid.NewGuid(), lineupId = targetLineupId, @in = startTime, @out = endTime });
-
-        // 4. Seed an Event Definition and a Game Event ('Goal', positive, lead to goal)
-        var eventDefId = Guid.NewGuid();
-        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
-
-        await conn.ExecuteAsync(
-            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
-            new { id = eventDefId, sId = sportId });
-
-        await conn.ExecuteAsync(
-            "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:05:00', true, NOW())",
-            new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = eventDefId, ts = startTime.AddMinutes(5) });
-
-        // Act
-        var report = (await _repository.GetTeamSummaryReportAsync(match.Id, context.HomeTeamId, CancellationToken.None)).ToList();
-
-        // Assert
-        report.Should().NotBeEmpty();
-        var playerSummary = report.FirstOrDefault(r => r.MatchLineupId == targetLineupId);
-        playerSummary.Should().NotBeNull();
-        playerSummary!.Goals.Should().Be(1);
-        playerSummary.TotalPositiveActions.Should().Be(1);
-        playerSummary.PositiveGoalLeadingActions.Should().Be(1);
-        playerSummary.PlayPercentage.Should().Be(100.0);
-    }
-
-    /// <summary>
     /// Verifies that <see cref="MatchRepository.GetPlayerDetailedReportAsync"/> retrieves the chronological 
     /// list of events for a specific player match lineup entry.
     /// </summary>
@@ -962,6 +876,197 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
         // Compare non-nullable DateTime values using .Value
         eventsWithData[0].EventTimestamp!.Value.Should().BeBefore(eventsWithData[1].EventTimestamp!.Value);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetTeamSummaryReportAsync"/> correctly aggregates 
+    /// player statistics, action counts, and play percentage for a specific team in a match.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetTeamSummaryReportAsync_ShouldReturnTeamSummary_WhenDataExists()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        // 1. Seed Time Anchors to establish match duration (Period 1: 0 to 10 minutes)
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var startTime = DateTime.UtcNow.AddMinutes(-30);
+        var endTime = startTime.AddMinutes(10);
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) 
+            VALUES 
+            (@idStart, @matchId, 1, 0, @startTs),
+            (@idEnd, @matchId, 1, 1, @endTs);",
+            new
+            {
+                idStart = Guid.NewGuid(),
+                idEnd = Guid.NewGuid(),
+                matchId = match.Id,
+                startTs = startTime,
+                endTs = endTime
+            });
+
+        // 2. Fetch a lineup entry for the Home team
+        var matchLineupId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT ml.id FROM public.matchlineups ml JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = @matchId AND pr.teamid = @teamId LIMIT 1",
+            new { matchId = match.Id, teamId = context.HomeTeamId });
+
+        // If no lineup entry exists from seed, create one for testing
+        Guid targetLineupId = matchLineupId;
+        if (targetLineupId == Guid.Empty)
+        {
+            var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+                "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+                new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+            Guid rosterId = rosterData.id;
+            Guid positionId = rosterData.positionid;
+
+            targetLineupId = Guid.NewGuid();
+            await conn.ExecuteAsync(
+                "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 10, @posId)",
+                new { id = targetLineupId, mId = match.Id, rId = rosterId, posId = positionId });
+        }
+
+        // 3. Seed Player Presence (full 10 minutes duration -> 100% play percentage)
+        await conn.ExecuteAsync(
+            "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) VALUES (@id, @lineupId, 1, @in, @out)",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, @in = startTime, @out = endTime });
+
+        // 4. Seed an Event Definition and a Game Event ('Goal', positive, lead to goal)
+        var eventDefId = Guid.NewGuid();
+        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
+
+        await conn.ExecuteAsync(
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
+            new { id = eventDefId, sId = sportId });
+
+        await conn.ExecuteAsync(
+            "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:05:00', true, NOW())",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = eventDefId, ts = startTime.AddMinutes(5) });
+
+        // Act
+        var report = (await _repository.GetTeamSummaryReportAsync(match.Id, context.HomeTeamId, CancellationToken.None)).ToList();
+
+        // Assert
+        report.Should().NotBeEmpty();
+        var playerSummary = report.FirstOrDefault(r => r.MatchLineupId == targetLineupId);
+        playerSummary.Should().NotBeNull();
+        playerSummary!.Goals.Should().Be(1);
+        playerSummary.TotalPositiveActions.Should().Be(1);
+        playerSummary.PositiveGoalLeadingActions.Should().Be(1);
+        playerSummary.PlayPercentage.Should().Be(100.0);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetTeamSummaryReportAsync"/> correctly aggregates 
+    /// player statistics, separating scored goals (ispositive = true) from conceded goals (ispositive = false),
+    /// and accurately counting positive and negative goal-leading actions.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetTeamSummaryReportAsync_ShouldDistinguishScoredAndConcededGoalsAndTrackGoalLeadingActions()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var startTime = DateTime.UtcNow.AddMinutes(-30);
+        var endTime = startTime.AddMinutes(10);
+
+        // 1. Seed Time Anchors to establish match duration (10 mins)
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) 
+            VALUES 
+            (@idStart, @matchId, 1, 0, @startTs),
+            (@idEnd, @matchId, 1, 1, @endTs);",
+            new
+            {
+                idStart = Guid.NewGuid(),
+                idEnd = Guid.NewGuid(),
+                matchId = match.Id,
+                startTs = startTime,
+                endTs = endTime
+            });
+
+        // 2. Fetch or create a lineup entry
+        var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+            "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+            new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+        var targetLineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 1, @posId)",
+            new { id = targetLineupId, mId = match.Id, rId = rosterData.id, posId = rosterData.positionid });
+
+        // 3. Seed Player Presence (10 mins -> 100% play percentage)
+        await conn.ExecuteAsync(
+            "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) VALUES (@id, @lineupId, 1, @in, @out)",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, @in = startTime, @out = endTime });
+
+        // 4. Seed Event Definitions:
+        // - Positive Scored Goal ('Goal', 'G', ispositive = true)
+        // - Negative Conceded Goal ('Goal', 'GC', ispositive = false)
+        // - Negative Action leading to goal ('Bad Pass', 'BP', ispositive = false)
+        var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
+
+        var positiveGoalDefId = Guid.NewGuid();
+        var negativeGoalDefId = Guid.NewGuid();
+        var badPassDefId = Guid.NewGuid();
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES 
+            (@gPosId, @sId, 'Goal', 'G', true, NOW()),
+            (@gNegId, @sId, 'Goal', 'GC', false, NOW()),
+            (@bpId, @sId, 'Bad Pass', 'BP', false, NOW());",
+            new { gPosId = positiveGoalDefId, gNegId = negativeGoalDefId, bpId = badPassDefId, sId = sportId });
+
+        // 5. Seed Game Events:
+        // Event A: Positive Goal scored (isleadtogoal = true)
+        await conn.ExecuteAsync(
+            "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:02:00', true, NOW())",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = positiveGoalDefId, ts = startTime.AddMinutes(2) });
+
+        // Event B: Negative Conceded Goal assigned to goalkeeper (isleadtogoal = false)
+        await conn.ExecuteAsync(
+            "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:05:00', false, NOW())",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = negativeGoalDefId, ts = startTime.AddMinutes(5) });
+
+        // Event C: Negative Bad Pass leading to goal (isleadtogoal = true)
+        await conn.ExecuteAsync(
+            "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:07:00', true, NOW())",
+            new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = badPassDefId, ts = startTime.AddMinutes(7) });
+
+        // Act
+        var report = (await _repository.GetTeamSummaryReportAsync(match.Id, context.HomeTeamId, CancellationToken.None)).ToList();
+
+        // Assert
+        report.Should().NotBeEmpty();
+        var playerSummary = report.FirstOrDefault(r => r.MatchLineupId == targetLineupId);
+        playerSummary.Should().NotBeNull();
+
+        // Scored goals MUST be 1 (only positive Goal), conceded goal (ispositive = false) MUST NOT inflate goals count
+        playerSummary!.Goals.Should().Be(1, "only positive 'Goal' events should be counted as scored goals");
+
+        // Positive and negative goal-leading actions
+        playerSummary.PositiveGoalLeadingActions.Should().Be(1, "positive goal event with isleadtogoal = true");
+        playerSummary.NegativeGoalLeadingActions.Should().Be(1, "bad pass event with isleadtogoal = true");
+
+        // Total positive and negative action counts
+        playerSummary.TotalPositiveActions.Should().Be(1);
+        playerSummary.TotalNegativeActions.Should().Be(2, "includes 1 conceded goal and 1 bad pass");
+
+        playerSummary.PlayPercentage.Should().Be(100.0);
     }
 
     #endregion
