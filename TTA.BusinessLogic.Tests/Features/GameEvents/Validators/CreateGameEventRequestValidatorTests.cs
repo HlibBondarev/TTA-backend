@@ -298,4 +298,43 @@ public class CreateGameEventRequestValidatorTests
                 .WithErrorMessage("ShotLocationY must be between 0.00 and 100.00.");
         }
     }
+
+    /// <summary>
+    /// Verifies that validation fails when ShotLocationX or ShotLocationY coordinates have more than two decimal places.
+    /// </summary>
+    /// <param name="invalidShotX">Invalid shot target X coordinate with 3 decimal places.</param>
+    /// <param name="invalidShotY">Invalid shot target Y coordinate with 3 decimal places.</param>
+    [Theory]
+    [InlineData(12.345, 50.00)]
+    [InlineData(50.00, 45.678)]
+    public void Validator_Should_HaveError_When_ShotCoordinatesHaveMoreThanTwoDecimalPlaces(decimal invalidShotX, decimal invalidShotY)
+    {
+        // Arrange
+        var request = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false,
+            ShotLocationX: invalidShotX,
+            ShotLocationY: invalidShotY
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        if (invalidShotX == 12.345m)
+        {
+            result.ShouldHaveValidationErrorFor(x => x.ShotLocationX)
+                .WithErrorMessage("ShotLocationX cannot have more than 2 decimal places.");
+        }
+
+        if (invalidShotY == 45.678m)
+        {
+            result.ShouldHaveValidationErrorFor(x => x.ShotLocationY)
+                .WithErrorMessage("ShotLocationY cannot have more than 2 decimal places.");
+        }
+    }
 }
