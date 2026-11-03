@@ -1429,7 +1429,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> performs an upsert (DO UPDATE) 
-    /// when syncing entities with existing primary key IDs.
+    /// when syncing entities with existing primary key IDs, updating both general event attributes 
+    /// and spatial shot coordinates.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
@@ -1467,6 +1468,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
             PeriodNumber = 1,
             EventTimestamp = DateTime.UtcNow,
             IsLeadToGoal = false,
+            ShotLocationX = 15.00m,
+            ShotLocationY = 25.00m,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1480,6 +1483,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
             PeriodNumber = 1,
             EventTimestamp = DateTime.UtcNow,
             IsLeadToGoal = true,
+            ShotLocationX = 55.50m,
+            ShotLocationY = 77.70m,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1489,9 +1494,13 @@ public class MatchRepositoryTests : BaseIntegrationTest
         // Assert
         result.SyncedEventIds.Should().ContainSingle().Which.Should().Be(eventId);
 
-        var isLeadToGoal = await conn.ExecuteScalarAsync<bool>(
-            "SELECT isleadtogoal FROM public.gameevents WHERE id = @id", new { id = eventId });
-        isLeadToGoal.Should().BeTrue("existing event record must be updated upon batch re-sync");
+        var dbEvent = await conn.QueryFirstOrDefaultAsync<(bool IsLeadToGoal, decimal? ShotLocationX, decimal? ShotLocationY)>(
+            "SELECT isleadtogoal AS IsLeadToGoal, shotlocationx AS ShotLocationX, shotlocationy AS ShotLocationY FROM public.gameevents WHERE id = @id",
+            new { id = eventId });
+
+        dbEvent.IsLeadToGoal.Should().BeTrue("existing event record must be updated upon batch re-sync");
+        dbEvent.ShotLocationX.Should().Be(55.50m, "shotlocationx coordinate must be updated to the new value on conflict");
+        dbEvent.ShotLocationY.Should().Be(77.70m, "shotlocationy coordinate must be updated to the new value on conflict");
     }
 
     /// <summary>
