@@ -58,6 +58,11 @@ public class SportConfiguration : IKeyedEntity<Guid>
     public string Playground { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets the vector SVG markup string for goal frame target area layout.
+    /// </summary>
+    public string? ShotMap { get; set; }
+
+    /// <summary>
     /// Gets or sets the exact physical length of the playing field in meters.
     /// </summary>
     public decimal FieldLength { get; set; }

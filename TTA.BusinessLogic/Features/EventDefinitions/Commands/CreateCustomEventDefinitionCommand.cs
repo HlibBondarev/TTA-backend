@@ -3,7 +3,7 @@ using TTA.BusinessLogic.Features.EventDefinitions.DTOs;
 
 namespace TTA.BusinessLogic.Features.EventDefinitions.Commands;
 
-///< summary>
+/// <summary>
 /// Command to create a custom user-owned event definition.
 /// </summary>
 /// <param name="Id">The client-assigned unique identifier of the custom event definition.</param>
@@ -12,22 +12,24 @@ namespace TTA.BusinessLogic.Features.EventDefinitions.Commands;
 /// <param name="Name">The display name of the custom event definition.</param>
 /// <param name="ShortName">The abbreviated short code of the custom event definition.</param>
 /// <param name="IsPositive">Indicates whether the custom action has a positive statistical impact.</param>
+/// <param name="IsShot">Indicates whether the custom action requires goal shot target location tracking.</param>
 public record CreateCustomEventDefinitionCommand(
     Guid Id,
     Guid SportId,
     string OwnerId,
     string Name,
     string ShortName,
-    bool IsPositive) : IRequest<EventDefinitionResponse>;
+    bool IsPositive,
+    bool IsShot = false) : IRequest<EventDefinitionResponse>;
 
 /// <summary>
 /// Extension methods for mapping CreateCustomEventDefinitionRequest DTO to CreateCustomEventDefinitionCommand.
-/// </summary >
+/// </summary>
 public static class CreateCustomEventDefinitionCommandExtensions
 {
     /// <summary>
     /// Maps CreateCustomEventDefinitionRequest DTO to CreateCustomEventDefinitionCommand.
-    /// </summary >
+    /// </summary>
     /// <param name="request">The request DTO.</param>
     /// <param name="sportId">The sport ID.</param>
     /// <param name="ownerId">The owner user ID.</param>
@@ -43,6 +45,7 @@ public static class CreateCustomEventDefinitionCommandExtensions
             OwnerId: ownerId,
             Name: request.Name,
             ShortName: request.ShortName,
-            IsPositive: request.IsPositive);
+            IsPositive: request.IsPositive,
+            IsShot: request.IsShot);
     }
 }

@@ -59,7 +59,7 @@ public class GetGameEventByIdHandlerTests
 
     /// <summary>
     /// Verifies that the handler returns a correctly populated response DTO
-    /// including spatial coordinates when the event exists.
+    /// including spatial field coordinates and shot frame coordinates when the event exists.
     /// </summary>
     [Fact]
     public async Task Handle_Should_ReturnEventResponse_When_EventExists()
@@ -80,6 +80,8 @@ public class GetGameEventByIdHandlerTests
             IsLeadToGoal: false,
             LocationX: 45.50m,
             LocationY: 82.25m,
+            ShotLocationX: 12.30m,
+            ShotLocationY: 45.60m,
             PlayerName: "John Doe",
             PlayerNumber: 10,
             TeamId: Guid.NewGuid(),
@@ -101,12 +103,58 @@ public class GetGameEventByIdHandlerTests
         result.TeamName.Should().Be("Warriors");
         result.LocationX.Should().Be(45.50m);
         result.LocationY.Should().Be(82.25m);
+        result.ShotLocationX.Should().Be(12.30m);
+        result.ShotLocationY.Should().Be(45.60m);
 
         _gameEventRepositoryMock.Verify(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
-    /// Verifies that spatial coordinates are mapped to null when projection coordinates are null.
+    /// Verifies that <see cref="GetGameEventByIdHandler.Handle"/> correctly maps shot frame coordinates 
+    /// (<c>ShotLocationX</c> and <c>ShotLocationY</c>) when present in the projection.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_MapShotCoordinates_When_PresentInProjection()
+    {
+        // Arrange
+        var eventId = Guid.NewGuid();
+        var query = new GetGameEventByIdQuery(eventId);
+        GameEventProjection detailedEvent = new
+        (
+            Id: eventId,
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            EventName: "Shot on Target",
+            IsPositive: true,
+            PeriodNumber: 2,
+            EventTimestamp: DateTime.UtcNow,
+            NormalizedMatchTime: TimeSpan.FromMinutes(8),
+            IsLeadToGoal: false,
+            LocationX: 15.00m,
+            LocationY: 25.00m,
+            ShotLocationX: 5.50m,
+            ShotLocationY: 3.25m,
+            PlayerName: "Alex Smith",
+            PlayerNumber: 7,
+            TeamId: Guid.NewGuid(),
+            TeamName: "Dolphins"
+        );
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(detailedEvent);
+
+        // Act
+        var result = await _handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.ShotLocationX.Should().Be(5.50m, "shot target X coordinate must be mapped to DTO");
+        result.ShotLocationY.Should().Be(3.25m, "shot target Y coordinate must be mapped to DTO");
+    }
+
+    /// <summary>
+    /// Verifies that spatial field coordinates and shot frame coordinates are mapped to null when projection coordinates are null.
     /// </summary>
     [Fact]
     public async Task Handle_Should_MapNullCoordinates_When_CoordinatesAreNullInProjection()
@@ -127,6 +175,8 @@ public class GetGameEventByIdHandlerTests
             IsLeadToGoal: false,
             LocationX: null,
             LocationY: null,
+            ShotLocationX: null,
+            ShotLocationY: null,
             PlayerName: "Jane Doe",
             PlayerNumber: 5,
             TeamId: Guid.NewGuid(),
@@ -144,5 +194,7 @@ public class GetGameEventByIdHandlerTests
         result.Should().NotBeNull();
         result.LocationX.Should().BeNull();
         result.LocationY.Should().BeNull();
+        result.ShotLocationX.Should().BeNull();
+        result.ShotLocationY.Should().BeNull();
     }
 }
