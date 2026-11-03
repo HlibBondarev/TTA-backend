@@ -159,11 +159,13 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         var sysDef = definitions.FirstOrDefault(d => d.Id == sysDefId);
         sysDef.Should().NotBeNull();
         sysDef!.Name.Should().Be("Goal");
+        sysDef.IsShot.Should().BeTrue();
         sysDef.IsCustom.Should().BeFalse();
 
         var customDef = definitions.FirstOrDefault(d => d.Id == customDefId);
         customDef.Should().NotBeNull();
         customDef!.Name.Should().Be("Custom Assist");
+        customDef.IsShot.Should().BeFalse();
         customDef.IsCustom.Should().BeTrue();
     }
 
