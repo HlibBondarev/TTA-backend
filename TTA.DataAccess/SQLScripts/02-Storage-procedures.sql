@@ -1299,7 +1299,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- Upsert Game Events (with shotlocationx and shotlocationy fields)
+    -- Upsert Game Events (using LEFT JOIN to trigger FK 23503 exception for invalid eventdefinitionid)
     IF v_events_count > 0 THEN
         WITH upserted_events AS (
             INSERT INTO public.gameevents (
@@ -1343,7 +1343,7 @@ BEGIN
                 shotlocationy NUMERIC(5,2),
                 createdat TIMESTAMPTZ
             )
-            INNER JOIN public.eventdefinitions ed ON x.eventdefinitionid = ed.id
+            LEFT JOIN public.eventdefinitions ed ON x.eventdefinitionid = ed.id
             ON CONFLICT (id) DO UPDATE SET
                 matchlineupid = EXCLUDED.matchlineupid,
                 eventdefinitionid = EXCLUDED.eventdefinitionid,
@@ -2171,7 +2171,7 @@ BEGIN
         shotlocationy NUMERIC(5,2),
         createdat TIMESTAMPTZ
     )
-    INNER JOIN public.eventdefinitions ed ON x.eventdefinitionid = ed.id
+    LEFT JOIN public.eventdefinitions ed ON x.eventdefinitionid = ed.id
     ON CONFLICT (id) DO UPDATE SET
         matchlineupid = EXCLUDED.matchlineupid,
         eventdefinitionid = EXCLUDED.eventdefinitionid,
