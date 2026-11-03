@@ -255,6 +255,7 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         result.Name.Should().Be("Custom Penalty Shot");
         result.ShortName.Should().Be("CPS");
         result.IsPositive.Should().BeTrue();
+        result.IsShot.Should().BeTrue();
         result.IsCustom.Should().BeTrue();
         result.IsEnabled.Should().BeFalse();
 
