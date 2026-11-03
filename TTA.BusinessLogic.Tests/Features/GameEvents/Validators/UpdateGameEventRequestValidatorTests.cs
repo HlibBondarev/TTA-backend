@@ -165,4 +165,69 @@ public class UpdateGameEventRequestValidatorTests
         result.ShouldHaveValidationErrorFor(x => x.ShotLocationX)
             .WithErrorMessage("ShotLocationX must be between 0.00 and 100.00.");
     }
+
+    /// <summary>
+    /// Verifies that validation fails when updated coordinates have more than two decimal places.
+    /// </summary>
+    /// <param name="invalidValue">Coordinate value with 3 decimal places.</param>
+    [Theory]
+    [InlineData(45.678)]
+    public void Validator_Should_HaveError_When_CoordinatesHaveMoreThanTwoDecimalPlaces(decimal invalidValue)
+    {
+        // Arrange - LocationX
+        var requestLocationX = new UpdateGameEventRequest(
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            IsLeadToGoal: false,
+            LocationX: invalidValue
+        );
+
+        // Act & Assert LocationX
+        var resultLocationX = _validator.TestValidate(requestLocationX);
+        resultLocationX.ShouldHaveValidationErrorFor(x => x.LocationX)
+            .WithErrorMessage("LocationX cannot have more than 2 decimal places.");
+
+        // Arrange - LocationY
+        var requestLocationY = new UpdateGameEventRequest(
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            IsLeadToGoal: false,
+            LocationY: invalidValue
+        );
+
+        // Act & Assert LocationY
+        var resultLocationY = _validator.TestValidate(requestLocationY);
+        resultLocationY.ShouldHaveValidationErrorFor(x => x.LocationY)
+            .WithErrorMessage("LocationY cannot have more than 2 decimal places.");
+
+        // Arrange - ShotLocationX
+        var requestShotX = new UpdateGameEventRequest(
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            IsLeadToGoal: false,
+            ShotLocationX: invalidValue
+        );
+
+        // Act & Assert ShotLocationX
+        var resultShotX = _validator.TestValidate(requestShotX);
+        resultShotX.ShouldHaveValidationErrorFor(x => x.ShotLocationX)
+            .WithErrorMessage("ShotLocationX cannot have more than 2 decimal places.");
+
+        // Arrange - ShotLocationY
+        var requestShotY = new UpdateGameEventRequest(
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            PeriodNumber: 1,
+            IsLeadToGoal: false,
+            ShotLocationY: invalidValue
+        );
+
+        // Act & Assert ShotLocationY
+        var resultShotY = _validator.TestValidate(requestShotY);
+        resultShotY.ShouldHaveValidationErrorFor(x => x.ShotLocationY)
+            .WithErrorMessage("ShotLocationY cannot have more than 2 decimal places.");
+    }
 }
