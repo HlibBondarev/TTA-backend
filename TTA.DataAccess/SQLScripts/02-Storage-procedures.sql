@@ -1753,7 +1753,7 @@ END;$$ LANGUAGE plpgsql;
  * Includes optional p_is_shot parameter to set shot-related event definitions.
  * Validates ownership and prohibits modifying system default definitions.
  **********************************************************************************/
-CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
+ CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
     p_id UUID,
     p_sport_id UUID,
     p_owner_id VARCHAR(64),
@@ -1795,11 +1795,11 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Validation: Existing definition cannot change immutable semantic attributes
+    -- Validation: Existing definition cannot change immutable semantic attributes (including isshot)
     IF EXISTS (
         SELECT 1 FROM public.eventdefinitions
         WHERE id = p_id
-          AND (sportid <> p_sport_id OR name <> p_name OR shortname <> p_short_name OR ispositive <> p_is_positive)
+          AND (sportid <> p_sport_id OR name <> p_name OR shortname <> p_short_name OR ispositive <> p_is_positive OR isshot <> COALESCE(p_is_shot, FALSE))
     ) THEN
         RAISE EXCEPTION 'Modifying existing custom event definition attributes is prohibited. Create a new event definition instead.'
             USING ERRCODE = 'P0001';
