@@ -52,7 +52,7 @@ public class GetSportConfigurationsBySportIdHandlerTests
 
     /// <summary>
     /// Verifies that the handler correctly maps configuration entities into a collection 
-    /// of <see cref="SportConfigurationResponse"/> DTOs when configurations exist.
+    /// of <see cref="SportConfigurationResponse"/> DTOs (including ShotMap) when configurations exist.
     /// </summary>
     [Fact]
     public async Task Handle_ConfigurationsExist_ShouldReturnPopulatedList()
@@ -73,7 +73,11 @@ public class GetSportConfigurationsBySportIdHandlerTests
                 FieldSize = "30x20m",
                 RosterLimit = 15,
                 LineupLimit = 13,
-                ActivePlayersLimit = 7
+                ActivePlayersLimit = 7,
+                Playground = "<svg>playground</svg>",
+                FieldLength = 30.0m,
+                FieldWidth = 20.0m,
+                ShotMap = "<svg>shotmap</svg>"
             }
         };
 
@@ -98,6 +102,10 @@ public class GetSportConfigurationsBySportIdHandlerTests
         Assert.Equal(15, firstConfig.RosterLimit);
         Assert.Equal(13, firstConfig.LineupLimit);
         Assert.Equal(7, firstConfig.ActivePlayersLimit);
+        Assert.Equal("<svg>playground</svg>", firstConfig.Playground);
+        Assert.Equal(30.0m, firstConfig.FieldLength);
+        Assert.Equal(20.0m, firstConfig.FieldWidth);
+        Assert.Equal("<svg>shotmap</svg>", firstConfig.ShotMap);
 
         _sportConfigurationRepoMock.Verify(x => x.GetBySportIdAsync(sportId, It.IsAny<CancellationToken>()), Times.Once);
     }
