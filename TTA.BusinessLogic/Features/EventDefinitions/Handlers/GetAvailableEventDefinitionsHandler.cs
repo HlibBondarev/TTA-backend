@@ -9,7 +9,7 @@ namespace TTA.BusinessLogic.Features.EventDefinitions.Handlers;
 /// <summary>
 /// Handles the retrieval of all available event definitions for a specific user and sport context.
 /// </summary>
-/// <param name="eventDefinitionRepository" >The repository for event definition data access.</param >
+/// <param name="eventDefinitionRepository">The repository for event definition data access.</param>
 /// <param name="logger">The logger instance for diagnostic information.</param>
 public class GetAvailableEventDefinitionsHandler(
     IEventDefinitionRepository eventDefinitionRepository,
@@ -39,6 +39,7 @@ public class GetAvailableEventDefinitionsHandler(
             Name: p.Name,
             ShortName: p.ShortName,
             IsPositive: p.IsPositive,
+            IsShot: p.IsShot,
             IsCustom: p.IsCustom,
             IsEnabled: p.IsEnabled,
             SortOrder: p.SortOrder

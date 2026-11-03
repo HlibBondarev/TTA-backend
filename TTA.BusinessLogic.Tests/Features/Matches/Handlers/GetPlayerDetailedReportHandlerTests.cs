@@ -36,7 +36,8 @@ public class GetPlayerDetailedReportHandlerTests
 
     /// <summary>
     /// Verifies that the handler returns a correctly structured player detailed report
-    /// with events sorted strictly chronologically by EventTimestamp, even if NormalizedMatchTime suggests a different order.
+    /// with events sorted strictly chronologically by EventTimestamp, even if NormalizedMatchTime suggests a different order,
+    /// and correctly preserves location and shot location coordinates.
     /// </summary>
     [Fact]
     public async Task Handle_Should_ReturnDetailedReport_When_MatchIsFinalizedAndProjectionsExist()
@@ -74,7 +75,9 @@ public class GetPlayerDetailedReportHandlerTests
                 NormalizedMatchTime: TimeSpan.FromMinutes(5), // EARLIER period-relative time
                 IsLeadToGoal: false,
                 LocationX: 3.5m,
-                LocationY: 8.00m
+                LocationY: 8.00m,
+                ShotLocationX: null,
+                ShotLocationY: null
             ),
             // Event A: Period 1, happens EARLIER in real time, but has a LATER relative match time (e.g., 40th minute of 1st period)
             new(
@@ -90,7 +93,9 @@ public class GetPlayerDetailedReportHandlerTests
                 NormalizedMatchTime: TimeSpan.FromMinutes(40), // LATER period-relative time
                 IsLeadToGoal: true,
                 LocationX: 5.25m,
-                LocationY: 8.00m
+                LocationY: 8.00m,
+                ShotLocationX: 12.30m,
+                ShotLocationY: 45.60m
             )
         };
 
@@ -113,12 +118,79 @@ public class GetPlayerDetailedReportHandlerTests
         // Events must be sorted chronologically by EventTimestamp
         eventsList[0].EventName.Should().Be("Goal");
         eventsList[0].EventTimestamp.Should().Be(baseTimestamp);
+        eventsList[0].LocationX.Should().Be(5.25m);
+        eventsList[0].LocationY.Should().Be(8.00m);
+        eventsList[0].ShotLocationX.Should().Be(12.30m, "shot coordinates must be mapped for shot events");
+        eventsList[0].ShotLocationY.Should().Be(45.60m, "shot coordinates must be mapped for shot events");
 
         eventsList[1].EventName.Should().Be("Yellow Card");
         eventsList[1].EventTimestamp.Should().Be(baseTimestamp.AddMinutes(15));
+        eventsList[1].ShotLocationX.Should().BeNull("non-shot events must have null shot coordinates");
+        eventsList[1].ShotLocationY.Should().BeNull("non-shot events must have null shot coordinates");
 
         _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
         _matchRepositoryMock.Verify(r => r.GetPlayerDetailedReportAsync(matchId, matchLineupId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="GetPlayerDetailedReportHandler.Handle"/> correctly maps shot location coordinates 
+    /// (<c>ShotLocationX</c> and <c>ShotLocationY</c>) when present in player detailed report projections.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_MapShotCoordinates_When_PresentInProjections()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var matchLineupId = Guid.NewGuid();
+        var query = new GetPlayerDetailedReportQuery(matchId, matchLineupId);
+        var eventTime = DateTime.UtcNow;
+
+        var finalizedMatch = new Match
+        {
+            Id = matchId,
+            HomeScore = 3,
+            GuestScore = 1
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(finalizedMatch);
+
+        var projections = new List<PlayerDetailedReportProjection>
+        {
+            new(
+                MatchLineupId: matchLineupId,
+                FirstName: "Dmytro",
+                LastName: "Kovalenko",
+                Number: 5,
+                EventId: Guid.NewGuid(),
+                EventName: "Shot on Target",
+                IsPositive: true,
+                PeriodNumber: 1,
+                EventTimestamp: eventTime,
+                NormalizedMatchTime: TimeSpan.FromMinutes(3),
+                IsLeadToGoal: false,
+                LocationX: 10.5m,
+                LocationY: 15.0m,
+                ShotLocationX: 2.50m,
+                ShotLocationY: 1.80m
+            )
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetPlayerDetailedReportAsync(matchId, matchLineupId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(projections);
+
+        // Act
+        var result = await _handler.Handle(query, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        var mappedEvent = result.Events.Should().ContainSingle().Subject;
+        mappedEvent.LocationX.Should().Be(10.5m);
+        mappedEvent.LocationY.Should().Be(15.0m);
+        mappedEvent.ShotLocationX.Should().Be(2.50m);
+        mappedEvent.ShotLocationY.Should().Be(1.80m);
     }
 
     /// <summary>
@@ -160,7 +232,9 @@ public class GetPlayerDetailedReportHandlerTests
                 NormalizedMatchTime: null,
                 IsLeadToGoal: null,
                 LocationX: null,
-                LocationY: null
+                LocationY: null,
+                ShotLocationX: null,
+                ShotLocationY: null
             )
         };
 

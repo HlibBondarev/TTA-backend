@@ -142,8 +142,8 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
 
         await SeedUserAsync(TestUserId, "user@test.com", "Test User");
 
-        var sysDefId = await SeedEventDefinitionAsync(sportId, "Goal", "GL", isPositive: true, ownerId: null);
-        var customDefId = await SeedEventDefinitionAsync(sportId, "Custom Assist", "AST", isPositive: true, ownerId: TestUserId);
+        var sysDefId = await SeedEventDefinitionAsync(sportId, "Goal", "GL", isPositive: true, ownerId: null, isShot: true);
+        var customDefId = await SeedEventDefinitionAsync(sportId, "Custom Assist", "AST", isPositive: true, ownerId: TestUserId, isShot: false);
 
         // Act
         var response = await Client.GetAsync($"{BaseUrl}/{sportId}/event-definitions");
@@ -221,7 +221,7 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
 
     /// <summary>
     /// Verifies that <c>POST /api/sports/{sportId}/event-definitions/custom</c> returns HTTP 201 Created
-    /// and persists a new custom event definition when provided with valid request data.
+    /// and persists a new custom event definition (including IsShot flag) when provided with valid request data.
     /// </summary>
     [Fact]
     public async Task CreateCustomEventDefinition_ShouldReturnCreated_WhenRequestIsValid()
@@ -234,9 +234,10 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
 
         var request = new CreateCustomEventDefinitionRequest(
             Id: Guid.NewGuid(),
-            Name: "Custom Timeout",
-            ShortName: "CTO",
-            IsPositive: true
+            Name: "Custom Penalty Shot",
+            ShortName: "CPS",
+            IsPositive: true,
+            IsShot: true
         );
 
         // Act
@@ -249,11 +250,25 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         result.Should().NotBeNull();
         result!.Id.Should().Be(request.Id);
         result.SportId.Should().Be(sportId);
-        result.Name.Should().Be("Custom Timeout");
-        result.ShortName.Should().Be("CTO");
+        result.Name.Should().Be("Custom Penalty Shot");
+        result.ShortName.Should().Be("CPS");
         result.IsPositive.Should().BeTrue();
         result.IsCustom.Should().BeTrue();
         result.IsEnabled.Should().BeFalse();
+
+        // Verify database persistence including isshot column state
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var dbRecord = await conn.QuerySingleOrDefaultAsync<(string Name, string ShortName, bool IsPositive, bool IsShot, string OwnerId)>(
+            "SELECT name AS Name, shortname AS ShortName, ispositive AS IsPositive, isshot AS IsShot, ownerid AS OwnerId FROM public.eventdefinitions WHERE id = @id",
+            new { id = request.Id });
+
+        dbRecord.Name.Should().Be("Custom Penalty Shot");
+        dbRecord.ShortName.Should().Be("CPS");
+        dbRecord.IsPositive.Should().BeTrue();
+        dbRecord.IsShot.Should().BeTrue();
+        dbRecord.OwnerId.Should().Be(TestUserId);
     }
 
     /// <summary>
@@ -269,7 +284,8 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
             Id: Guid.NewGuid(),
             Name: string.Empty,
             ShortName: string.Empty,
-            IsPositive: false
+            IsPositive: false,
+            IsShot: false
         );
 
         // Act
@@ -288,7 +304,7 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
     {
         // Arrange
         var sportId = Guid.NewGuid();
-        var request = new CreateCustomEventDefinitionRequest(Guid.NewGuid(), "Foul", "FL", false);
+        var request = new CreateCustomEventDefinitionRequest(Guid.NewGuid(), "Foul", "FL", false, false);
 
         try
         {
@@ -319,13 +335,14 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         await SeedSportWithConfigAsync(sportId, $"Sport_{Guid.NewGuid():N}", "SPT", configId);
         await SeedUserAsync(TestUserId, "creator@test.com", "Creator User");
 
-        var customDefId = await SeedEventDefinitionAsync(sportId, "Deleted Action", "DEL", isPositive: true, ownerId: TestUserId, isSoftDeleted: true);
+        var customDefId = await SeedEventDefinitionAsync(sportId, "Deleted Action", "DEL", isPositive: true, ownerId: TestUserId, isSoftDeleted: true, isShot: false);
 
         var request = new CreateCustomEventDefinitionRequest(
             Id: customDefId,
             Name: "Attempted Reused Action",
             ShortName: "ARA",
-            IsPositive: false
+            IsPositive: false,
+            IsShot: false
         );
 
         // Act
@@ -352,8 +369,8 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         await SeedSportWithConfigAsync(sportId, $"Sport_{Guid.NewGuid():N}", "SPT", configId);
         await SeedUserAsync(TestUserId, "preset.user@test.com", "Preset User");
 
-        var defId1 = await SeedEventDefinitionAsync(sportId, "Goal", "GL", isPositive: true, ownerId: null);
-        var defId2 = await SeedEventDefinitionAsync(sportId, "Foul", "FL", isPositive: false, ownerId: null);
+        var defId1 = await SeedEventDefinitionAsync(sportId, "Goal", "GL", isPositive: true, ownerId: null, isShot: true);
+        var defId2 = await SeedEventDefinitionAsync(sportId, "Foul", "FL", isPositive: false, ownerId: null, isShot: false);
 
         var request = new SaveUserEventPresetRequest(new[] { defId1, defId2 });
 
@@ -435,7 +452,7 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
 
         var foreignUser = $"auth0|other-user-{Guid.NewGuid():N}";
         await SeedUserAsync(foreignUser, "other@test.com", "Other User");
-        var foreignDefId = await SeedEventDefinitionAsync(sportId, "Foreign Action", "FRG", isPositive: true, ownerId: foreignUser);
+        var foreignDefId = await SeedEventDefinitionAsync(sportId, "Foreign Action", "FRG", isPositive: true, ownerId: foreignUser, isShot: false);
 
         var request = new SaveUserEventPresetRequest(new[] { foreignDefId });
 
@@ -464,17 +481,18 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         string shortName,
         bool isPositive,
         string? ownerId,
-        bool isSoftDeleted = false)
+        bool isSoftDeleted = false,
+        bool isShot = false)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         var id = Guid.NewGuid();
 
         const string sql = @"
-            INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat)
-            VALUES (@id, @sportId, @ownerId, @name, @shortName, @isPositive, @isSoftDeleted, NOW())";
+            INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, isshot, issoftdeleted, createdat)
+            VALUES (@id, @sportId, @ownerId, @name, @shortName, @isPositive, @isShot, @isSoftDeleted, NOW())";
 
-        await conn.ExecuteAsync(sql, new { id, sportId, ownerId, name, shortName, isPositive, isSoftDeleted });
+        await conn.ExecuteAsync(sql, new { id, sportId, ownerId, name, shortName, isPositive, isShot, isSoftDeleted });
         return id;
     }
 

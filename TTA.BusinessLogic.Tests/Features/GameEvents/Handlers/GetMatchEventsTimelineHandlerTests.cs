@@ -189,8 +189,6 @@ public class GetMatchEventsTimelineHandlerTests
             normalizedMatchTime: TimeSpan.FromMinutes(10));
 
         // 2. First event with null NormalizedMatchTime (earlier timestamp)
-        // We use the 'with' expression to explicitly set NormalizedMatchTime to null,
-        // overriding the default 20-minute value provided by the helper.
         var nullTimeEvent1 = CreateRawEvent(
             id: Guid.NewGuid(),
             name: "Pre-Match Event",
@@ -221,7 +219,6 @@ public class GetMatchEventsTimelineHandlerTests
         // Assert
         result.Should().HaveCount(3);
 
-        // Assert sorting: valid times first, then null times sorted by their creation timestamp.
         // Index 0: Timed event (10m)
         result[0].EventName.Should().Be("Timed Event");
 
@@ -238,17 +235,30 @@ public class GetMatchEventsTimelineHandlerTests
     }
 
     /// <summary>
-    /// Verifies that spatial coordinates (LocationX and LocationY) are correctly mapped for each timeline event.
+    /// Verifies that spatial field coordinates (LocationX, LocationY) and shot frame coordinates (ShotLocationX, ShotLocationY)
+    /// are correctly mapped for each timeline event.
     /// </summary>
     [Fact]
-    public async Task Handle_ShouldMapSpatialCoordinatesCorrectly()
+    public async Task Handle_ShouldMapSpatialAndShotCoordinatesCorrectly()
     {
         // Arrange
         var matchId = Guid.NewGuid();
         var query = new GetMatchEventsTimelineQuery(matchId);
 
-        var event1 = CreateRawEvent(Guid.NewGuid(), "Shot", 1) with { LocationX = 12.34m, LocationY = 56.78m };
-        var event2 = CreateRawEvent(Guid.NewGuid(), "Foul", 1) with { LocationX = null, LocationY = null };
+        var event1 = CreateRawEvent(Guid.NewGuid(), "Shot", 1) with
+        {
+            LocationX = 12.34m,
+            LocationY = 56.78m,
+            ShotLocationX = 2.50m,
+            ShotLocationY = 1.80m
+        };
+        var event2 = CreateRawEvent(Guid.NewGuid(), "Foul", 1) with
+        {
+            LocationX = null,
+            LocationY = null,
+            ShotLocationX = null,
+            ShotLocationY = null
+        };
 
         _gameEventRepositoryMock
             .Setup(r => r.GetMatchEventsAsync(matchId, It.IsAny<CancellationToken>()))
@@ -263,24 +273,16 @@ public class GetMatchEventsTimelineHandlerTests
         var mappedEvent1 = result.First(e => e.Id == event1.Id);
         mappedEvent1.LocationX.Should().Be(12.34m);
         mappedEvent1.LocationY.Should().Be(56.78m);
+        mappedEvent1.ShotLocationX.Should().Be(2.50m);
+        mappedEvent1.ShotLocationY.Should().Be(1.80m);
 
         var mappedEvent2 = result.First(e => e.Id == event2.Id);
         mappedEvent2.LocationX.Should().BeNull();
         mappedEvent2.LocationY.Should().BeNull();
+        mappedEvent2.ShotLocationX.Should().BeNull();
+        mappedEvent2.ShotLocationY.Should().BeNull();
     }
 
-    /// <summary>
-    /// Helper method to create a GameEventProjection object.
-    /// Matches the property naming expected by the handler.
-    /// </summary>
-    /// <param name="id">The event ID.</param>
-    /// <param name="name">The event name.</param>
-    /// <param name="period">The match period.</param>
-    /// <param name="eventTimestamp">The timestamp of the event.</param>
-    /// <param name="normalizedMatchTime">The normalized match time.</param>
-    /// <param name="locationX">The X coordinate of the event location.</param>
-    /// <param name="locationY">The Y coordinate of the event location.</param>
-    /// <returns>A GameEventProjection object with populated event data.</returns>
     /// <summary>
     /// Helper method to create a GameEventProjection object with populated event data.
     /// Default values ensure backward compatibility with existing tests.
@@ -292,7 +294,9 @@ public class GetMatchEventsTimelineHandlerTests
         DateTime? eventTimestamp = null,
         TimeSpan? normalizedMatchTime = null,
         decimal? locationX = null,
-        decimal? locationY = null)
+        decimal? locationY = null,
+        decimal? shotLocationX = null,
+        decimal? shotLocationY = null)
     {
         return new GameEventProjection
         (
@@ -307,6 +311,8 @@ public class GetMatchEventsTimelineHandlerTests
             IsLeadToGoal: false,
             LocationX: locationX,
             LocationY: locationY,
+            ShotLocationX: shotLocationX,
+            ShotLocationY: shotLocationY,
             PlayerName: "Player Name",
             PlayerNumber: 7,
             TeamId: Guid.NewGuid(),

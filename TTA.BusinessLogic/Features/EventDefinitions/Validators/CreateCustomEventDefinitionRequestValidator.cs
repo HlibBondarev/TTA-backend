@@ -11,7 +11,6 @@ public class CreateCustomEventDefinitionRequestValidator : AbstractValidator<Cre
     /// <summary>
     /// Initializes a new instance of the <see cref="CreateCustomEventDefinitionRequestValidator"/> class.
     /// </summary>
-
     public CreateCustomEventDefinitionRequestValidator()
     {
         RuleFor(x => x.Id)

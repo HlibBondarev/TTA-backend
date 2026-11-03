@@ -95,7 +95,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var result = await _repository.GetMatchByIdWithDetailsAsync(match.Id, CancellationToken.None);
 
         // Assert
-        // Dapper returns dynamic (DapperRow), we check properties defined in the SQL function
         ((Guid)result!.id).Should().Be(match.Id);
         ((string)result!.hometeamname).Should().NotBeNullOrEmpty();
         ((string)result!.tournamentname).Should().NotBeNullOrEmpty();
@@ -103,15 +102,12 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that GetByTournamentIdAsync correctly filters matches by the specified tournament ID.
-    /// Seeds matches in multiple tournaments to ensure isolation and uses unique user IDs 
-    /// to avoid primary key constraint violations.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
     public async Task GetByTournamentIdAsync_ShouldReturnOnlyMatchesInTargetTournament()
     {
         // Arrange
-        // 1. Setup the target tournament context
         var context = await SeedMatchEnvironmentAsync();
         var match1 = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId, "M-01");
         var match2 = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId, "M-02");
@@ -119,7 +115,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await _repository.UpsertMatchAsync(match1, CancellationToken.None);
         await _repository.UpsertMatchAsync(match2, CancellationToken.None);
 
-        // 2. Setup a second tournament to verify that its matches are NOT returned
         var noiseContext = await SeedMatchEnvironmentAsync();
         var noiseMatch = CreateMatchModel(noiseContext.TournamentId, noiseContext.HomeTeamId, noiseContext.GuestTeamId, "NOISE-01");
         await _repository.UpsertMatchAsync(noiseMatch, CancellationToken.None);
@@ -131,7 +126,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         // Assert
         resultsList.Should().HaveCount(2, "matches from other tournaments must be excluded from the result");
 
-        // Verify each returned match belongs to the correct tournament
         foreach (var item in resultsList)
         {
             var dict = (IDictionary<string, object>)item;
@@ -146,7 +140,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
             returnedId.Should().Be(context.TournamentId);
         }
 
-        // Verify that the specific match numbers are present
         var matchNumbers = resultsList.Select(x => (string)((IDictionary<string, object>)x)["matchnumber"]).ToList();
 
         matchNumbers.Should().Contain(ExpectedMatchNumbers);
@@ -167,7 +160,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
     [Fact]
     public async Task CreateQuickMatchAsync_ShouldProvisionInfrastructureAndReturnMatchEntity()
     {
-        // Arrange - seed base sport, configuration, JIT default club, users and players
+        // Arrange
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
@@ -179,30 +172,25 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var userId = $"auth0|quickmatch-{Guid.NewGuid()}";
 
-        // 0. Ensure User exists for ownership assigning
         await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
             new { id = userId, e = "quickmatch@test.com", n = "QuickMatch Owner" }, transaction: transaction);
 
-        // 1. Ensure JIT base geography exists
         await conn.ExecuteAsync(@"
             INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
             INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
             INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
             new { cityId = tempCityId }, transaction: transaction);
 
-        // Resolve actual persisted city ID
         var actualCityId = await conn.ExecuteScalarAsync<Guid>(
             "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
             transaction: transaction);
 
-        // 2. Ensure default club exists using actual city ID
         await conn.ExecuteAsync(@"
             INSERT INTO public.clubs (id, cityid, name, createdat) 
             VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
             ON CONFLICT DO NOTHING;",
             new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
 
-        // 3. Seed players for the default club so that create_quick_match function can register them into rosters
         for (int i = 1; i <= 3; i++)
         {
             await conn.ExecuteAsync(@"
@@ -218,7 +206,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() }, transaction: transaction);
         }
 
-        // 4. Seed sport and sport configuration (setting rosterlimit = 3 for clear testing)
         await conn.ExecuteAsync(@"
             INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
             VALUES (@sportId, 'Water Polo Quick', 'WPQ', @configId)",
@@ -242,14 +229,12 @@ public class MatchRepositoryTests : BaseIntegrationTest
         result.GuestTeamId.Should().NotBeEmpty();
         result.ScheduledAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromMinutes(1));
 
-        // Assert DB state: verify that created JIT tournament container has isjit = true
         var isJitFlag = await conn.ExecuteScalarAsync<bool>(
             "SELECT isjit FROM public.tournaments WHERE id = @tId",
             new { tId = result.TournamentId });
 
         isJitFlag.Should().BeTrue("quick match tournament container must have isjit flag set to true");
 
-        // Assert DB state: verify player rosters exist for BOTH Home and Guest teams up to rosterlimit (3 each)
         var homeRosterCount = await conn.ExecuteScalarAsync<int>(
             "SELECT COUNT(*) FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @homeId",
             new { tId = result.TournamentId, homeId = result.HomeTeamId });
@@ -261,7 +246,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         homeRosterCount.Should().Be(3, "home team roster should be filled up to rosterlimit (3)");
         guestRosterCount.Should().Be(3, "guest team roster should be filled up to rosterlimit (3)");
 
-        // Assert DB state: verify automatic tracking in usertrackedmatches for home team
         var isTracked = await _repository.IsMatchCatchedByUserAsync(matchId, result.HomeTeamId, userId, CancellationToken.None);
         isTracked.Should().BeTrue("quick match creation should automatically track the home team for the user when isGuestTeam is false");
     }
@@ -292,7 +276,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
             await conn.OpenAsync();
             await using var transaction = await conn.BeginTransactionAsync();
 
-            // 1. Seed JIT base geography
             await conn.ExecuteAsync(@"
                 INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
                 INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
@@ -303,14 +286,12 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
                 transaction: transaction);
 
-            // 2. Seed default club
             await conn.ExecuteAsync(@"
                 INSERT INTO public.clubs (id, cityid, name, createdat) 
                 VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
                 ON CONFLICT DO NOTHING;",
                 new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
 
-            // 3. Seed sport & configuration
             await conn.ExecuteAsync(@"
                 INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
                 VALUES (@sportId, @name, 'SHP', @configId)",
@@ -324,17 +305,16 @@ public class MatchRepositoryTests : BaseIntegrationTest
             await transaction.CommitAsync();
         }
 
-        // 4. Create initial quick match for user 1 and catch it for user 2
         var sharedMatch = await _repository.CreateQuickMatchAsync(sharedMatchId, sportId, user1Id, configId, isGuestTeam: false, CancellationToken.None);
         sharedMatch.Should().NotBeNull();
 
         await _repository.CatchMatchAsync(sharedMatchId, sharedMatch!.HomeTeamId, user2Id, CancellationToken.None);
 
-        // Act: User 1 creates a new quick match, which triggers JIT garbage collection for user 1
+        // Act
         var newMatch = await _repository.CreateQuickMatchAsync(newMatchId, sportId, user1Id, configId, isGuestTeam: false, CancellationToken.None);
         newMatch.Should().NotBeNull();
 
-        // Assert: Verify sharedMatchId and User 2's tracking record remain intact
+        // Assert
         using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await checkConn.OpenAsync();
@@ -376,7 +356,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
             await conn.OpenAsync();
             await using var transaction = await conn.BeginTransactionAsync();
 
-            // 1. Seed JIT base geography
             await conn.ExecuteAsync(@"
                 INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
                 INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
@@ -387,14 +366,12 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
                 transaction: transaction);
 
-            // 2. Seed default club
             await conn.ExecuteAsync(@"
                 INSERT INTO public.clubs (id, cityid, name, createdat) 
                 VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
                 ON CONFLICT DO NOTHING;",
                 new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
 
-            // 3. Seed sport & configuration
             await conn.ExecuteAsync(@"
                 INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
                 VALUES (@sportId, @name, 'GCP', @configId)",
@@ -408,11 +385,9 @@ public class MatchRepositoryTests : BaseIntegrationTest
             await transaction.CommitAsync();
         }
 
-        // 4. Create an initial orphan match using CreateQuickMatchAsync (which automatically tracks it)
         var orphanMatch = await _repository.CreateQuickMatchAsync(orphanMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         orphanMatch.Should().NotBeNull();
 
-        // Verify the orphan match exists prior to GC
         using (var preCheckConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await preCheckConn.OpenAsync();
@@ -424,12 +399,11 @@ public class MatchRepositoryTests : BaseIntegrationTest
             existsBefore.Should().BeTrue("orphan match should exist before triggering JIT GC");
         }
 
-        // Act: User creates a new quick match, which triggers JIT garbage collection for this user,
-        // purging the previous empty match since it has no game events and no time anchors.
+        // Act
         var newMatch = await _repository.CreateQuickMatchAsync(newMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         newMatch.Should().NotBeNull();
 
-        // Assert: Verify that the old orphan match has been purged by GC
+        // Assert
         using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await checkConn.OpenAsync();
@@ -462,11 +436,9 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var userId = $"auth0|quickmatch-guest-{Guid.NewGuid()}";
 
-        // 0. Ensure User exists
         await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
             new { id = userId, e = "quickmatchguest@test.com", n = "QuickMatch Guest Owner" }, transaction: transaction);
 
-        // 1. Ensure JIT base geography exists
         await conn.ExecuteAsync(@"
             INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
             INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
@@ -477,14 +449,12 @@ public class MatchRepositoryTests : BaseIntegrationTest
             "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
             transaction: transaction);
 
-        // 2. Ensure default club exists
         await conn.ExecuteAsync(@"
             INSERT INTO public.clubs (id, cityid, name, createdat) 
             VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
             ON CONFLICT DO NOTHING;",
             new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
 
-        // 3. Seed sport & configuration
         await conn.ExecuteAsync(@"
             INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
             VALUES (@sportId, 'Water Polo Guest', 'WPG', @configId)",
@@ -535,7 +505,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
             await conn.OpenAsync();
             await using var transaction = await conn.BeginTransactionAsync();
 
-            // 1. Seed JIT base geography
             await conn.ExecuteAsync(@"
                 INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
                 INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
@@ -546,14 +515,12 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1",
                 transaction: transaction);
 
-            // 2. Seed default club
             await conn.ExecuteAsync(@"
                 INSERT INTO public.clubs (id, cityid, name, createdat) 
                 VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
                 ON CONFLICT DO NOTHING;",
                 new { clubId = defaultClubId, cityId = actualCityId }, transaction: transaction);
 
-            // 3. Seed sport & configuration
             await conn.ExecuteAsync(@"
                 INSERT INTO public.sports (id, name, shortname, defaultconfigid) 
                 VALUES (@sportId, @name, 'TAP', @configId)",
@@ -567,11 +534,9 @@ public class MatchRepositoryTests : BaseIntegrationTest
             await transaction.CommitAsync();
         }
 
-        // 4. Create first quick match for the user
         var firstMatch = await _repository.CreateQuickMatchAsync(firstMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         firstMatch.Should().NotBeNull();
 
-        // 5. Insert a time anchor into the first match
         using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.OpenAsync();
@@ -581,11 +546,11 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { id = Guid.NewGuid(), matchId = firstMatchId });
         }
 
-        // Act: User creates a second quick match, triggering JIT GC
+        // Act
         var secondMatch = await _repository.CreateQuickMatchAsync(secondMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         secondMatch.Should().NotBeNull();
 
-        // Assert: Verify the first match was NOT purged because it has a time anchor
+        // Assert
         using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await checkConn.OpenAsync();
@@ -616,18 +581,17 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
         await _repository.CatchMatchAsync(ordinaryMatch.Id, context.HomeTeamId, userId, CancellationToken.None);
 
-        // Setup sport & config for Quick Match creation
         var newMatchId = Guid.NewGuid();
         var quickSportId = Guid.NewGuid();
         var quickConfigId = Guid.NewGuid();
 
         await SeedSportWithConfigAsync(quickSportId, $"QuickPolo_{Guid.NewGuid():N}", "QP", quickConfigId);
 
-        // Act: User creates a new quick match, triggering JIT GC
+        // Act
         var quickMatch = await _repository.CreateQuickMatchAsync(newMatchId, quickSportId, userId, quickConfigId, isGuestTeam: false, CancellationToken.None);
         quickMatch.Should().NotBeNull();
 
-        // Assert: Ordinary tournament match must NOT be purged by JIT GC
+        // Assert
         using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await checkConn.OpenAsync();
@@ -658,12 +622,10 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await SeedUserAsync(userId, $"user_isjit_{Guid.NewGuid():N}@example.com", "IsJit User");
         await SeedSportWithConfigAsync(sportId, $"IsJitPolo_{Guid.NewGuid():N}", "IJP", configId);
 
-        // 1. Create initial quick match
         var firstMatch = await _repository.CreateQuickMatchAsync(
             firstMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         firstMatch.Should().NotBeNull();
 
-        // 2. Explicitly rename the JIT tournament in DB to ensure logic doesn't rely on the legacy name string
         using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.OpenAsync();
@@ -672,16 +634,15 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { tId = firstMatch!.TournamentId });
         }
 
-        // Act: Create second quick match, triggering JIT GC and container resolution
+        // Act
         var secondMatch = await _repository.CreateQuickMatchAsync(
             secondMatchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         secondMatch.Should().NotBeNull();
 
-        // Assert 1: Verify the existing JIT tournament container was reused despite being renamed
+        // Assert
         secondMatch!.TournamentId.Should().Be(firstMatch.TournamentId,
             "JIT tournament container must be reused based on configurationid and isjit = true regardless of tournament name");
 
-        // Assert 2: Verify first match was purged strictly because isjit = true
         using (var checkConn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
             await checkConn.OpenAsync();
@@ -700,7 +661,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that <see cref="MatchRepository.DeleteAsync"/> deletes an existing match from the database and returns true.
-    /// Also confirms that subsequent retrieval returns null.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
@@ -758,7 +718,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        // 1. Fetch or create a match lineup ID for the Home team
         var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
             "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
             new { tId = context.TournamentId, teamId = context.HomeTeamId });
@@ -771,7 +730,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
             "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 99, @posId)",
             new { id = targetLineupId, mId = match.Id, rId = rosterId, posId = positionId });
 
-        // 2. Seed Event Definitions
         var sportId = await conn.ExecuteScalarAsync("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
         var eventDefId = Guid.NewGuid();
 
@@ -779,7 +737,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
             "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Exclusion', 'EX', false, NOW())",
             new { id = eventDefId, sId = sportId });
 
-        // 3. Seed Game Events for this lineup
         var eventTimestamp = DateTime.UtcNow;
         await conn.ExecuteAsync(
             "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:03:30', false, NOW())",
@@ -816,12 +773,10 @@ public class MatchRepositoryTests : BaseIntegrationTest
         using var conn = Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        // Retrieve sportId associated with the seeded tournament
         var sportId = await conn.QueryFirstAsync<Guid>(
             "SELECT sportid FROM public.tournaments WHERE id = @tourId",
             new { tourId = context.TournamentId });
 
-        // Query the existing player roster and position identifier using the exact column names from 01-Tables.sql
         var rosterData = await conn.QueryFirstAsync<dynamic>(
             "SELECT id, positionid FROM public.playerrosters WHERE teamid = @teamId AND tournamentid = @tourId LIMIT 1",
             new { teamId = context.HomeTeamId, tourId = context.TournamentId });
@@ -834,7 +789,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
             "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @m, @r, 99, @posId)",
             new { id = lineupId, m = match.Id, r = rosterId, posId = positionId });
 
-        // Seed event definition explicitly including shortname for the test sport
         var eventDefId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
             INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat)
@@ -843,13 +797,11 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
         var baseTime = DateTime.UtcNow;
 
-        // Event 1: Period 2, absolute time is later (+30 min), but relative period time is smaller (2 min)
         await conn.ExecuteAsync(@"
             INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat)
             VALUES (@id, @mlId, @edId, 2, @ts, @norm, false, NOW())",
             new { id = Guid.NewGuid(), mlId = lineupId, edId = eventDefId, ts = baseTime.AddMinutes(30), norm = TimeSpan.FromMinutes(2) });
 
-        // Event 2: Period 1, absolute time is earlier (baseTime), but relative period time is larger (44 min)
         await conn.ExecuteAsync(@"
             INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat)
             VALUES (@id, @mlId, @edId, 1, @ts, @norm, true, NOW())",
@@ -863,7 +815,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var eventsWithData = result.Where(r => r.EventId.HasValue).ToList();
         eventsWithData.Should().HaveCount(2);
 
-        // Verify that the repository (database function) orders strictly ascending by EventTimestamp
         eventsWithData[0].PeriodNumber.Should().Be(1);
         eventsWithData[0].EventTimestamp.Should().NotBeNull();
         eventsWithData[0].EventTimestamp!.Value.Should().BeCloseTo(baseTime, TimeSpan.FromMilliseconds(100));
@@ -874,7 +825,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         eventsWithData[1].EventTimestamp!.Value.Should().BeCloseTo(baseTime.AddMinutes(30), TimeSpan.FromMilliseconds(100));
         eventsWithData[1].IsLeadToGoal.Should().BeFalse();
 
-        // Compare non-nullable DateTime values using .Value
         eventsWithData[0].EventTimestamp!.Value.Should().BeBefore(eventsWithData[1].EventTimestamp!.Value);
     }
 
@@ -891,7 +841,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
         await _repository.UpsertMatchAsync(match, CancellationToken.None);
 
-        // 1. Seed Time Anchors to establish match duration (Period 1: 0 to 10 minutes)
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
@@ -912,12 +861,10 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 endTs = endTime
             });
 
-        // 2. Fetch a lineup entry for the Home team
         var matchLineupId = await conn.ExecuteScalarAsync<Guid>(
             "SELECT ml.id FROM public.matchlineups ml JOIN public.playerrosters pr ON ml.playerrosterid = pr.id WHERE ml.matchid = @matchId AND pr.teamid = @teamId LIMIT 1",
             new { matchId = match.Id, teamId = context.HomeTeamId });
 
-        // If no lineup entry exists from seed, create one for testing
         Guid targetLineupId = matchLineupId;
         if (targetLineupId == Guid.Empty)
         {
@@ -934,12 +881,10 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { id = targetLineupId, mId = match.Id, rId = rosterId, posId = positionId });
         }
 
-        // 3. Seed Player Presence (full 10 minutes duration -> 100% play percentage)
         await conn.ExecuteAsync(
             "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) VALUES (@id, @lineupId, 1, @in, @out)",
             new { id = Guid.NewGuid(), lineupId = targetLineupId, @in = startTime, @out = endTime });
 
-        // 4. Seed an Event Definition and a Game Event ('Goal', positive, lead to goal)
         var eventDefId = Guid.NewGuid();
         var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
 
@@ -984,7 +929,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var startTime = DateTime.UtcNow.AddMinutes(-30);
         var endTime = startTime.AddMinutes(10);
 
-        // 1. Seed Time Anchors to establish match duration (10 mins)
         await conn.ExecuteAsync(@"
             INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) 
             VALUES 
@@ -999,7 +943,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 endTs = endTime
             });
 
-        // 2. Fetch or create a lineup entry
         var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
             "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
             new { tId = context.TournamentId, teamId = context.HomeTeamId });
@@ -1009,15 +952,10 @@ public class MatchRepositoryTests : BaseIntegrationTest
             "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 1, @posId)",
             new { id = targetLineupId, mId = match.Id, rId = rosterData.id, posId = rosterData.positionid });
 
-        // 3. Seed Player Presence (10 mins -> 100% play percentage)
         await conn.ExecuteAsync(
             "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) VALUES (@id, @lineupId, 1, @in, @out)",
             new { id = Guid.NewGuid(), lineupId = targetLineupId, @in = startTime, @out = endTime });
 
-        // 4. Seed Event Definitions:
-        // - Positive Scored Goal ('Goal', 'G', ispositive = true)
-        // - Negative Conceded Goal ('Goal', 'GC', ispositive = false)
-        // - Negative Action leading to goal ('Bad Pass', 'BP', ispositive = false)
         var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
 
         var positiveGoalDefId = Guid.NewGuid();
@@ -1031,18 +969,14 @@ public class MatchRepositoryTests : BaseIntegrationTest
             (@bpId, @sId, 'Bad Pass', 'BP', false, NOW());",
             new { gPosId = positiveGoalDefId, gNegId = negativeGoalDefId, bpId = badPassDefId, sId = sportId });
 
-        // 5. Seed Game Events:
-        // Event A: Positive Goal scored (isleadtogoal = true)
         await conn.ExecuteAsync(
             "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:02:00', true, NOW())",
             new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = positiveGoalDefId, ts = startTime.AddMinutes(2) });
 
-        // Event B: Negative Conceded Goal assigned to goalkeeper (isleadtogoal = false)
         await conn.ExecuteAsync(
             "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:05:00', false, NOW())",
             new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = negativeGoalDefId, ts = startTime.AddMinutes(5) });
 
-        // Event C: Negative Bad Pass leading to goal (isleadtogoal = true)
         await conn.ExecuteAsync(
             "INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES (@id, @lineupId, @defId, 1, @ts, '00:07:00', true, NOW())",
             new { id = Guid.NewGuid(), lineupId = targetLineupId, defId = badPassDefId, ts = startTime.AddMinutes(7) });
@@ -1055,17 +989,11 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var playerSummary = report.FirstOrDefault(r => r.MatchLineupId == targetLineupId);
         playerSummary.Should().NotBeNull();
 
-        // Scored goals MUST be 1 (only positive Goal), conceded goal (ispositive = false) MUST NOT inflate goals count
         playerSummary!.Goals.Should().Be(1, "only positive 'Goal' events should be counted as scored goals");
-
-        // Positive and negative goal-leading actions
         playerSummary.PositiveGoalLeadingActions.Should().Be(1, "positive goal event with isleadtogoal = true");
         playerSummary.NegativeGoalLeadingActions.Should().Be(1, "bad pass event with isleadtogoal = true");
-
-        // Total positive and negative action counts
         playerSummary.TotalPositiveActions.Should().Be(1);
         playerSummary.TotalNegativeActions.Should().Be(2, "includes 1 conceded goal and 1 bad pass");
-
         playerSummary.PlayPercentage.Should().Be(100.0);
     }
 
@@ -1224,7 +1152,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await SeedUserAsync(userId, $"single_{Guid.NewGuid():N}@test.com", "Single Quick User");
         await SeedSportWithConfigAsync(sportId, $"QuickPolo_{Guid.NewGuid():N}", "QP", configId);
 
-        // CreateQuickMatchAsync creates a match in 'Training & Friendly Matches' and automatically tracks it for userId
         var match = await _repository.CreateQuickMatchAsync(matchId, sportId, userId, configId, isGuestTeam: false, CancellationToken.None);
         match.Should().NotBeNull();
 
@@ -1295,7 +1222,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await SeedUserAsync(targetUserId, "targetuser@test.com", "Target User");
         await SeedUserAsync(noiseUserId, "noiseuser@test.com", "Noise User");
 
-        // Target user catches match 1; Noise user catches match 2
         await _repository.CatchMatchAsync(match1.Id, context1.HomeTeamId, targetUserId, CancellationToken.None);
         await _repository.CatchMatchAsync(match2.Id, context2.HomeTeamId, noiseUserId, CancellationToken.None);
 
@@ -1319,7 +1245,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> atomically persists a batch of 
-    /// game events (including spatial coordinates), time anchors, and player presences, returning confirmed synchronized entity IDs.
+    /// game events (including spatial coordinates and shot coordinates when isshot = true), time anchors, and player presences, 
+    /// returning confirmed synchronized entity IDs.
     /// </summary>
     /// <returns>A task representing the asynchronous test operation.</returns>
     [Fact]
@@ -1343,17 +1270,17 @@ public class MatchRepositoryTests : BaseIntegrationTest
             "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 10, @posId)",
             new { id = lineupId, mId = match.Id, rId = rosterData.id, posId = rosterData.positionid });
 
-        // 2. Seed EventDefinition for the sport
+        // 2. Seed EventDefinition for the sport with isshot = true
         var sportId = await conn.ExecuteScalarAsync<Guid>(
             "SELECT sportid FROM public.tournaments WHERE id = @tId",
             new { tId = context.TournamentId });
 
         var eventDefId = Guid.NewGuid();
         await conn.ExecuteAsync(
-            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, createdat) VALUES (@id, @sId, 'Goal', 'G', true, true, NOW())",
             new { id = eventDefId, sId = sportId });
 
-        // 3. Prepare batch entities including LocationX and LocationY coordinates
+        // 3. Prepare batch entities including general spatial coordinates and shot coordinates
         var eventEntity = new GameEvent
         {
             Id = Guid.NewGuid(),
@@ -1364,6 +1291,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
             IsLeadToGoal = true,
             LocationX = 33.30m,
             LocationY = 66.60m,
+            ShotLocationX = 12.50m,
+            ShotLocationY = 45.80m,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1399,9 +1328,15 @@ public class MatchRepositoryTests : BaseIntegrationTest
         result.SyncedAnchorIds.Should().ContainSingle().Which.Should().Be(anchorEntity.Id);
         result.SyncedPresenceIds.Should().ContainSingle().Which.Should().Be(presenceEntity.Id);
 
-        // Verify direct database state persistence and spatial coordinates matching
-        var dbEventData = await conn.QueryFirstOrDefaultAsync<(bool Exists, decimal? LocationX, decimal? LocationY)>(
-            "SELECT EXISTS(SELECT 1 FROM public.gameevents WHERE id = @id) AS Exists, locationx AS LocationX, locationy AS LocationY FROM public.gameevents WHERE id = @id",
+        // Verify direct database state persistence and spatial/shot coordinates matching
+        var dbEventData = await conn.QueryFirstOrDefaultAsync<(bool Exists, decimal? LocationX, decimal? LocationY, decimal? ShotLocationX, decimal? ShotLocationY)>(
+            @"SELECT 
+                EXISTS(SELECT 1 FROM public.gameevents WHERE id = @id) AS Exists, 
+                locationx AS LocationX, 
+                locationy AS LocationY,
+                shotlocationx AS ShotLocationX,
+                shotlocationy AS ShotLocationY 
+              FROM public.gameevents WHERE id = @id",
             new { id = eventEntity.Id });
 
         var dbAnchorExists = await conn.ExecuteScalarAsync<bool>(
@@ -1412,9 +1347,84 @@ public class MatchRepositoryTests : BaseIntegrationTest
         dbEventData.Exists.Should().BeTrue("synced game event record must exist in public.gameevents");
         dbEventData.LocationX.Should().Be(33.30m, "persisted LocationX must match the provided value");
         dbEventData.LocationY.Should().Be(66.60m, "persisted LocationY must match the provided value");
+        dbEventData.ShotLocationX.Should().Be(12.50m, "persisted ShotLocationX must match provided value when isshot = true");
+        dbEventData.ShotLocationY.Should().Be(45.80m, "persisted ShotLocationY must match provided value when isshot = true");
 
         dbAnchorExists.Should().BeTrue("synced time anchor record must exist in public.timeanchors");
         dbPresenceExists.Should().BeTrue("synced player presence record must exist in public.playerpresences");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.SyncMatchBatchAsync"/> automatically masks shot coordinates
+    /// (sets <c>shotlocationx</c> and <c>shotlocationy</c> to <c>null</c>) when the referenced event definition 
+    /// has <c>isshot = false</c>, even if non-null shot coordinates were provided in the payload.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task SyncMatchBatchAsync_ShouldMaskShotCoordinatesToNull_WhenEventDefinitionIsNotShot()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+            "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+            new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+        var lineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 10, @posId)",
+            new { id = lineupId, mId = match.Id, rId = rosterData.id, posId = rosterData.positionid });
+
+        var sportId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT sportid FROM public.tournaments WHERE id = @tId",
+            new { tId = context.TournamentId });
+
+        // Seed EventDefinition for non-shot action (isshot = false)
+        var eventDefId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, createdat) VALUES (@id, @sId, 'Exclusion', 'EX', false, false, NOW())",
+            new { id = eventDefId, sId = sportId });
+
+        // Prepare event with both general location and accidental shot location values
+        var eventEntity = new GameEvent
+        {
+            Id = Guid.NewGuid(),
+            MatchLineupId = lineupId,
+            EventDefinitionId = eventDefId,
+            PeriodNumber = 1,
+            EventTimestamp = DateTime.UtcNow,
+            IsLeadToGoal = false,
+            LocationX = 15.00m,
+            LocationY = 25.00m,
+            ShotLocationX = 99.99m, // Accidental client payload for non-shot event
+            ShotLocationY = 88.88m,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var result = await _repository.SyncMatchBatchAsync(
+            match.Id,
+            [eventEntity],
+            [],
+            [],
+            CancellationToken.None);
+
+        // Assert
+        result.SyncedEventIds.Should().ContainSingle().Which.Should().Be(eventEntity.Id);
+
+        var dbEvent = await conn.QueryFirstOrDefaultAsync<(decimal? LocationX, decimal? LocationY, decimal? ShotLocationX, decimal? ShotLocationY)>(
+            "SELECT locationx AS LocationX, locationy AS LocationY, shotlocationx AS ShotLocationX, shotlocationy AS ShotLocationY FROM public.gameevents WHERE id = @id",
+            new { id = eventEntity.Id });
+
+        dbEvent.LocationX.Should().Be(15.00m, "general action location must be preserved");
+        dbEvent.LocationY.Should().Be(25.00m, "general action location must be preserved");
+        dbEvent.ShotLocationX.Should().BeNull("shotlocationx must be masked to NULL when isshot = false");
+        dbEvent.ShotLocationY.Should().BeNull("shotlocationy must be masked to NULL when isshot = false");
     }
 
     /// <summary>
@@ -1445,7 +1455,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
         var eventDefId = Guid.NewGuid();
         await conn.ExecuteAsync(
-            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, createdat) VALUES (@id, @sId, 'Goal', 'G', true, true, NOW())",
             new { id = eventDefId, sId = sportId });
 
         var eventId = Guid.NewGuid();
@@ -1460,10 +1470,8 @@ public class MatchRepositoryTests : BaseIntegrationTest
             CreatedAt = DateTime.UtcNow
         };
 
-        // Seed initial record
         await _repository.SyncMatchBatchAsync(match.Id, [initialEvent], [], [], CancellationToken.None);
 
-        // Prepare updated record with changed IsLeadToGoal property
         var updatedEvent = new GameEvent
         {
             Id = eventId,
@@ -1573,7 +1581,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        // Create lineup entry for Match 2
         var rosterData2 = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
             "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
             new { tId = context2.TournamentId, teamId = context2.HomeTeamId });
@@ -1589,7 +1596,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
             "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
             new { id = eventDefId, sId = sportId });
 
-        // Event in Match 1 batch attempts to reference Match 2's lineup
         var invalidEvent = new GameEvent
         {
             Id = Guid.NewGuid(),
@@ -1664,7 +1670,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var match2 = CreateMatchModel(context2.TournamentId, context2.HomeTeamId, context2.GuestTeamId);
         await _repository.UpsertMatchAsync(match2, CancellationToken.None);
 
-        // Seed Time Anchor explicitly into Match 2
         var anchorIdInMatch2 = Guid.NewGuid();
         using (var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection())
         {
@@ -1675,7 +1680,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
                 new { id = anchorIdInMatch2, mId = match2.Id });
         }
 
-        // Try to update anchorIdInMatch2 via Match 1's batch sync
         var hijackingAnchor = new TimeAnchor
         {
             Id = anchorIdInMatch2,
@@ -1702,12 +1706,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
 
     #region Helpers
 
-    /// <summary>
-    /// Helper method to insert a user record into the database for integration testing.
-    /// </summary>
-    /// <param name="userId">The unique string identifier of the user.</param>
-    /// <param name="email">The email address of the user.</param>
-    /// <param name="displayName">The display name of the user.</param>
     private async Task SeedUserAsync(string userId, string email, string displayName)
     {
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -1721,24 +1719,15 @@ public class MatchRepositoryTests : BaseIntegrationTest
             new { id = userId, email, displayName });
     }
 
-    /// <summary>
-    /// Seeds all necessary entities with unique names and valid codes strictly following 01-Tables.sql schema.
-    /// Ensures country codes do not exceed the 3-character database limit (varchar(3)).
-    /// Uses an explicit transaction to satisfy deferred foreign key constraints between sports and sportconfigurations.
-    /// </summary>
-    /// <returns>A tuple containing the created Tournament ID, Home Team ID, and Guest Team ID.</returns>
     private async Task<(Guid TournamentId, Guid HomeTeamId, Guid GuestTeamId)> SeedMatchEnvironmentAsync()
     {
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         await using var transaction = await conn.BeginTransactionAsync();
 
-        // Generate a unique 8-char suffix for names
         var suffix = Guid.NewGuid().ToString()[..8];
-        // Generate a unique 3-char code for the country to satisfy varchar(3) constraint
         var shortCode = Guid.NewGuid().ToString()[..3].ToUpper();
 
-        // 1. Geography & Auth
         var userId = $"auth0|{Guid.NewGuid()}";
         await conn.ExecuteAsync("INSERT INTO public.users (id, email, displayname, createdat) VALUES (@id, @e, @n, NOW())",
             new { id = userId, e = $"owner_{suffix}@test.com", n = $"Owner {suffix}" }, transaction: transaction);
@@ -1755,7 +1744,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await conn.ExecuteAsync("INSERT INTO public.cities (id, regionid, name) VALUES (@id, @r, @n)",
             new { id = cityId, r = regionId, n = $"City_{suffix}" }, transaction: transaction);
 
-        // 2. Sport & Tournament (Updated for Issue #69 schema)
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         var shortName = $"S_{sportId:N}"[..10];
@@ -1776,7 +1764,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
             VALUES (@id, @s, @cfg, @ct, @o, @n, NOW(), NOW())",
             new { id = tournamentId, s = sportId, cfg = configId, ct = cityId, o = userId, n = $"Tourney_{suffix}" }, transaction: transaction);
 
-        // 3. Teams & Rosters
         var clubId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.clubs (id, cityid, name, createdat) VALUES (@id, @c, @n, NOW())",
             new { id = clubId, c = cityId, n = $"Club_{suffix}" }, transaction: transaction);
@@ -1789,16 +1776,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         return (tournamentId, homeTeamId, guestTeamId);
     }
 
-    /// <summary>
-    /// Helper method to seed a team, a player, and their tournament roster entry within an active transaction.
-    /// </summary>
-    /// <param name="conn">The active database connection.</param>
-    /// <param name="transaction">The active database transaction.</param>
-    /// <param name="clubId">The club identifier to associate with the team and player.</param>
-    /// <param name="sportId">The sport identifier associated with the team.</param>
-    /// <param name="tournamentId">The tournament identifier for roster registration.</param>
-    /// <param name="name">The name of the team to create.</param>
-    /// <returns>The unique identifier of the newly created team.</returns>
     private static async Task<Guid> SeedTeamAndRosterAsync(
         System.Data.IDbConnection conn,
         System.Data.IDbTransaction transaction,
@@ -1811,7 +1788,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         await conn.ExecuteAsync("INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES (@id, @c, @s, @n, 0, NOW())",
             new { id = teamId, c = clubId, s = sportId, n = name }, transaction: transaction);
 
-        // The stored function upsert_match requires teams to be in playerrosters
         var playerId = Guid.NewGuid();
         await conn.ExecuteAsync("INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat) VALUES (@id, @c, 'F', 'L', '2000-01-01', 0, NOW())",
             new { id = playerId, c = clubId }, transaction: transaction);
@@ -1826,14 +1802,6 @@ public class MatchRepositoryTests : BaseIntegrationTest
         return teamId;
     }
 
-    /// <summary>
-    /// Helper method to construct a valid <see cref="Match"/> domain model for testing.
-    /// </summary>
-    /// <param name="tournamentId">The associated tournament identifier.</param>
-    /// <param name="homeId">The home team identifier.</param>
-    /// <param name="guestId">The guest team identifier.</param>
-    /// <param name="matchNumber">The match number or code (defaults to "M-TEST").</param>
-    /// <returns>A populated <see cref="Match"/> instance.</returns>
     private static Match CreateMatchModel(Guid tournamentId, Guid homeId, Guid guestId, string matchNumber = "M-TEST")
     {
         return new Match

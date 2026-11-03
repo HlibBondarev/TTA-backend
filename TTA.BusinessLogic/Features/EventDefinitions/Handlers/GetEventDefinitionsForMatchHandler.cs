@@ -49,6 +49,7 @@ public class GetEventDefinitionsForMatchHandler(
             Name: p.Name,
             ShortName: p.ShortName,
             IsPositive: p.IsPositive,
+            IsShot: p.IsShot,
             IsCustom: p.IsCustom,
             IsEnabled: p.IsEnabled,
             SortOrder: p.SortOrder

@@ -8,6 +8,9 @@ namespace TTA.BusinessLogic.Features.GameEvents.Validators;
 /// </summary>
 public class UpdateGameEventRequestValidator : AbstractValidator<UpdateGameEventRequest>
 {
+    /// <summary>
+    /// Initializes validation rules for <see cref="UpdateGameEventRequest"/>.
+    /// </summary>
     public UpdateGameEventRequestValidator()
     {
         RuleFor(x => x.EventDefinitionId)
@@ -27,5 +30,13 @@ public class UpdateGameEventRequestValidator : AbstractValidator<UpdateGameEvent
         RuleFor(x => x.LocationY)
             .InclusiveBetween(0.00m, 100.00m)
             .WithMessage("LocationY must be between 0.00 and 100.00.");
+
+        RuleFor(x => x.ShotLocationX)
+            .InclusiveBetween(0.00m, 100.00m)
+            .WithMessage("ShotLocationX must be between 0.00 and 100.00.");
+
+        RuleFor(x => x.ShotLocationY)
+            .InclusiveBetween(0.00m, 100.00m)
+            .WithMessage("ShotLocationY must be between 0.00 and 100.00.");
     }
 }

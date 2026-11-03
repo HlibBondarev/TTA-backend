@@ -131,8 +131,8 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
                 INSERT INTO public.users (id, email, displayname, createdat) 
                 VALUES (@userId, 'other@tta.com', 'Other User', NOW());
 
-                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, createdat)
-                VALUES (@defId, @sportId, @userId, 'Foreign Action', 'FRG', true, NOW());
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, isshot, createdat)
+                VALUES (@defId, @sportId, @userId, 'Foreign Action', 'FRG', true, false, NOW());
 
                 INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
                 VALUES (@currentUserId, @defId, 0, NOW());",
@@ -164,12 +164,12 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         using (var conn = Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.ExecuteAsync(@"
-                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, defaultposition, createdat)
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, isshot, defaultposition, createdat)
                 VALUES 
-                (@posDef2, @sportId, NULL, 'Goal', 'G', true, 2, NOW()),
-                (@posDef1, @sportId, NULL, 'Steal', 'ST', true, 1, NOW()),
-                (@negDef2, @sportId, NULL, 'Exclusion', 'E', false, 2, NOW()),
-                (@negDef1, @sportId, NULL, 'Turnover', 'TO', false, 1, NOW())",
+                (@posDef2, @sportId, NULL, 'Goal', 'G', true, true, 2, NOW()),
+                (@posDef1, @sportId, NULL, 'Steal', 'ST', true, false, 1, NOW()),
+                (@negDef2, @sportId, NULL, 'Exclusion', 'E', false, false, 2, NOW()),
+                (@negDef1, @sportId, NULL, 'Turnover', 'TO', false, false, 1, NOW())",
                 new { posDef1, posDef2, negDef1, negDef2, sportId });
         }
 
@@ -182,19 +182,23 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         // Positive actions first, ordered by defaultposition ASC (1, then 2)
         definitions[0].Id.Should().Be(posDef1);
         definitions[0].IsPositive.Should().BeTrue();
+        definitions[0].IsShot.Should().BeFalse();
         definitions[0].SortOrder.Should().Be(1);
 
         definitions[1].Id.Should().Be(posDef2);
         definitions[1].IsPositive.Should().BeTrue();
+        definitions[1].IsShot.Should().BeTrue();
         definitions[1].SortOrder.Should().Be(2);
 
         // Negative actions second, ordered by defaultposition ASC (1, then 2)
         definitions[2].Id.Should().Be(negDef1);
         definitions[2].IsPositive.Should().BeFalse();
+        definitions[2].IsShot.Should().BeFalse();
         definitions[2].SortOrder.Should().Be(1);
 
         definitions[3].Id.Should().Be(negDef2);
         definitions[3].IsPositive.Should().BeFalse();
+        definitions[3].IsShot.Should().BeFalse();
         definitions[3].SortOrder.Should().Be(2);
     }
 
@@ -220,6 +224,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Custom Tactical Block",
             ShortName = "C-BLK",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -231,6 +236,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         created!.Id.Should().Be(customDefinition.Id);
         created.Name.Should().Be("Custom Tactical Block");
         created.OwnerId.Should().Be(userId);
+        created.IsShot.Should().BeFalse();
 
         // Verify database state: no user preset entry should exist automatically
         using var conn = Fixture.ConnectionFactory.CreateConnection();
@@ -239,6 +245,45 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             new { userId, defId = customDefinition.Id });
 
         presetCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync" /> correctly persists the <c>IsShot</c> flag
+    /// when creating a custom event definition.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldPersistIsShotFlag_WhenCustomDefinitionCreated()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var shotDefinition = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Custom Penalty Shot",
+            ShortName = "C-PEN",
+            IsPositive = true,
+            IsShot = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        var created = await _repository.UpsertCustomAsync(shotDefinition);
+
+        // Assert
+        created.Should().NotBeNull();
+        created!.Id.Should().Be(shotDefinition.Id);
+        created.IsShot.Should().BeTrue("IsShot flag must be persisted as true in the database");
+
+        // Verify database state directly
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var dbIsShot = await conn.ExecuteScalarAsync<bool>(
+            "SELECT isshot FROM public.eventdefinitions WHERE id = @id",
+            new { id = shotDefinition.Id });
+
+        dbIsShot.Should().BeTrue();
     }
 
     /// <summary>
@@ -259,6 +304,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Tactical Move",
             ShortName = "MOVE",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -272,6 +318,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Tactical Move", // Identical attributes for idempotency
             ShortName = "MOVE",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -283,6 +330,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         result!.Name.Should().Be("Tactical Move");
         result.ShortName.Should().Be("MOVE");
         result.IsPositive.Should().BeTrue();
+        result.IsShot.Should().BeFalse();
     }
 
     /// <summary>
@@ -304,6 +352,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Original Custom Action",
             ShortName = "OCA",
             IsPositive = true,
+            IsShot = false,
             IsSoftDeleted = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -319,6 +368,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Attempt Reused Action",
             ShortName = "ARA",
             IsPositive = false,
+            IsShot = false,
             IsSoftDeleted = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -349,6 +399,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "First Tactical Block",
             ShortName = "BLK1",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -360,6 +411,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Second Tactical Block",
             ShortName = "BLK2",
             IsPositive = true,
+            IsShot = true,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -371,7 +423,9 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         firstResult.Should().NotBeNull();
         secondResult.Should().NotBeNull();
         firstResult!.Id.Should().Be(firstDef.Id);
+        firstResult.IsShot.Should().BeFalse();
         secondResult!.Id.Should().Be(secondDef.Id);
+        secondResult.IsShot.Should().BeTrue();
     }
 
     /// <summary>
@@ -400,6 +454,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Original Action",
             ShortName = "OA",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -414,6 +469,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Original Action",
             ShortName = "OA",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -446,6 +502,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Definition To Delete",
             ShortName = "DEL",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -516,6 +573,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Already Deleted Action",
             ShortName = "ADA",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -554,6 +612,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Custom Tactical Move",
             ShortName = "CTM",
             IsPositive = true,
+            IsShot = true,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -570,6 +629,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         var customItem = list.FirstOrDefault(x => x.Id == customDef.Id);
         customItem.Should().NotBeNull();
         customItem!.IsCustom.Should().BeTrue();
+        customItem.IsShot.Should().BeTrue();
         customItem.IsEnabled.Should().BeFalse(); // Not automatically enabled in presets on creation
 
         var systemItem = list.FirstOrDefault(x => x.Id == systemDefIds[0]);
@@ -595,6 +655,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Alpha Action",
             ShortName = "ACT_A",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -606,6 +667,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Beta Action",
             ShortName = "ACT_B",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -617,6 +679,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Charlie Action",
             ShortName = "ACT_C",
             IsPositive = true,
+            IsShot = true,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -628,6 +691,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Delta Action",
             ShortName = "ACT_D",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -664,6 +728,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         result[1].Id.Should().Be(defC.Id);
         result[1].IsEnabled.Should().BeTrue();
+        result[1].IsShot.Should().BeTrue();
         result[1].SortOrder.Should().Be(10);
 
         result[2].Id.Should().Be(defA.Id);
@@ -689,10 +754,10 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         using (var conn = Fixture.ConnectionFactory.CreateConnection())
         {
             await conn.ExecuteAsync(@"
-                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, defaultposition, createdat)
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, isshot, defaultposition, createdat)
                 VALUES 
-                (@def1, @sportId, NULL, 'Steal', 'ST', true, 1, NOW()),
-                (@def2, @sportId, NULL, 'Key Pass', 'SP', true, 2, NOW())",
+                (@def1, @sportId, NULL, 'Steal', 'ST', true, false, 1, NOW()),
+                (@def2, @sportId, NULL, 'Key Pass', 'SP', true, false, 2, NOW())",
                 new { def1, def2, sportId });
         }
 
@@ -733,6 +798,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Concurrent Action A",
             ShortName = "ACT_A",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -744,12 +810,13 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Concurrent Action B",
             ShortName = "ACT_B",
             IsPositive = false,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
         var startGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // Act: Synchronize both upsert operations with a shared start gate to guarantee simultaneous release
+        // Act
         var task1 = Task.Run(async () =>
         {
             await startGate.Task;
@@ -766,7 +833,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
         Func<Task> act = async () => await Task.WhenAll(task1, task2);
 
-        // Assert: Both tasks should execute without deadlocks or Postgres exceptions
+        // Assert
         await act.Should().NotThrowAsync();
 
         var created1 = await task1;
@@ -795,6 +862,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Definition To Delete Concurrently",
             ShortName = "DEL_C",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -808,12 +876,13 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "New Definition Inserted Concurrently",
             ShortName = "INS_C",
             IsPositive = false,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
         var startGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // Act: Synchronize SoftDelete and Upsert with a shared start gate
+        // Act
         var deleteTask = Task.Run(async () =>
         {
             await startGate.Task;
@@ -839,7 +908,6 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         deleteResult.Should().BeTrue();
         upsertResult.Should().NotBeNull();
 
-        // Verify DB State: Old definition is soft-deleted
         using var conn = Fixture.ConnectionFactory.CreateConnection();
         var isSoftDeleted = await conn.ExecuteScalarAsync<bool>(
             "SELECT issoftdeleted FROM public.eventdefinitions WHERE id = @id",
@@ -874,6 +942,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "User 1 Action",
             ShortName = "U1A",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -885,6 +954,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "User 2 Action",
             ShortName = "U2A",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -922,6 +992,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Duplicate Action Name",
             ShortName = "ACT1",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -935,6 +1006,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Duplicate Action Name", // Identical active name
             ShortName = "ACT2",
             IsPositive = true, // Identical IsPositive flag -> should fail
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -964,6 +1036,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Foul",
             ShortName = "FOL-P",
             IsPositive = true, // Positive Foul
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -975,6 +1048,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Foul", // Same name
             ShortName = "FOL-N",
             IsPositive = false, // Opposite IsPositive -> allowed
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -993,7 +1067,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> throws PostgresException (P0001)
-    /// when attempting to modify semantic fields (name, shortname, ispositive) of an existing active custom definition.
+    /// when attempting to modify semantic fields (name, shortname, ispositive, isshot) of an existing active custom definition.
     /// </summary>
     [Fact]
     public async Task UpsertCustomAsync_ShouldThrowException_WhenModifyingExistingDefinitionAttributes()
@@ -1009,6 +1083,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Initial Name",
             ShortName = "INIT",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1022,6 +1097,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Modified Name", // Attempting to change attribute
             ShortName = "INIT",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1051,6 +1127,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Tactical Pass",
             ShortName = "PASS",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1064,6 +1141,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             Name = "Tactical Pass",
             ShortName = "PASS",
             IsPositive = true,
+            IsShot = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1146,10 +1224,10 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             var def2 = Guid.NewGuid();
 
             await conn.ExecuteAsync(@"
-                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, createdat)
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, isshot, createdat)
                 VALUES 
-                (@id1, @sid, NULL, 'Goal', 'G', true, NOW()),
-                (@id2, @sid, NULL, 'Foul', 'F', false, NOW())",
+                (@id1, @sid, NULL, 'Goal', 'G', true, true, NOW()),
+                (@id2, @sid, NULL, 'Foul', 'F', false, false, NOW())",
                 new { id1 = def1, id2 = def2, sid = sportId },
                 transaction: transaction);
 

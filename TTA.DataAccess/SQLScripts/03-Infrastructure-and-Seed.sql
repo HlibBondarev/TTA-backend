@@ -61,7 +61,7 @@ BEGIN
 
     -- Standard Waterpolo Configuration (25x20 m)
     INSERT INTO sportconfigurations (
-        id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth
+        id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, shotmap, fieldlength, fieldwidth
     )
     VALUES (
         wp_config_id, 
@@ -74,14 +74,15 @@ BEGIN
         13, 
         7, 
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 250"><defs><linearGradient id="poolWater" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#38bdf8"/><stop offset="50%" stop-color="#0284c7"/><stop offset="100%" stop-color="#38bdf8"/></linearGradient></defs><rect x="0" y="0" width="200" height="250" fill="url(#poolWater)" rx="4"/><rect x="0" y="0" width="200" height="250" fill="none" stroke="#0369a1" stroke-width="3"/><g id="opponent-goal"><rect x="85" y="-8" width="30" height="8" fill="#e0f2fe" fill-opacity="0.3" stroke="#ffffff" stroke-width="1.5"/><line x1="85" y1="0" x2="115" y2="0" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round"/></g><g id="home-goal"><rect x="85" y="250" width="30" height="8" fill="#e0f2fe" fill-opacity="0.3" stroke="#ffffff" stroke-width="1.5"/><line x1="85" y1="250" x2="115" y2="250" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round"/></g><line x1="0" y1="125" x2="200" y2="125" stroke="#ffffff" stroke-width="2" stroke-dasharray="4 2" opacity="0.9"/><circle cx="100" cy="125" r="3" fill="#ffffff"/><line x1="0" y1="20" x2="200" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="65" y1="0" x2="65" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="135" y1="0" x2="135" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="50" x2="200" y2="50" stroke="#eab308" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="60" x2="200" y2="60" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="190" x2="200" y2="190" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="200" x2="200" y2="200" stroke="#eab308" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="230" x2="200" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="65" y1="250" x2="65" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="135" y1="250" x2="135" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><g id="side-markers" opacity="0.9"><rect x="0" y="18" width="4" height="4" fill="#ef4444"/><rect x="196" y="18" width="4" height="4" fill="#ef4444"/><rect x="0" y="48" width="4" height="4" fill="#eab308"/><rect x="196" y="48" width="4" height="4" fill="#eab308"/><rect x="0" y="58" width="4" height="4" fill="#22c55e"/><rect x="196" y="58" width="4" height="4" fill="#22c55e"/><rect x="0" y="123" width="4" height="4" fill="#ffffff"/><rect x="196" y="123" width="4" height="4" fill="#ffffff"/><rect x="0" y="188" width="4" height="4" fill="#22c55e"/><rect x="196" y="188" width="4" height="4" fill="#22c55e"/><rect x="0" y="198" width="4" height="4" fill="#eab308"/><rect x="196" y="198" width="4" height="4" fill="#eab308"/><rect x="0" y="228" width="4" height="4" fill="#ef4444"/><rect x="196" y="228" width="4" height="4" fill="#ef4444"/></g></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 615 247.5"><rect x="0" y="0" width="615" height="247.5" fill="#0284c7" fill-opacity="0.15" stroke="#0284c7" stroke-width="2"/><rect x="157.5" y="157.5" width="300" height="90" fill="#ffffff" fill-opacity="0.25" stroke="#ffffff" stroke-width="2"/><line x1="157.5" y1="150" x2="457.5" y2="150" stroke="#ef4444" stroke-width="7.5" stroke-linecap="square"/><line x1="153.75" y1="150" x2="153.75" y2="247.5" stroke="#ef4444" stroke-width="7.5"/><line x1="461.25" y1="150" x2="461.25" y2="247.5" stroke="#ef4444" stroke-width="7.5"/></svg>',
         25.00,
         20.00
     )
     ON CONFLICT DO NOTHING;
-
+    
     -- Alternative Waterpolo Configuration (25x15 m)
     INSERT INTO sportconfigurations (
-        id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, fieldlength, fieldwidth
+        id, sportid, usescleantime, periodscount, perioddurationminutes, fieldsize, rosterlimit, lineuplimit, activeplayerslimit, playground, shotmap, fieldlength, fieldwidth
     )
     VALUES (
         wp_config_alt_id, 
@@ -94,47 +95,48 @@ BEGIN
         11, 
         6, 
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 250"><defs><linearGradient id="poolWaterAlt" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#38bdf8"/><stop offset="50%" stop-color="#0284c7"/><stop offset="100%" stop-color="#38bdf8"/></linearGradient></defs><rect x="0" y="0" width="150" height="250" fill="url(#poolWaterAlt)" rx="4"/><rect x="0" y="0" width="150" height="250" fill="none" stroke="#0369a1" stroke-width="3"/><g id="opponent-goal"><rect x="60" y="-8" width="30" height="8" fill="#e0f2fe" fill-opacity="0.3" stroke="#ffffff" stroke-width="1.5"/><line x1="60" y1="0" x2="90" y2="0" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round"/></g><g id="home-goal"><rect x="60" y="250" width="30" height="8" fill="#e0f2fe" fill-opacity="0.3" stroke="#ffffff" stroke-width="1.5"/><line x1="60" y1="250" x2="90" y2="250" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round"/></g><line x1="0" y1="125" x2="150" y2="125" stroke="#ffffff" stroke-width="2" stroke-dasharray="4 2" opacity="0.9"/><circle cx="75" cy="125" r="3" fill="#ffffff"/><line x1="0" y1="20" x2="150" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="40" y1="0" x2="40" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="110" y1="0" x2="110" y2="20" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="50" x2="150" y2="50" stroke="#eab308" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="60" x2="150" y2="60" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="190" x2="150" y2="190" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="200" x2="150" y2="200" stroke="#eab308" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="0" y1="230" x2="150" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="40" y1="250" x2="40" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><line x1="110" y1="250" x2="110" y2="230" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.8"/><g id="side-markers" opacity="0.9"><rect x="0" y="18" width="4" height="4" fill="#ef4444"/><rect x="146" y="18" width="4" height="4" fill="#ef4444"/><rect x="0" y="48" width="4" height="4" fill="#eab308"/><rect x="146" y="48" width="4" height="4" fill="#eab308"/><rect x="0" y="58" width="4" height="4" fill="#22c55e"/><rect x="146" y="58" width="4" height="4" fill="#22c55e"/><rect x="0" y="123" width="4" height="4" fill="#ffffff"/><rect x="146" y="123" width="4" height="4" fill="#ffffff"/><rect x="0" y="188" width="4" height="4" fill="#22c55e"/><rect x="146" y="188" width="4" height="4" fill="#22c55e"/><rect x="0" y="198" width="4" height="4" fill="#eab308"/><rect x="146" y="198" width="4" height="4" fill="#eab308"/><rect x="0" y="228" width="4" height="4" fill="#ef4444"/><rect x="146" y="228" width="4" height="4" fill="#ef4444"/></g></svg>',
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 615 247.5"><rect x="0" y="0" width="615" height="247.5" fill="#0284c7" fill-opacity="0.15" stroke="#0284c7" stroke-width="2"/><rect x="157.5" y="157.5" width="300" height="90" fill="#ffffff" fill-opacity="0.25" stroke="#ffffff" stroke-width="2"/><line x1="157.5" y1="150" x2="457.5" y2="150" stroke="#ef4444" stroke-width="7.5" stroke-linecap="square"/><line x1="153.75" y1="150" x2="153.75" y2="247.5" stroke="#ef4444" stroke-width="7.5"/><line x1="461.25" y1="150" x2="461.25" y2="247.5" stroke="#ef4444" stroke-width="7.5"/></svg>',
         25.00,
         15.00
     )
     ON CONFLICT DO NOTHING;
-
+    
     -- Waterpolo Event Definitions (13 Positive, 19 Negative)
-    INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, defaultposition, issoftdeleted, createdat) VALUES 
+    INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, isshot, defaultposition, issoftdeleted, createdat) VALUES 
     -- Positive Actions (1..13)
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57', wp_sport_id, NULL, 'Goal', 'G', true, 1, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f51', wp_sport_id, NULL, 'Steal', 'ST', true, 2, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f52', wp_sport_id, NULL, 'Key Pass', 'SP', true, 3, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f53', wp_sport_id, NULL, 'Dribble Advance', 'DA', true, 4, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f54', wp_sport_id, NULL, 'Shot on Goal', 'SOG', true, 5, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f55', wp_sport_id, NULL, 'Save', 'ASV', true, 6, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f56', wp_sport_id, NULL, 'Field Block', 'FB', true, 7, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f58', wp_sport_id, NULL, 'Assist', 'A', true, 8, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f59', wp_sport_id, NULL, 'Fast Transition', 'FT', true, 9, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f60', wp_sport_id, NULL, 'Exclusion Earned', 'EE', true, 10, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', wp_sport_id, NULL, 'Counter-Attack Stopped', 'CAS', true, 11, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', wp_sport_id, NULL, 'Sprint Won', 'SW', true, 12, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', wp_sport_id, NULL, 'Penalty Earned', 'PE', true, 13, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57', wp_sport_id, NULL, 'Goal', 'G', true, true, 1, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f51', wp_sport_id, NULL, 'Steal', 'ST', true, false, 2, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f52', wp_sport_id, NULL, 'Key Pass', 'SP', true, false, 3, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f53', wp_sport_id, NULL, 'Dribble Advance', 'DA', true, false, 4, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f54', wp_sport_id, NULL, 'Shot on Goal', 'SOG', true, true, 5, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f55', wp_sport_id, NULL, 'Save', 'ASV', true, false, 6, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f56', wp_sport_id, NULL, 'Field Block', 'FB', true, false, 7, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f58', wp_sport_id, NULL, 'Assist', 'A', true, false, 8, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f59', wp_sport_id, NULL, 'Fast Transition', 'FT', true, false, 9, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f60', wp_sport_id, NULL, 'Exclusion Earned', 'EE', true, false, 10, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', wp_sport_id, NULL, 'Counter-Attack Stopped', 'CAS', true, false, 11, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', wp_sport_id, NULL, 'Sprint Won', 'SW', true, false, 12, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', wp_sport_id, NULL, 'Penalty Earned', 'PE', true, false, 13, false, NOW()),
     -- Negative Actions (1..19)
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f72', wp_sport_id, NULL, 'Goal', 'GC', false, 1, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', wp_sport_id, NULL, 'Turnover', 'TO', false, 2, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', wp_sport_id, NULL, 'Bad Pass', 'BP', false, 3, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', wp_sport_id, NULL, 'Positional Error in Offense', 'PEO', false, 4, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f67', wp_sport_id, NULL, 'Positional Error in Defense', 'PED', false, 5, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f68', wp_sport_id, NULL, 'Player Beaten', 'PB', false, 6, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f69', wp_sport_id, NULL, 'Offensive Foul', 'OF', false, 7, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70', wp_sport_id, NULL, 'Missed Shot', 'MS', false, 8, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f71', wp_sport_id, NULL, 'Shot Blocked', 'SB', false, 9, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f81', wp_sport_id, NULL, 'Goalkeeper Error', 'GKE', false, 10, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f73', wp_sport_id, NULL, 'Exclusion', 'E', false, 11, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f74', wp_sport_id, NULL, 'Slow Transition Offense', 'STO', false, 12, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f75', wp_sport_id, NULL, 'Slow Transition Defense', 'STD', false, 13, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f76', wp_sport_id, NULL, 'Counter-Attack Conceded', 'CAC', false, 14, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f77', wp_sport_id, NULL, 'Ball Under', 'BU', false, 15, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f78', wp_sport_id, NULL, 'Sprint Lost', 'SL', false, 16, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f79', wp_sport_id, NULL, 'Penalty Committed', 'PC', false, 17, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f80', wp_sport_id, NULL, 'Red Card', 'RC', false, 18, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82', wp_sport_id, NULL, 'Own Goal', 'OG', false, 19, false, NOW())
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f72', wp_sport_id, NULL, 'Goal', 'GC', false, true, 1, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', wp_sport_id, NULL, 'Turnover', 'TO', false, false, 2, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', wp_sport_id, NULL, 'Bad Pass', 'BP', false, false, 3, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66', wp_sport_id, NULL, 'Positional Error in Offense', 'PEO', false, false, 4, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f67', wp_sport_id, NULL, 'Positional Error in Defense', 'PED', false, false, 5, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f68', wp_sport_id, NULL, 'Player Beaten', 'PB', false, false, 6, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f69', wp_sport_id, NULL, 'Offensive Foul', 'OF', false, false, 7, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70', wp_sport_id, NULL, 'Missed Shot', 'MS', false, true, 8, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f71', wp_sport_id, NULL, 'Shot Blocked', 'SB', false, false, 9, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f81', wp_sport_id, NULL, 'Goalkeeper Error', 'GKE', false, false, 10, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f73', wp_sport_id, NULL, 'Exclusion', 'E', false, false, 11, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f74', wp_sport_id, NULL, 'Slow Transition Offense', 'STO', false, false, 12, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f75', wp_sport_id, NULL, 'Slow Transition Defense', 'STD', false, false, 13, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f76', wp_sport_id, NULL, 'Counter-Attack Conceded', 'CAC', false, false, 14, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f77', wp_sport_id, NULL, 'Ball Under', 'BU', false, false, 15, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f78', wp_sport_id, NULL, 'Sprint Lost', 'SL', false, false, 16, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f79', wp_sport_id, NULL, 'Penalty Committed', 'PC', false, false, 17, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f80', wp_sport_id, NULL, 'Red Card', 'RC', false, false, 18, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82', wp_sport_id, NULL, 'Own Goal', 'OG', false, true, 19, false, NOW())
     ON CONFLICT (id) DO NOTHING;
 
     /*

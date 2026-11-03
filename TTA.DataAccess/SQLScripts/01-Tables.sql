@@ -63,6 +63,7 @@ CREATE TABLE sportconfigurations (
     lineuplimit INT NOT NULL,
     activeplayerslimit INT NOT NULL,
     playground TEXT NOT NULL,
+    shotmap TEXT NULL,
     fieldlength NUMERIC(5,2) NOT NULL,
     fieldwidth NUMERIC(5,2) NOT NULL,
     UNIQUE (sportid, id)
@@ -256,12 +257,13 @@ CREATE INDEX ix_matchlineups_playerrosterid ON public.matchlineups (playerroster
 CREATE TABLE eventdefinitions (
     id UUID PRIMARY KEY,
     sportid UUID NOT NULL REFERENCES sports(id) ON DELETE CASCADE,
-    ownerid VARCHAR(64) NULL REFERENCES public.users(id) ON DELETE RESTRICT, -- Restricted to preserve historical game events analytics
+    ownerid VARCHAR(64) NULL REFERENCES public.users(id) ON DELETE RESTRICT,
     name VARCHAR(50) NOT NULL,
     shortname VARCHAR(10) NOT NULL,
     ispositive BOOLEAN NOT NULL,
-    defaultposition INT NULL, -- Default frequency rank index for system default definitions
-    issoftdeleted BOOLEAN NOT NULL DEFAULT FALSE, -- Soft delete flag to preserve historical game events analytics
+    isshot BOOLEAN NOT NULL DEFAULT FALSE,
+    defaultposition INT NULL,
+    issoftdeleted BOOLEAN NOT NULL DEFAULT FALSE,
     createdat TIMESTAMPTZ NOT NULL
 );
 
@@ -313,6 +315,8 @@ CREATE TABLE gameevents (
     isleadtogoal BOOLEAN NOT NULL DEFAULT FALSE, 
     locationx NUMERIC(5,2) NULL,
     locationy NUMERIC(5,2) NULL,
+    shotlocationx NUMERIC(5,2) NULL,
+    shotlocationy NUMERIC(5,2) NULL,
     createdat TIMESTAMPTZ NOT NULL,
 
     CONSTRAINT fk_gameevents_matchlineup

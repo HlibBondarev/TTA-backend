@@ -1219,8 +1219,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 /**********************************************************************************
- * Atomically ingests and upserts batch arrays of game events (including coordinates), 
- * time anchors, and player presences for a specific match within a single transaction.
+ * Atomically ingests and upserts batch arrays of game events, time anchors, 
+ * and player presences within a single transaction scope.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.sync_match_batch(
     p_match_id UUID,
@@ -1241,7 +1241,6 @@ DECLARE
     v_anchors_count INT := 0;
     v_presences_count INT := 0;
 BEGIN
-    -- 0. Validate Match existence
     IF NOT EXISTS (SELECT 1 FROM public.matches WHERE id = p_match_id) THEN
         RAISE EXCEPTION 'Match with ID % not found.', p_match_id USING ERRCODE = 'P0002';
     END IF;
@@ -1250,7 +1249,6 @@ BEGIN
     v_anchors_count := COALESCE(jsonb_array_length(p_anchors), 0);
     v_presences_count := COALESCE(jsonb_array_length(p_presences), 0);
 
-    -- 1. Validate payload arrays for duplicate identifiers
     IF v_events_count > 0 THEN
         IF EXISTS (
             SELECT 1 FROM jsonb_to_recordset(p_events) AS x(id UUID)
@@ -1278,7 +1276,6 @@ BEGIN
         END IF;
     END IF;
 
-    -- 2. Validate line-up and match ownership boundaries
     IF (v_events_count > 0 OR v_presences_count > 0) THEN
         IF EXISTS (
             SELECT 1 FROM (
@@ -1302,7 +1299,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- 3. Upsert Game Events (if payload is non-empty)
+    -- Upsert Game Events (with shotlocationx and shotlocationy fields)
     IF v_events_count > 0 THEN
         WITH upserted_events AS (
             INSERT INTO public.gameevents (
@@ -1315,6 +1312,8 @@ BEGIN
                 isleadtogoal, 
                 locationx,
                 locationy,
+                shotlocationx,
+                shotlocationy,
                 createdat
             )
             SELECT 
@@ -1327,6 +1326,8 @@ BEGIN
                 x.isleadtogoal, 
                 x.locationx,
                 x.locationy,
+                CASE WHEN ed.isshot THEN x.shotlocationx ELSE NULL END,
+                CASE WHEN ed.isshot THEN x.shotlocationy ELSE NULL END,
                 COALESCE(x.createdat, CURRENT_TIMESTAMP)
             FROM jsonb_to_recordset(p_events) AS x(
                 id UUID,
@@ -1338,8 +1339,11 @@ BEGIN
                 isleadtogoal BOOLEAN,
                 locationx NUMERIC(5,2),
                 locationy NUMERIC(5,2),
+                shotlocationx NUMERIC(5,2),
+                shotlocationy NUMERIC(5,2),
                 createdat TIMESTAMPTZ
             )
+            INNER JOIN public.eventdefinitions ed ON x.eventdefinitionid = ed.id
             ON CONFLICT (id) DO UPDATE SET
                 matchlineupid = EXCLUDED.matchlineupid,
                 eventdefinitionid = EXCLUDED.eventdefinitionid,
@@ -1348,7 +1352,9 @@ BEGIN
                 normalizedmatchtime = COALESCE(EXCLUDED.normalizedmatchtime, public.gameevents.normalizedmatchtime),
                 isleadtogoal = EXCLUDED.isleadtogoal,
                 locationx = EXCLUDED.locationx,
-                locationy = EXCLUDED.locationy
+                locationy = EXCLUDED.locationy,
+                shotlocationx = EXCLUDED.shotlocationx,
+                shotlocationy = EXCLUDED.shotlocationy
             WHERE EXISTS (
                 SELECT 1 FROM public.matchlineups ml
                 WHERE ml.id = public.gameevents.matchlineupid AND ml.matchid = p_match_id
@@ -1362,7 +1368,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- 4. Upsert Time Anchors (if payload is non-empty)
+    -- Upsert Time Anchors
     IF v_anchors_count > 0 THEN
         WITH upserted_anchors AS (
             INSERT INTO public.timeanchors (
@@ -1399,7 +1405,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- 5. Upsert Player Presences (if payload is non-empty)
+    -- Upsert Player Presences
     IF v_presences_count > 0 THEN
         WITH upserted_presences AS (
             INSERT INTO public.playerpresences (
@@ -1440,7 +1446,6 @@ BEGIN
         END IF;
     END IF;
 
-    -- Return confirmed sets of client UUIDs
     RETURN QUERY
     SELECT 
         v_event_ids AS synced_event_ids,
@@ -1745,8 +1750,8 @@ END;$$ LANGUAGE plpgsql;
 -- =============================================================
 /**********************************************************************************
  * Upserts a custom user event definition.
+ * Includes optional p_is_shot parameter to set shot-related event definitions.
  * Validates ownership and prohibits modifying system default definitions.
- * Does not mutate active user presets.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
     p_id UUID,
@@ -1754,7 +1759,8 @@ CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
     p_owner_id VARCHAR(64),
     p_name VARCHAR(50),
     p_short_name VARCHAR(10),
-    p_is_positive BOOLEAN
+    p_is_positive BOOLEAN,
+    p_is_shot BOOLEAN DEFAULT FALSE
 )
 RETURNS SETOF public.eventdefinitions AS $$
 DECLARE
@@ -1767,31 +1773,29 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Acquire transaction-scoped advisory lock for target definition ID to prevent concurrent creation races
+    -- Acquire transaction-scoped advisory lock for target definition ID
     PERFORM pg_advisory_xact_lock(hashtext(p_id::text));
-
-    -- Acquire transaction-scoped advisory lock for user and sport context
     PERFORM pg_advisory_xact_lock(hashtext(p_owner_id), hashtext(p_sport_id::text));
 
-    -- Validation: Cannot update existing system default definition (where ownerid IS NULL)
+    -- Validation: Cannot update existing system default definition
     IF EXISTS (SELECT 1 FROM public.eventdefinitions WHERE id = p_id AND ownerid IS NULL) THEN
         RAISE EXCEPTION 'System default event definitions cannot be modified as custom definitions.'
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Validation: Cannot update or reuse a soft-deleted event definition (preserves historical game events)
+    -- Validation: Cannot update or reuse a soft-deleted event definition
     IF EXISTS (SELECT 1 FROM public.eventdefinitions WHERE id = p_id AND issoftdeleted = TRUE) THEN
         RAISE EXCEPTION 'Cannot update or reuse a soft-deleted event definition.'
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Validation: Ownership check if updating an existing custom definition
+    -- Validation: Ownership check
     IF EXISTS (SELECT 1 FROM public.eventdefinitions WHERE id = p_id AND ownerid <> p_owner_id) THEN
         RAISE EXCEPTION 'Access denied: You are not the owner of this event definition.'
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Validation: Existing definition cannot change immutable semantic attributes (sportid, name, shortname, ispositive)
+    -- Validation: Existing definition cannot change immutable semantic attributes
     IF EXISTS (
         SELECT 1 FROM public.eventdefinitions
         WHERE id = p_id
@@ -1801,7 +1805,7 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Validation: Active name + ispositive combination must stay unique per owner and sport
+    -- Validation: Unique active name + positivity per owner and sport
     IF EXISTS (
         SELECT 1 FROM public.eventdefinitions
         WHERE sportid = p_sport_id
@@ -1815,17 +1819,18 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Perform upsert on eventdefinitions with concurrency guard against soft-deleted records and unowned IDs
+    -- Upsert operation with isshot flag persistence
     INSERT INTO public.eventdefinitions (
-        id, sportid, ownerid, name, shortname, ispositive, issoftdeleted, createdat
+        id, sportid, ownerid, name, shortname, ispositive, isshot, issoftdeleted, createdat
     )
     VALUES (
-        p_id, p_sport_id, p_owner_id, p_name, p_short_name, p_is_positive, FALSE, v_now
+        p_id, p_sport_id, p_owner_id, p_name, p_short_name, p_is_positive, COALESCE(p_is_shot, FALSE), FALSE, v_now
     )
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
         shortname = EXCLUDED.shortname,
-        ispositive = EXCLUDED.ispositive
+        ispositive = EXCLUDED.ispositive,
+        isshot = EXCLUDED.isshot
     WHERE eventdefinitions.issoftdeleted = FALSE AND eventdefinitions.ownerid = p_owner_id;
 
     GET DIAGNOSTICS v_rows = ROW_COUNT;
@@ -1952,7 +1957,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 /**********************************************************************************
- * Retrieves all available event definitions for a user and sport context
+ * Retrieves all available event definitions for a user and sport context.
+ * Includes isshot column in projection output.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_user_available_event_definitions(
     p_user_id VARCHAR(64),
@@ -1964,6 +1970,7 @@ RETURNS TABLE (
     name VARCHAR,
     shortname VARCHAR,
     ispositive BOOLEAN,
+    isshot BOOLEAN,
     iscustom BOOLEAN,
     isenabled BOOLEAN,
     sortorder INT
@@ -1976,6 +1983,7 @@ BEGIN
         ed.name,
         ed.shortname,
         ed.ispositive,
+        ed.isshot,
         (ed.ownerid IS NOT NULL) AS iscustom,
         (uep.eventdefinitionid IS NOT NULL) AS isenabled,
         COALESCE(uep.sortorder, ed.defaultposition, 0) AS sortorder
@@ -1996,9 +2004,7 @@ $$ LANGUAGE plpgsql;
 
 /**********************************************************************************
  * Retrieves active event definitions required for match hydration.
- * Resolves user preset for the match sport; falls back to all active system default 
- * definitions if no preset has been saved by the specified user.
- * Enforces ownership boundary checking (system default OR owned by user).
+ * Includes isshot column in output projection.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.get_match_event_definitions(
     p_match_id UUID,
@@ -2010,6 +2016,7 @@ RETURNS TABLE (
     name VARCHAR,
     shortname VARCHAR,
     ispositive BOOLEAN,
+    isshot BOOLEAN,
     iscustom BOOLEAN,
     isenabled BOOLEAN,
     sortorder INT
@@ -2018,7 +2025,6 @@ DECLARE
     v_sport_id UUID;
     v_has_preset BOOLEAN := FALSE;
 BEGIN
-    -- Resolve sport ID from match context
     SELECT t.sportid INTO v_sport_id
     FROM public.matches m
     INNER JOIN public.tournaments t ON m.tournamentid = t.id
@@ -2028,7 +2034,6 @@ BEGIN
         RAISE EXCEPTION 'Match with ID % not found.', p_match_id USING ERRCODE = 'P0002';
     END IF;
 
-    -- Check if user has an active preset configured for this sport
     IF p_user_id IS NOT NULL AND TRIM(p_user_id) <> '' THEN
         SELECT EXISTS (
             SELECT 1 
@@ -2041,7 +2046,6 @@ BEGIN
         ) INTO v_has_preset;
     END IF;
 
-    -- If preset exists, return enabled user choices ordered by sortorder
     IF v_has_preset THEN
         RETURN QUERY
         SELECT 
@@ -2050,6 +2054,7 @@ BEGIN
             ed.name,
             ed.shortname,
             ed.ispositive,
+            ed.isshot,
             (ed.ownerid IS NOT NULL) AS iscustom,
             TRUE AS isenabled,
             uep.sortorder
@@ -2061,7 +2066,6 @@ BEGIN
           AND (ed.ownerid IS NULL OR ed.ownerid = p_user_id)
         ORDER BY uep.sortorder ASC, ed.name ASC;
     ELSE
-        -- Fallback: Return all active system default definitions for the sport ordered by defaultposition
         RETURN QUERY
         SELECT 
             ed.id,
@@ -2069,6 +2073,7 @@ BEGIN
             ed.name,
             ed.shortname,
             ed.ispositive,
+            ed.isshot,
             FALSE AS iscustom,
             TRUE AS isenabled,
             COALESCE(ed.defaultposition, 0) AS sortorder
@@ -2108,14 +2113,13 @@ $$ LANGUAGE plpgsql;
 -- =============================================================
 /**********************************************************************************
  * Ingests a JSONB array of game events and performs set-based upsert operations.
- * Maps JSON properties directly to public.gameevents table columns including spatial coordinates.
+ * Maps shotlocationx and shotlocationy properties alongside field coordinates.
  **********************************************************************************/
 CREATE OR REPLACE FUNCTION public.upsert_game_event(
     p_events JSONB
 )
 RETURNS SETOF public.gameevents AS $$
 BEGIN
-    -- 1. Validate that input JSONB array does not contain duplicate event IDs
     IF EXISTS (
         SELECT 1
         FROM jsonb_to_recordset(p_events) AS x(id UUID)
@@ -2125,7 +2129,6 @@ BEGIN
         RAISE EXCEPTION 'Batch payload contains duplicate game event identifiers.' USING ERRCODE = 'P0001';
     END IF;
 
-    -- 2. Execute set-based upsert operation
     RETURN QUERY
     INSERT INTO public.gameevents (
         id, 
@@ -2137,6 +2140,8 @@ BEGIN
         isleadtogoal, 
         locationx,
         locationy,
+        shotlocationx,
+        shotlocationy,
         createdat
     )
     SELECT 
@@ -2149,6 +2154,8 @@ BEGIN
         x.isleadtogoal, 
         x.locationx,
         x.locationy,
+        CASE WHEN ed.isshot THEN x.shotlocationx ELSE NULL END,
+        CASE WHEN ed.isshot THEN x.shotlocationy ELSE NULL END,
         COALESCE(x.createdat, CURRENT_TIMESTAMP)
     FROM jsonb_to_recordset(p_events) AS x(
         id UUID,
@@ -2160,8 +2167,11 @@ BEGIN
         isleadtogoal BOOLEAN,
         locationx NUMERIC(5,2),
         locationy NUMERIC(5,2),
+        shotlocationx NUMERIC(5,2),
+        shotlocationy NUMERIC(5,2),
         createdat TIMESTAMPTZ
     )
+    INNER JOIN public.eventdefinitions ed ON x.eventdefinitionid = ed.id
     ON CONFLICT (id) DO UPDATE SET
         matchlineupid = EXCLUDED.matchlineupid,
         eventdefinitionid = EXCLUDED.eventdefinitionid,
@@ -2170,7 +2180,9 @@ BEGIN
         normalizedmatchtime = EXCLUDED.normalizedmatchtime,
         isleadtogoal = EXCLUDED.isleadtogoal,
         locationx = EXCLUDED.locationx,
-        locationy = EXCLUDED.locationy
+        locationy = EXCLUDED.locationy,
+        shotlocationx = EXCLUDED.shotlocationx,
+        shotlocationy = EXCLUDED.shotlocationy
     RETURNING *;
 END;$$ LANGUAGE plpgsql;
 
@@ -2189,6 +2201,8 @@ RETURNS TABLE (
     isleadtogoal BOOLEAN,
     locationx NUMERIC(5,2),
     locationy NUMERIC(5,2),
+    shotlocationx NUMERIC(5,2),
+    shotlocationy NUMERIC(5,2),
     createdat TIMESTAMPTZ
 ) AS $$
 BEGIN
@@ -2203,6 +2217,8 @@ BEGIN
         ge.isleadtogoal, 
         ge.locationx,
         ge.locationy,
+        ge.shotlocationx,
+        ge.shotlocationy,
         ge.createdat
     FROM public.gameevents ge
     WHERE ge.id = p_id;
@@ -2224,6 +2240,8 @@ RETURNS TABLE (
     isleadtogoal BOOLEAN,
     locationx NUMERIC(5,2),
     locationy NUMERIC(5,2),
+    shotlocationx NUMERIC(5,2),
+    shotlocationy NUMERIC(5,2),
     playername TEXT,
     playernumber INT,
     teamid UUID,
@@ -2234,7 +2252,7 @@ BEGIN
     SELECT 
         ge.id, ge.matchlineupid, ge.eventdefinitionid, ed.name AS eventname, ed.ispositive,
         ge.periodnumber, ge.eventtimestamp, ge.normalizedmatchtime, ge.isleadtogoal,
-        ge.locationx, ge.locationy,
+        ge.locationx, ge.locationy, ge.shotlocationx, ge.shotlocationy,
         (p.firstname || ' ' || p.lastname) AS playername, ml.number AS playernumber,
         pr.teamid, t.name AS teamname
     FROM public.gameevents ge
@@ -2265,6 +2283,8 @@ RETURNS TABLE (
     isleadtogoal BOOLEAN,
     locationx NUMERIC(5,2),
     locationy NUMERIC(5,2),
+    shotlocationx NUMERIC(5,2),
+    shotlocationy NUMERIC(5,2),
     playername TEXT,
     playernumber INT,
     teamid UUID,
@@ -2284,6 +2304,8 @@ BEGIN
         ge.isleadtogoal,
         ge.locationx,
         ge.locationy,
+        ge.shotlocationx,
+        ge.shotlocationy,
         (p.firstname || ' ' || p.lastname)::TEXT AS playername,
         ml.number AS playernumber,
         pr.teamid,
@@ -2817,7 +2839,9 @@ RETURNS TABLE (
     normalizedmatchtime INTERVAL,
     isleadtogoal BOOLEAN,
     locationx NUMERIC(5,2),
-    locationy NUMERIC(5,2)
+    locationy NUMERIC(5,2),
+    shotlocationx NUMERIC(5,2),
+    shotlocationy NUMERIC(5,2)
 ) AS $$
 BEGIN
     RETURN QUERY
@@ -2834,7 +2858,9 @@ BEGIN
         ge.normalizedmatchtime,
         ge.isleadtogoal,
         ge.locationx,
-        ge.locationy
+        ge.locationy,
+        ge.shotlocationx,
+        ge.shotlocationy
     FROM public.matchlineups ml
     INNER JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
     INNER JOIN public.players p ON pr.playerid = p.id

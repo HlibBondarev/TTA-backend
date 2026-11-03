@@ -152,6 +152,20 @@ public class EventDefinitionTests
     }
 
     [Fact]
+    public void EventDefinition_IsShot_DefaultsToFalse()
+    {
+        var def = new EventDefinition();
+        Assert.False(def.IsShot);
+    }
+
+    [Fact]
+    public void EventDefinition_IsShot_CanBeSetToTrue()
+    {
+        var def = new EventDefinition { IsShot = true };
+        Assert.True(def.IsShot);
+    }
+
+    [Fact]
     public void EventDefinition_DefaultPosition_IsNullable_AndDefaultsToNull()
     {
         var def = new EventDefinition();

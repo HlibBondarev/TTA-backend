@@ -40,7 +40,8 @@ public class CreateCustomEventDefinitionHandlerTests
             OwnerId: "auth0|user123",
             Name: "Custom Block",
             ShortName: "C-BLK",
-            IsPositive: true);
+            IsPositive: true,
+            IsShot: false);
 
         var createdEntity = new EventDefinition
         {
@@ -50,6 +51,7 @@ public class CreateCustomEventDefinitionHandlerTests
             Name = command.Name,
             ShortName = command.ShortName,
             IsPositive = command.IsPositive,
+            IsShot = command.IsShot,
             IsSoftDeleted = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -62,6 +64,7 @@ public class CreateCustomEventDefinitionHandlerTests
                 e.Name == command.Name &&
                 e.ShortName == command.ShortName &&
                 e.IsPositive == command.IsPositive &&
+                e.IsShot == command.IsShot &&
                 !e.IsSoftDeleted), It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdEntity);
 
@@ -75,9 +78,56 @@ public class CreateCustomEventDefinitionHandlerTests
         result.Name.Should().Be("Custom Block");
         result.ShortName.Should().Be("C-BLK");
         result.IsPositive.Should().BeTrue();
+        result.IsShot.Should().BeFalse();
         result.IsCustom.Should().BeTrue();
         result.IsEnabled.Should().BeFalse();
         result.SortOrder.Should().Be(0);
+
+        _repositoryMock.Verify(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> correctly passes and maps the <c>IsShot</c> flag 
+    /// when creating a custom event definition that represents a shot.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldCorrectlyMapIsShotFlag_WhenIsShotIsTrue()
+    {
+        // Arrange
+        var command = new CreateCustomEventDefinitionCommand(
+            Id: Guid.NewGuid(),
+            SportId: Guid.NewGuid(),
+            OwnerId: "auth0|user123",
+            Name: "Custom Penalty Shot",
+            ShortName: "C-PEN",
+            IsPositive: true,
+            IsShot: true);
+
+        var createdEntity = new EventDefinition
+        {
+            Id = command.Id,
+            SportId = command.SportId,
+            OwnerId = command.OwnerId,
+            Name = command.Name,
+            ShortName = command.ShortName,
+            IsPositive = command.IsPositive,
+            IsShot = command.IsShot,
+            IsSoftDeleted = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _repositoryMock
+            .Setup(r => r.UpsertCustomAsync(It.Is<EventDefinition>(e =>
+                e.Id == command.Id &&
+                e.IsShot == true), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(createdEntity);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsShot.Should().BeTrue("IsShot must be mapped to true in response DTO");
 
         _repositoryMock.Verify(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -96,7 +146,8 @@ public class CreateCustomEventDefinitionHandlerTests
             OwnerId: "auth0|user123",
             Name: "Failed Event",
             ShortName: "FAIL",
-            IsPositive: false);
+            IsPositive: false,
+            IsShot: false);
 
         _repositoryMock
             .Setup(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()))
@@ -126,7 +177,8 @@ public class CreateCustomEventDefinitionHandlerTests
             OwnerId: "auth0|user123",
             Name: "Test Event",
             ShortName: "TEST",
-            IsPositive: true);
+            IsPositive: true,
+            IsShot: false);
 
         using var cts = new CancellationTokenSource();
         var cancellationToken = cts.Token;
@@ -139,6 +191,7 @@ public class CreateCustomEventDefinitionHandlerTests
             Name = command.Name,
             ShortName = command.ShortName,
             IsPositive = command.IsPositive,
+            IsShot = command.IsShot,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -167,7 +220,8 @@ public class CreateCustomEventDefinitionHandlerTests
             OwnerId: "user-123",
             Name: "Custom Action",
             ShortName: "CA",
-            IsPositive: true
+            IsPositive: true,
+            IsShot: false
         );
 
         var postgresException = new PostgresException("Cannot update or reuse a soft-deleted event definition.", "ERROR", "ERROR", "P0001");
@@ -198,7 +252,8 @@ public class CreateCustomEventDefinitionHandlerTests
             OwnerId: "auth0|user123",
             Name: "Foul",
             ShortName: "FOL-P",
-            IsPositive: true);
+            IsPositive: true,
+            IsShot: false);
 
         var createdEntity = new EventDefinition
         {
@@ -208,6 +263,7 @@ public class CreateCustomEventDefinitionHandlerTests
             Name = command.Name,
             ShortName = command.ShortName,
             IsPositive = command.IsPositive,
+            IsShot = command.IsShot,
             IsSoftDeleted = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -227,6 +283,7 @@ public class CreateCustomEventDefinitionHandlerTests
         result.Id.Should().Be(command.Id);
         result.Name.Should().Be("Foul");
         result.IsPositive.Should().BeTrue();
+        result.IsShot.Should().BeFalse();
         result.IsEnabled.Should().BeFalse();
         result.SortOrder.Should().Be(0);
 
@@ -247,7 +304,8 @@ public class CreateCustomEventDefinitionHandlerTests
             OwnerId: "auth0|test-user",
             Name: "Duplicate Action",
             ShortName: "DUP",
-            IsPositive: true
+            IsPositive: true,
+            IsShot: false
         );
 
         var postgresException = new PostgresException(

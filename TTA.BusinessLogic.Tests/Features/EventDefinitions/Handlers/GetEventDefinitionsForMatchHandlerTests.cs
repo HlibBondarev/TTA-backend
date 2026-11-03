@@ -33,7 +33,7 @@ public class GetEventDefinitionsForMatchHandlerTests
 
     /// <summary>
     /// Verifies that <see cref="GetEventDefinitionsForMatchHandler.Handle"/> returns fully mapped event definition responses
-    /// enriched with custom, positivity, and preset metadata when a user identifier is provided.
+    /// enriched with custom, positivity, shot classification, and preset metadata when a user identifier is provided.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldReturnMappedDefinitions_WhenUserIsProvided()
@@ -58,6 +58,7 @@ public class GetEventDefinitionsForMatchHandlerTests
                 Name: "Goal",
                 ShortName: "G",
                 IsPositive: true,
+                IsShot: true,
                 IsCustom: false,
                 IsEnabled: true,
                 SortOrder: 1
@@ -68,6 +69,7 @@ public class GetEventDefinitionsForMatchHandlerTests
                 Name: "Custom TTA",
                 ShortName: "CTTA",
                 IsPositive: false,
+                IsShot: false,
                 IsCustom: true,
                 IsEnabled: false,
                 SortOrder: 2
@@ -88,28 +90,68 @@ public class GetEventDefinitionsForMatchHandlerTests
         var list = result.ToList();
         list.Should().HaveCount(2);
 
-        // Verify full field mapping for Item 0
+        // Verify full field mapping for Item 0 (Goal - shot action)
         list[0].Id.Should().Be(def1Id);
         list[0].SportId.Should().Be(sportId);
         list[0].Name.Should().Be("Goal");
         list[0].ShortName.Should().Be("G");
         list[0].IsPositive.Should().BeTrue();
+        list[0].IsShot.Should().BeTrue("IsShot must be mapped to true for Goal");
         list[0].IsCustom.Should().BeFalse();
         list[0].IsEnabled.Should().BeTrue();
         list[0].SortOrder.Should().Be(1);
 
-        // Verify full field mapping for Item 1
+        // Verify full field mapping for Item 1 (Custom action)
         list[1].Id.Should().Be(def2Id);
         list[1].SportId.Should().Be(sportId);
         list[1].Name.Should().Be("Custom TTA");
         list[1].ShortName.Should().Be("CTTA");
         list[1].IsPositive.Should().BeFalse();
+        list[1].IsShot.Should().BeFalse();
         list[1].IsCustom.Should().BeTrue();
         list[1].IsEnabled.Should().BeFalse();
         list[1].SortOrder.Should().Be(2);
 
         _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
         _eventDefinitionRepositoryMock.Verify(r => r.GetMatchEventDefinitionsAsync(matchId, userId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="GetEventDefinitionsForMatchHandler.Handle"/> correctly maps the <c>IsShot</c> property
+    /// from <see cref="UserEventDefinitionProjection"/> to <see cref="EventDefinitionResponse"/>.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldCorrectlyMapIsShotFlag_ForShotAndNonShotDefinitions()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var sportId = Guid.NewGuid();
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Match { Id = matchId });
+
+        var nonShotProjection = new UserEventDefinitionProjection(
+            Id: Guid.NewGuid(), SportId: sportId, Name: "Exclusion", ShortName: "E",
+            IsPositive: false, IsShot: false, IsCustom: false, IsEnabled: true, SortOrder: 1);
+
+        var shotProjection = new UserEventDefinitionProjection(
+            Id: Guid.NewGuid(), SportId: sportId, Name: "Shot on Target", ShortName: "SOT",
+            IsPositive: true, IsShot: true, IsCustom: false, IsEnabled: true, SortOrder: 2);
+
+        _eventDefinitionRepositoryMock
+            .Setup(r => r.GetMatchEventDefinitionsAsync(matchId, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { nonShotProjection, shotProjection });
+
+        var query = new GetEventDefinitionsForMatchQuery(matchId, null);
+
+        // Act
+        var result = (await _handler.Handle(query, CancellationToken.None)).ToList();
+
+        // Assert
+        result.Should().HaveCount(2);
+        result[0].IsShot.Should().BeFalse("non-shot definition must map IsShot as false");
+        result[1].IsShot.Should().BeTrue("shot definition must map IsShot as true");
     }
 
     /// <summary>
@@ -135,6 +177,7 @@ public class GetEventDefinitionsForMatchHandlerTests
                 Name: "Goal",
                 ShortName: "G",
                 IsPositive: true,
+                IsShot: true,
                 IsCustom: false,
                 IsEnabled: true,
                 SortOrder: 1
@@ -155,6 +198,7 @@ public class GetEventDefinitionsForMatchHandlerTests
         var list = result.ToList();
         list.Should().HaveCount(1);
         list[0].Name.Should().Be("Goal");
+        list[0].IsShot.Should().BeTrue();
 
         _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
         _eventDefinitionRepositoryMock.Verify(r => r.GetMatchEventDefinitionsAsync(matchId, null, It.IsAny<CancellationToken>()), Times.Once);
