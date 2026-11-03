@@ -126,21 +126,12 @@ public class MatchRepositoryTests : BaseIntegrationTest
         // Assert
         resultsList.Should().HaveCount(2, "matches from other tournaments must be excluded from the result");
 
-        foreach (var item in resultsList)
+        foreach (dynamic item in resultsList)
         {
-            var dict = (IDictionary<string, object>)item;
-
-            if (!dict.TryGetValue("tournamentid", out var returnedIdObj) &&
-                !dict.TryGetValue("TournamentId", out returnedIdObj))
-            {
-                throw new KeyNotFoundException("The expected TournamentId key was not found in the returned dynamic object.");
-            }
-
-            var returnedId = (Guid)returnedIdObj;
-            returnedId.Should().Be(context.TournamentId);
+            ((Guid)item.tournamentid).Should().Be(context.TournamentId);
         }
 
-        var matchNumbers = resultsList.Select(x => (string)((IDictionary<string, object>)x)["matchnumber"]).ToList();
+        var matchNumbers = resultsList.Select(x => (string)x.matchnumber).ToList();
 
         matchNumbers.Should().Contain(ExpectedMatchNumbers);
         matchNumbers.Should().NotContain("NOISE-01");
