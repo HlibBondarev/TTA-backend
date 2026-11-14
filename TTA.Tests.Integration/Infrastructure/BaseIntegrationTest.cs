@@ -13,7 +13,7 @@ public abstract class BaseIntegrationTest(DatabaseFixture fixture) : IAsyncLifet
     public Task InitializeAsync() => Task.CompletedTask;
 
     // Reset the database state after each test
-    public async Task DisposeAsync() => await Fixture.ResetDatabaseAsync();
+    public virtual async Task DisposeAsync() => await Fixture.ResetDatabaseAsync();
 
     /// <summary>
     /// Seeds a sport and its default configuration record atomically within a single transaction
