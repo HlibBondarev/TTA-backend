@@ -49,7 +49,12 @@ jobs:
       - name: Build projects
         run: dotnet build TTA-backend.sln --no-restore
 
+      - name: Configure Linux inotify limits
+        run: sudo sysctl -w fs.inotify.max_user_instances=1024
+
       - name: Run tests with coverage
+        env:
+          DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE: "false"
         run: |
           dotnet test TTA-backend.sln --no-build --verbosity normal \
           --collect:"XPlat Code Coverage" \
