@@ -25,6 +25,8 @@ public record PlayerDetailedMatchReportResponse(
 /// <param name="IsLeadToGoal">Indicates whether the event led to a goal.</param>
 /// <param name="LocationX">The optional X coordinate of the event on the field (0.00 to 100.00 percentage scale).</param>
 /// <param name="LocationY">The optional Y coordinate of the event on the field (0.00 to 100.00 percentage scale).</param>
+/// <param name="ShotLocationX">The optional X coordinate of the shot target frame (0.00 to 100.00 percentage scale).</param>
+/// <param name="ShotLocationY">The optional Y coordinate of the shot target frame (0.00 to 100.00 percentage scale).</param>
 public record PlayerDetailedEventResponse(
     string EventName,
     bool IsPositive,
@@ -33,5 +35,7 @@ public record PlayerDetailedEventResponse(
     TimeSpan? NormalizedMatchTime,
     bool IsLeadToGoal,
     decimal? LocationX,
-    decimal? LocationY
+    decimal? LocationY,
+    decimal? ShotLocationX,
+    decimal? ShotLocationY
 );

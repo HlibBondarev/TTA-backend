@@ -15,6 +15,8 @@ namespace TTA.BusinessLogic.Features.GameEvents.Commands;
 /// <param name="IsLeadToGoal">The updated goal lead status.</param>
 /// <param name="LocationX">The updated optional X coordinate on the field (0.00 to 100.00 percentage scale).</param>
 /// <param name="LocationY">The updated optional Y coordinate on the field (0.00 to 100.00 percentage scale).</param>
+/// <param name="ShotLocationX">The updated optional X coordinate on the goal shot map (0.00 to 100.00 percentage scale).</param>
+/// <param name="ShotLocationY">The updated optional Y coordinate on the goal shot map (0.00 to 100.00 percentage scale).</param>
 public record UpdateGameEventCommand(
     Guid Id,
     Guid MatchId,
@@ -23,7 +25,9 @@ public record UpdateGameEventCommand(
     int PeriodNumber,
     bool IsLeadToGoal,
     decimal? LocationX = null,
-    decimal? LocationY = null) : IRequest<Guid>;
+    decimal? LocationY = null,
+    decimal? ShotLocationX = null,
+    decimal? ShotLocationY = null) : IRequest<Guid>;
 
 /// <summary>
 /// Extensions for mapping UpdateGameEventCommand to domain models.
@@ -44,6 +48,8 @@ public static class UpdateGameEventCommandExtensions
         model.IsLeadToGoal = cmd.IsLeadToGoal;
         model.LocationX = cmd.LocationX;
         model.LocationY = cmd.LocationY;
+        model.ShotLocationX = cmd.ShotLocationX;
+        model.ShotLocationY = cmd.ShotLocationY;
 
         return model;
     }

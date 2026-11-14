@@ -15,6 +15,8 @@
 /// <param name="IsLeadToGoal">Flag indicating if this event directly resulted in a goal.</param>
 /// <param name="LocationX">Optional X coordinate on field percentage scale (0.00 to 100.00).</param>
 /// <param name="LocationY">Optional Y coordinate on field percentage scale (0.00 to 100.00).</param>
+/// <param name="ShotLocationX">Optional X coordinate on goal shot map (0.00 to 100.00 percentage scale).</param>
+/// <param name="ShotLocationY">Optional Y coordinate on goal shot map (0.00 to 100.00 percentage scale).</param>
 /// <param name="PlayerName">The name of the player associated with the event, if applicable.</param>
 /// <param name="PlayerNumber">The jersey number of the player, if applicable.</param>
 /// <param name="TeamId">The unique identifier of the team the player belongs to.</param>
@@ -31,6 +33,8 @@ public record GameEventProjection(
     bool IsLeadToGoal,
     decimal? LocationX,
     decimal? LocationY,
+    decimal? ShotLocationX,
+    decimal? ShotLocationY,
     string? PlayerName,
     int? PlayerNumber,
     Guid? TeamId,

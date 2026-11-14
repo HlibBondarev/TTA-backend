@@ -21,7 +21,8 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
     #region GET Tests
 
     /// <summary>
-    /// Verifies that an existing game event can be retrieved and correctly mapped to a <see cref="GameEventResponse"/>.
+    /// Verifies that an existing game event can be retrieved and correctly mapped to a <see cref="GameEventResponse"/>,
+    /// including spatial field coordinates and shot frame coordinates.
     /// </summary>
     [Fact]
     public async Task GetById_ShouldReturnOk_WhenEventExists()
@@ -40,6 +41,10 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
         result!.Id.Should().Be(context.EventId);
         result.EventName.Should().Be("Goal");
         result.PlayerNumber.Should().Be(10);
+        result.LocationX.Should().Be(25.50m);
+        result.LocationY.Should().Be(60.00m);
+        result.ShotLocationX.Should().Be(15.25m);
+        result.ShotLocationY.Should().Be(80.50m);
     }
 
     /// <summary>
@@ -161,7 +166,7 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
             ON CONFLICT (id) DO NOTHING",
             new { id = ownerId, email = $"{suffix}@tta-test.com", name = "Test Developer" }, transaction: transaction);
 
-        // 3. Sport & Configuration (Updated for Issue #69 schema)
+        // 3. Sport & Configuration
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         var shortName = $"S_{suffix}";
@@ -224,15 +229,15 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
             VALUES (@id, @mId, @rId, 10, @posId)",
             new { id = lineupId, mId = matchId, rId = rosterId, posId }, transaction: transaction);
 
-        // 9. Event Definition & Game Event
+        // 9. Event Definition & Game Event (seeding LocationX, LocationY, ShotLocationX, ShotLocationY)
         var defId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) 
-            VALUES (@id, @sId, 'Goal', 'G', true, NOW())", new { id = defId, sId = sportId }, transaction: transaction);
+        await conn.ExecuteAsync(@"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, createdat) 
+            VALUES (@id, @sId, 'Goal', 'G', true, true, NOW())", new { id = defId, sId = sportId }, transaction: transaction);
 
         var eventId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
-            INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, isleadtogoal, createdat) 
-            VALUES (@id, @lId, @dId, 1, @ts, false, NOW())",
+            INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, isleadtogoal, locationx, locationy, shotlocationx, shotlocationy, createdat) 
+            VALUES (@id, @lId, @dId, 1, @ts, false, 25.50, 60.00, 15.25, 80.50, NOW())",
             new { id = eventId, lId = lineupId, dId = defId, ts = DateTime.UtcNow.AddMinutes(-5) }, transaction: transaction);
 
         await transaction.CommitAsync();

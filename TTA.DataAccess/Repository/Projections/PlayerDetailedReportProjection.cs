@@ -16,6 +16,8 @@
 /// <param name="IsLeadToGoal">Flag indicating if the event led to a goal, if present.</param>
 /// <param name="LocationX">The X-coordinate of the event location, if present.</param>
 /// <param name="LocationY">The Y-coordinate of the event location, if present.</param>
+/// <param name="ShotLocationX">The X-coordinate on goal shot map, if present.</param>
+/// <param name="ShotLocationY">The Y-coordinate on goal shot map, if present.</param>
 public record PlayerDetailedReportProjection(
     Guid MatchLineupId,
     string FirstName,
@@ -29,5 +31,7 @@ public record PlayerDetailedReportProjection(
     TimeSpan? NormalizedMatchTime,
     bool? IsLeadToGoal,
     decimal? LocationX,
-    decimal? LocationY
+    decimal? LocationY,
+    decimal? ShotLocationX,
+    decimal? ShotLocationY
 );

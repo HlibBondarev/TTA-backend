@@ -131,12 +131,6 @@ public class GameEventRepositoryTests : BaseIntegrationTest
     /// <summary>
     /// Verifies that <see cref="GameEventRepository.NormalizeMatchEventsTimeAsync"/> successfully invokes 
     /// the database storage function to batch update event timestamps using piecewise-linear scale coefficients.
-    /// Scenario setup:
-    /// - Nominal period duration: 8 minutes.
-    /// - Play time anchors setup: PeriodStart (0s real) -> PeriodEnd (600s real, i.e., 10 mins real play).
-    /// - Scale factor K calculation: 8 minutes * 60 seconds / 600 seconds = 0.8
-    /// - Game Event added at 300s real-world timestamp.
-    /// - Expected normalized match time: 300 seconds * 0.8 = 240 seconds (4 minutes).
     /// </summary>
     [Fact]
     public async Task NormalizeMatchEventsTimeAsync_ShouldBatchUpdateNormalizedMatchTime_BasedOnTimeAnchors()
@@ -144,7 +138,6 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         // Arrange
         var context = await SeedEventEnvironmentAsync();
 
-        // Truncate sub-second ticks from DateTime.UtcNow to avoid microsecond rounding noise in PostgreSQL calculations
         var now = DateTime.UtcNow;
         var baseTime = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, now.Second, DateTimeKind.Utc);
 
@@ -153,7 +146,6 @@ public class GameEventRepositoryTests : BaseIntegrationTest
 
         using (var conn = Fixture.ConnectionFactory.CreateConnection())
         {
-            // Capture the shared configuration ID and its original duration to prevent state pollution
             var configData = await conn.QuerySingleAsync<(Guid Id, int Duration)>(@"
                 SELECT id, perioddurationminutes 
                 FROM public.sportconfigurations 
@@ -163,21 +155,18 @@ public class GameEventRepositoryTests : BaseIntegrationTest
             configId = configData.Id;
             originalDuration = configData.Duration;
 
-            // 1. Force sport configuration override to 8 minutes nominal duration (standard Water Polo configuration context)
             await conn.ExecuteAsync(@"
                 UPDATE public.sportconfigurations 
                 SET perioddurationminutes = 8 
                 WHERE id = @id;",
                 new { id = configId });
 
-            // 2. Clear out any existing default seeded anchors to ensure strict timeline boundaries
             await conn.ExecuteAsync("DELETE FROM public.timeanchors WHERE matchid = @mid;", new { mid = context.MatchId });
 
-            // 3. Seed deterministic timeline play anchors without non-existent 'createdat' column
             await conn.ExecuteAsync(@"
                 INSERT INTO public.timeanchors (id, matchid, periodnumber, type, timestamp) VALUES 
-                (@id1, @mid, 1, 0, @t0), -- PeriodStart at 0 seconds elapsed
-                (@id2, @mid, 1, 1, @t10); -- PeriodEnd at 600 seconds elapsed",
+                (@id1, @mid, 1, 0, @t0),
+                (@id2, @mid, 1, 1, @t10);",
                 new
                 {
                     id1 = Guid.NewGuid(),
@@ -190,15 +179,13 @@ public class GameEventRepositoryTests : BaseIntegrationTest
 
         try
         {
-            // 4. Instantiate a new event occurring precisely mid-way through the real-world execution window (300 seconds)
             var gameEvent = CreateEventModel(context.LineupId, context.DefinitionId);
             gameEvent.PeriodNumber = 1;
             gameEvent.EventTimestamp = baseTime.AddSeconds(300);
-            gameEvent.NormalizedMatchTime = TimeSpan.Zero; // Reset to verify the database operation updates this explicitly
+            gameEvent.NormalizedMatchTime = TimeSpan.Zero;
 
             await _repository.UpsertAsync([gameEvent]);
 
-            // Fetch team ID associated with this match context boundary
             Guid teamId;
             using (var conn = Fixture.ConnectionFactory.CreateConnection())
             {
@@ -216,15 +203,12 @@ public class GameEventRepositoryTests : BaseIntegrationTest
             var updatedEvent = await _repository.GetByIdAsync(gameEvent.Id);
             updatedEvent.Should().NotBeNull();
 
-            // K = (8 * 60) / 600 = 0.8
-            // Event elapsed seconds = 300. Normalized time = 300 * 0.8 = 240 seconds.
             var expectedNormalizedTime = TimeSpan.FromSeconds(240);
             updatedEvent!.NormalizedMatchTime.Should().NotBeNull();
             updatedEvent.NormalizedMatchTime!.Value.Should().BeCloseTo(expectedNormalizedTime, TimeSpan.FromMilliseconds(500));
         }
         finally
         {
-            // Revert the shared sport configuration row back to its original seed state to maintain test isolation
             if (configId != Guid.Empty)
             {
                 using (var conn = Fixture.ConnectionFactory.CreateConnection())
@@ -240,16 +224,19 @@ public class GameEventRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that <see cref="GameEventRepository.UpsertAsync"/> correctly persists and retrieves spatial coordinates (LocationX, LocationY).
+    /// Verifies that <see cref="GameEventRepository.UpsertAsync"/> correctly persists and retrieves both general location 
+    /// coordinates and shot coordinates when the event definition has <c>isshot = true</c>.
     /// </summary>
     [Fact]
-    public async Task UpsertAsync_ShouldPersistAndRetrieveCoordinates_WhenCoordinatesProvided()
+    public async Task UpsertAsync_ShouldPersistAndRetrieveShotCoordinates_WhenEventIsShot()
     {
         // Arrange
-        var context = await SeedEventEnvironmentAsync();
+        var context = await SeedEventEnvironmentAsync(isShotDefinition: true);
         var gameEvent = CreateEventModel(context.LineupId, context.DefinitionId);
         gameEvent.LocationX = 4.50m;
         gameEvent.LocationY = 8.25m;
+        gameEvent.ShotLocationX = 12.30m;
+        gameEvent.ShotLocationY = 45.60m;
 
         // Act
         await _repository.UpsertAsync([gameEvent]);
@@ -259,6 +246,36 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         persisted.Should().NotBeNull();
         persisted!.LocationX.Should().Be(4.50m);
         persisted.LocationY.Should().Be(8.25m);
+        persisted.ShotLocationX.Should().Be(12.30m, "shotlocationx must be saved when isshot = true");
+        persisted.ShotLocationY.Should().Be(45.60m, "shotlocationy must be saved when isshot = true");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="GameEventRepository.UpsertAsync"/> automatically masks shot coordinates
+    /// (sets <c>shotlocationx</c> and <c>shotlocationy</c> to <c>null</c>) when the referenced event definition 
+    /// has <c>isshot = false</c>, even if non-null shot coordinates were passed in the model.
+    /// </summary>
+    [Fact]
+    public async Task UpsertAsync_ShouldMaskShotCoordinatesToNull_WhenEventDefinitionIsNotShot()
+    {
+        // Arrange
+        var context = await SeedEventEnvironmentAsync(isShotDefinition: false);
+        var gameEvent = CreateEventModel(context.LineupId, context.DefinitionId);
+        gameEvent.LocationX = 14.50m;
+        gameEvent.LocationY = 28.25m;
+        gameEvent.ShotLocationX = 99.99m; // Accidental client payload
+        gameEvent.ShotLocationY = 88.88m;
+
+        // Act
+        await _repository.UpsertAsync([gameEvent]);
+
+        // Assert
+        var persisted = await _repository.GetByIdAsync(gameEvent.Id);
+        persisted.Should().NotBeNull();
+        persisted!.LocationX.Should().Be(14.50m, "general action location must be preserved");
+        persisted.LocationY.Should().Be(28.25m, "general action location must be preserved");
+        persisted.ShotLocationX.Should().BeNull("shotlocationx must be masked to NULL when isshot = false");
+        persisted.ShotLocationY.Should().BeNull("shotlocationy must be masked to NULL when isshot = false");
     }
 
     #endregion
@@ -267,9 +284,9 @@ public class GameEventRepositoryTests : BaseIntegrationTest
 
     /// <summary>
     /// Seeds the environment for integration tests using safe SQL insertion patterns.
-    /// Uses explicit transaction to satisfy deferred FK constraints and updated Sport table schema.
     /// </summary>
-    private async Task<(Guid MatchId, Guid LineupId, Guid DefinitionId)> SeedEventEnvironmentAsync()
+    /// <param name="isShotDefinition">Specifies whether the seeded event definition represents a shot action.</param>
+    private async Task<(Guid MatchId, Guid LineupId, Guid DefinitionId, Guid SportId)> SeedEventEnvironmentAsync(bool isShotDefinition = true)
     {
         using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
@@ -303,7 +320,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
             SELECT @id, 'test@tta.com', 'Tester', NOW() WHERE NOT EXISTS (SELECT 1 FROM public.users WHERE id = @id)",
             new { id = userId }, transaction: transaction);
 
-        // Sport & SportConfiguration (Generated unique per seed execution)
+        // Sport & SportConfiguration
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
         var sportName = $"Sport_{suffix}";
@@ -363,14 +380,17 @@ public class GameEventRepositoryTests : BaseIntegrationTest
             new { id = lineupId, mid = matchId, rid = rosterId, posid = posId }, transaction: transaction);
 
         var defId = Guid.NewGuid();
+        var defName = isShotDefinition ? "Goal" : "Exclusion";
+        var defShortName = isShotDefinition ? "G" : "EX";
+
         await conn.ExecuteAsync(@"
-            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) 
-            VALUES (@id, @sid, 'Goal', 'G', true, NOW())",
-            new { id = defId, sid = sportId }, transaction: transaction);
+            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, createdat) 
+            VALUES (@id, @sid, @name, @shortName, @isPositive, @isShot, NOW())",
+            new { id = defId, sid = sportId, name = defName, shortName = defShortName, isPositive = isShotDefinition, isShot = isShotDefinition }, transaction: transaction);
 
         await transaction.CommitAsync();
 
-        return (matchId, lineupId, defId);
+        return (matchId, lineupId, defId, sportId);
     }
 
     /// <summary>

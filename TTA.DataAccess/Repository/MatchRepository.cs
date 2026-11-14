@@ -203,6 +203,8 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
             isleadtogoal = e.IsLeadToGoal,
             locationx = e.LocationX,
             locationy = e.LocationY,
+            shotlocationx = e.ShotLocationX,
+            shotlocationy = e.ShotLocationY,
             createdat = e.CreatedAt
         }));
 

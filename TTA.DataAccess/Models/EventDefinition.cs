@@ -38,6 +38,11 @@ public class EventDefinition : IKeyedEntity<Guid>
     public bool IsPositive { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the event type requires goal shot target location tracking.
+    /// </summary>
+    public bool IsShot { get; set; }
+
+    /// <summary>
     /// Gets or sets the default frequency rank position for system default event definitions.
     /// </summary>
     public int? DefaultPosition { get; set; }

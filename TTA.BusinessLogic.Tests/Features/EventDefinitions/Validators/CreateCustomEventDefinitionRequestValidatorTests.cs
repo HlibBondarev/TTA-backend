@@ -23,7 +23,8 @@ public class CreateCustomEventDefinitionRequestValidatorTests
             Id: Guid.NewGuid(),
             Name: "Custom Timeout",
             ShortName: "CTO",
-            IsPositive: true
+            IsPositive: true,
+            IsShot: false
         );
 
         // Act
@@ -44,7 +45,8 @@ public class CreateCustomEventDefinitionRequestValidatorTests
             Id: Guid.Empty,
             Name: "Custom Timeout",
             ShortName: "CTO",
-            IsPositive: true
+            IsPositive: true,
+            IsShot: false
         );
 
         // Act
@@ -68,7 +70,8 @@ public class CreateCustomEventDefinitionRequestValidatorTests
             Id: Guid.NewGuid(),
             Name: invalidName!,
             ShortName: "CTO",
-            IsPositive: true
+            IsPositive: true,
+            IsShot: false
         );
 
         // Act
@@ -91,7 +94,8 @@ public class CreateCustomEventDefinitionRequestValidatorTests
             Id: Guid.NewGuid(),
             Name: longName,
             ShortName: "CTO",
-            IsPositive: true
+            IsPositive: true,
+            IsShot: false
         );
 
         // Act
@@ -115,7 +119,8 @@ public class CreateCustomEventDefinitionRequestValidatorTests
             Id: Guid.NewGuid(),
             Name: "Custom Timeout",
             ShortName: invalidShortName!,
-            IsPositive: true
+            IsPositive: true,
+            IsShot: false
         );
 
         // Act
@@ -138,7 +143,8 @@ public class CreateCustomEventDefinitionRequestValidatorTests
             Id: Guid.NewGuid(),
             Name: "Custom Timeout",
             ShortName: longShortName,
-            IsPositive: true
+            IsPositive: true,
+            IsShot: false
         );
 
         // Act
@@ -161,7 +167,8 @@ public class CreateCustomEventDefinitionRequestValidatorTests
             Id: Guid.NewGuid(),
             Name: maxName,
             ShortName: "CTO",
-            IsPositive: true
+            IsPositive: true,
+            IsShot: false
         );
 
         // Act
@@ -183,7 +190,8 @@ public class CreateCustomEventDefinitionRequestValidatorTests
             Id: Guid.NewGuid(),
             Name: "Custom Timeout",
             ShortName: maxShortName,
-            IsPositive: true
+            IsPositive: true,
+            IsShot: false
         );
 
         // Act

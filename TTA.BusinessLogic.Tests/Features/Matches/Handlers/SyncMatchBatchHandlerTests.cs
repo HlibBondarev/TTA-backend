@@ -42,6 +42,7 @@ public class SyncMatchBatchHandlerTests
 
     /// <summary>
     /// Verifies that the handler successfully processes batch synchronization when the match exists and data is valid.
+    /// Also verifies mapping of spatial and shot coordinates in event batch items.
     /// </summary>
     [Fact]
     public async Task Handle_Should_SyncBatch_When_MatchExists_And_DataIsValid()
@@ -56,7 +57,11 @@ public class SyncMatchBatchHandlerTests
             EventDefinitionId: Guid.NewGuid(),
             PeriodNumber: 1,
             EventTimestamp: DateTime.UtcNow,
-            IsLeadToGoal: false);
+            IsLeadToGoal: false,
+            LocationX: 12.34m,
+            LocationY: 56.78m,
+            ShotLocationX: 4.50m,
+            ShotLocationY: 2.25m);
 
         var anchorReq = new CreateTimeAnchorRequest(
             Id: Guid.NewGuid(),
@@ -90,7 +95,11 @@ public class SyncMatchBatchHandlerTests
         _matchRepositoryMock
             .Setup(r => r.SyncMatchBatchAsync(
                 matchId,
-                It.IsAny<IEnumerable<GameEvent>>(),
+                It.Is<IEnumerable<GameEvent>>(events =>
+                    events.Single().ShotLocationX == 4.50m &&
+                    events.Single().ShotLocationY == 2.25m &&
+                    events.Single().LocationX == 12.34m &&
+                    events.Single().LocationY == 56.78m),
                 It.IsAny<IEnumerable<TimeAnchor>>(),
                 It.IsAny<IEnumerable<PlayerPresence>>(),
                 It.IsAny<CancellationToken>()))
@@ -146,7 +155,7 @@ public class SyncMatchBatchHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a <see cref="ConflictException"/> is thrown when a PostgreSQL foreign key violation occurs during execution.
+    /// Verifies that a <see cref="ConflictException"/> is thrown when a PostgreSQL foreign key violation (23503) occurs during execution.
     /// </summary>
     [Fact]
     public async Task Handle_Should_Throw_ConflictException_On_Postgres_ForeignKey_Violation()
@@ -176,5 +185,71 @@ public class SyncMatchBatchHandlerTests
         // Assert
         await act.Should().ThrowAsync<ConflictException>()
             .WithMessage("One or more referenced records (Match Lineup, Event Definition, or Match) no longer exist.");
+    }
+
+    /// <summary>
+    /// Verifies that a <see cref="ConflictException"/> is thrown when a PostgreSQL check constraint violation (23514) occurs.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_ConflictException_On_Postgres_CheckConstraint_Violation()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var command = new SyncMatchBatchCommand(matchId, new MatchSyncBatchRequest([], [], []));
+        var pgException = new PostgresException("Check Violation", "ERROR", "ERROR", "23514");
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _matchRepositoryMock
+            .Setup(r => r.SyncMatchBatchAsync(
+                matchId,
+                It.IsAny<IEnumerable<GameEvent>>(),
+                It.IsAny<IEnumerable<TimeAnchor>>(),
+                It.IsAny<IEnumerable<PlayerPresence>>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(pgException);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("One or more entities violate database constraints (e.g., TimeOut earlier than TimeIn).");
+    }
+
+    /// <summary>
+    /// Verifies that a <see cref="ConflictException"/> is thrown when a custom database business rule violation (P0001) occurs.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_Throw_ConflictException_On_Postgres_P0001_BusinessRule_Violation()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var match = new Match { Id = matchId };
+        var command = new SyncMatchBatchCommand(matchId, new MatchSyncBatchRequest([], [], []));
+        var pgException = new PostgresException("Match is already finalized.", "ERROR", "ERROR", "P0001");
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(match);
+
+        _matchRepositoryMock
+            .Setup(r => r.SyncMatchBatchAsync(
+                matchId,
+                It.IsAny<IEnumerable<GameEvent>>(),
+                It.IsAny<IEnumerable<TimeAnchor>>(),
+                It.IsAny<IEnumerable<PlayerPresence>>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(pgException);
+
+        // Act
+        var act = async () => await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<ConflictException>()
+            .WithMessage("Match is already finalized.");
     }
 }

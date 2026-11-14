@@ -1408,6 +1408,155 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     #endregion
 
+    #region Game Events Shot Coordinates Integration Tests
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.RecordMatchEvent"/> returns HTTP 400 Bad Request
+    /// when shot frame coordinates (ShotLocationX or ShotLocationY) are out of valid bounds (0.00 - 100.00).
+    /// </summary>
+    [Fact]
+    public async Task RecordMatchEvent_ShouldReturnBadRequest_WhenShotCoordinatesAreOutOfBounds()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-VAL-SHOT-COORD");
+
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Shot on Goal", true);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+
+        var invalidRequest = new CreateGameEventRequest(
+            Id: Guid.NewGuid(),
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: false,
+            ShotLocationX: 105.00m, // Invalid coordinate (> 100.00)
+            ShotLocationY: 50.00m
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", new[] { invalidRequest });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.RecordMatchEvent"/> correctly accepts, persists,
+    /// and retrieves shot frame coordinates (ShotLocationX, ShotLocationY) in PostgreSQL.
+    /// </summary>
+    [Fact]
+    public async Task RecordMatchEvent_ShouldReturnCreatedAndPersistShotCoordinates_WhenCoordinatesAreValid()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Home Team");
+        var guestTeamId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Team");
+        var matchId = Guid.NewGuid();
+
+        await SeedMatchAsync(matchId, context.TournamentId, homeTeamId, guestTeamId, "M-SHOT-COORD-OK");
+
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Goal Shot", true);
+        var lineupId = await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
+
+        var validEventId = Guid.NewGuid();
+        var request = new CreateGameEventRequest(
+            Id: validEventId,
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: true,
+            LocationX: 42.50m,
+            LocationY: 88.00m,
+            ShotLocationX: 12.30m,
+            ShotLocationY: 45.60m
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{matchId}/events", new[] { request });
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        // Verify database persistence of both spatial and shot frame coordinates
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var dbCoordinates = await conn.QueryFirstOrDefaultAsync<(decimal? LocationX, decimal? LocationY, decimal? ShotLocationX, decimal? ShotLocationY)>(
+            "SELECT locationx AS LocationX, locationy AS LocationY, shotlocationx AS ShotLocationX, shotlocationy AS ShotLocationY FROM public.gameevents WHERE id = @id",
+            new { id = validEventId });
+
+        dbCoordinates.LocationX.Should().Be(42.50m);
+        dbCoordinates.LocationY.Should().Be(88.00m);
+        dbCoordinates.ShotLocationX.Should().Be(12.30m);
+        dbCoordinates.ShotLocationY.Should().Be(45.60m);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.SyncBatch"/> persists shot frame coordinates to the database during batch sync.
+    /// </summary>
+    [Fact]
+    public async Task SyncBatch_ShouldPersistShotCoordinates_WhenIncludedInBatch()
+    {
+        // Arrange
+        var context = await SetupTournamentContextAsync(TestUserId);
+        var homeId = await SeedTeamAsync(context.CityId, context.SportId, "Home Sync FC");
+        var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest Sync FC");
+
+        var matchId = Guid.NewGuid();
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SYNC-SHOT");
+
+        var lineupId = await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
+        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Penalty Shot", true);
+
+        var eventId = Guid.NewGuid();
+
+        var eventDto = new CreateGameEventRequest(
+            Id: eventId,
+            MatchLineupId: lineupId,
+            EventDefinitionId: eventDefId,
+            PeriodNumber: 1,
+            EventTimestamp: DateTime.UtcNow,
+            IsLeadToGoal: true,
+            LocationX: 50.00m,
+            LocationY: 90.00m,
+            ShotLocationX: 15.00m,
+            ShotLocationY: 30.00m
+        );
+
+        var request = new MatchSyncBatchRequest(
+            Events: [eventDto],
+            Anchors: [],
+            Presences: []
+        );
+
+        var url = $"{BaseUrl}/{matchId}/sync-batch";
+
+        // Act
+        var response = await Client.PostAsJsonAsync(url, request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var dbEvent = await conn.QueryFirstOrDefaultAsync<(decimal? ShotLocationX, decimal? ShotLocationY)>(
+            "SELECT shotlocationx AS ShotLocationX, shotlocationy AS ShotLocationY FROM public.gameevents WHERE id = @id",
+            new { id = eventId });
+
+        dbEvent.ShotLocationX.Should().Be(15.00m);
+        dbEvent.ShotLocationY.Should().Be(30.00m);
+    }
+
+    #endregion
+
     #region Time Anchors Tests
 
     /// <summary>
@@ -2940,9 +3089,9 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var shortName = name.Length > 10 ? name.Substring(0, 10) : name;
 
         await conn.ExecuteAsync(
-            @"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) 
-              VALUES (@id, @sportId, @name, @shortName, @isPositive, @createdAt)",
-            new { id, sportId, name, shortName, isPositive, createdAt = DateTime.UtcNow });
+            @"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, createdat) 
+              VALUES (@id, @sportId, @name, @shortName, @isPositive, @isShot, @createdAt)",
+            new { id, sportId, name, shortName, isPositive, isShot = true, createdAt = DateTime.UtcNow });
         return id;
     }
 

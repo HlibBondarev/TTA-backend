@@ -43,6 +43,7 @@ public class CreateCustomEventDefinitionHandler(
             Name = request.Name,
             ShortName = request.ShortName,
             IsPositive = request.IsPositive,
+            IsShot = request.IsShot,
             IsSoftDeleted = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -65,6 +66,7 @@ public class CreateCustomEventDefinitionHandler(
                 Name: created.Name,
                 ShortName: created.ShortName,
                 IsPositive: created.IsPositive,
+                IsShot: created.IsShot,
                 IsCustom: true,
                 IsEnabled: false,
                 SortOrder: 0
