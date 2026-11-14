@@ -51,6 +51,8 @@ public class GetGameEventByIdHandler(
             IsLeadToGoal: e.IsLeadToGoal,
             LocationX: e.LocationX,
             LocationY: e.LocationY,
+            ShotLocationX: e.ShotLocationX,
+            ShotLocationY: e.ShotLocationY,
             PlayerName: e.PlayerName,
             PlayerNumber: e.PlayerNumber,
             TeamId: e.TeamId,

@@ -22,7 +22,7 @@ public record SyncMatchBatchCommand(
 public static class SyncMatchBatchCommandExtensions
 {
     /// <summary>
-    /// Maps a <see cref="CreateGameEventRequest"/> to a <see cref="GameEvent"/> domain model with UTC normalization and spatial coordinates.
+    /// Maps a <see cref="CreateGameEventRequest"/> to a <see cref="GameEvent"/> domain model with UTC normalization, spatial coordinates, and shot coordinates.
     /// </summary>
     public static GameEvent ToModel(this CreateGameEventRequest req) => new()
     {
@@ -38,6 +38,8 @@ public static class SyncMatchBatchCommandExtensions
         IsLeadToGoal = req.IsLeadToGoal,
         LocationX = req.LocationX,
         LocationY = req.LocationY,
+        ShotLocationX = req.ShotLocationX,
+        ShotLocationY = req.ShotLocationY,
         CreatedAt = DateTime.UtcNow
     };
 

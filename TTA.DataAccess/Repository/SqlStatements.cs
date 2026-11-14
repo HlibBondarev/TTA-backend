@@ -423,7 +423,7 @@ public static class SqlStatements
         /// </summary>
         public const string UpsertCustomEventDefinition = @"
             SELECT * FROM public.upsert_custom_event_definition(
-                @p_id, @p_sport_id, @p_owner_id, @p_name, @p_short_name, @p_is_positive
+                @p_id, @p_sport_id, @p_owner_id, @p_name, @p_short_name, @p_is_positive, @p_is_shot
             );";
 
         /// <summary>

@@ -58,7 +58,9 @@ public class GetPlayerDetailedReportHandler(
                 NormalizedMatchTime: p.NormalizedMatchTime,
                 IsLeadToGoal: p.IsLeadToGoal!.Value,
                 LocationX: p.LocationX,
-                LocationY: p.LocationY
+                LocationY: p.LocationY,
+                ShotLocationX: p.ShotLocationX,
+                ShotLocationY: p.ShotLocationY
             ))
             .OrderBy(e => e.EventTimestamp)
             .ToList();

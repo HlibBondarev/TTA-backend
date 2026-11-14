@@ -13,6 +13,8 @@ namespace TTA.BusinessLogic.Features.GameEvents.DTOs;
 /// <param name="IsLeadToGoal">Indicates whether this event leads to a goal.</param>
 /// <param name="LocationX">The optional X coordinate of the event on the field (0.00 to 100.00 percentage scale).</param>
 /// <param name="LocationY">The optional Y coordinate of the event on the field (0.00 to 100.00 percentage scale).</param>
+/// <param name="ShotLocationX">Optional X coordinate on goal shot map percentage scale (0.00 to 100.00).</param>
+/// <param name="ShotLocationY">Optional Y coordinate on goal shot map percentage scale (0.00 to 100.00).</param>
 public record CreateGameEventRequest(
     Guid Id,
     Guid MatchLineupId,
@@ -21,7 +23,9 @@ public record CreateGameEventRequest(
     DateTime EventTimestamp,
     bool IsLeadToGoal,
     decimal? LocationX = null,
-    decimal? LocationY = null);
+    decimal? LocationY = null,
+    decimal? ShotLocationX = null,
+    decimal? ShotLocationY = null);
 
 /// <summary>
 /// Mapping extensions for <see cref="CreateGameEventRequest"/>.

@@ -15,6 +15,7 @@
 /// <param name="Playground">The raw vector SVG string markup for rendering the interactive field layout.</param>
 /// <param name="FieldLength">The exact physical length of the playing field in meters.</param>
 /// <param name="FieldWidth">The exact physical width of the playing field in meters.</param>
+/// <param name="ShotMap">The optional vector SVG markup for the goal frame target area layout.</param>
 public record SportConfigurationResponse(
     Guid Id,
     Guid SportId,
@@ -27,4 +28,5 @@ public record SportConfigurationResponse(
     int ActivePlayersLimit,
     string Playground,
     decimal FieldLength,
-    decimal FieldWidth);
+    decimal FieldWidth,
+    string? ShotMap = null);

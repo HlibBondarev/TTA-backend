@@ -25,6 +25,7 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
         parameters.Add("p_name", entity.Name);
         parameters.Add("p_short_name", entity.ShortName);
         parameters.Add("p_is_positive", entity.IsPositive);
+        parameters.Add("p_is_shot", entity.IsShot);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
