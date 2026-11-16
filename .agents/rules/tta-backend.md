@@ -63,7 +63,7 @@ These engineering standards govern all development in the `TTA-backend` reposito
 - **Idempotency**:
   - Keep database migrations, schema scripts, and routine definitions idempotent:
     - Use `CREATE OR REPLACE FUNCTION ...` and `CREATE OR REPLACE PROCEDURE ...` for routines.
-      - Exception: when a change alters a function's return type or `OUT` parameter types, `CREATE OR REPLACE FUNCTION` fails. Use `DROP FUNCTION IF EXISTS ...` followed by `CREATE FUNCTION ...`, and recreate dependent objects and grants in the same migration.
+      - Exception: when a change alters a function's return type or `OUT` parameter types, `CREATE OR REPLACE FUNCTION` fails. Drop dependent objects first (or use `DROP FUNCTION IF EXISTS ... CASCADE`), followed by `CREATE FUNCTION ...`, and recreate all affected dependent objects and grants in the same migration.
     - PostgreSQL does not support `CREATE TYPE IF NOT EXISTS`; guard `CREATE TYPE ... AS ENUM` with a catalog check joining `pg_type` and `pg_namespace` filtered by both `t.typname` and the target schema (`n.nspname = 'public'`) inside a `DO $$ ... $$` block, e.g.:
       ```sql
       DO $$ BEGIN IF NOT EXISTS ( SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE t.typname = 'your_enum_type' AND n.nspname = 'public' ) THEN CREATE TYPE public.your_enum_type AS ENUM ('value1', 'value2'); END IF; END $$;
