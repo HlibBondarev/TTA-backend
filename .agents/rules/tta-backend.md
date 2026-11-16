@@ -54,7 +54,7 @@ These engineering standards govern all development in the `TTA-backend` reposito
 
 - **Parameterized Queries & DynamicParameters**:
   - Always use parameterized queries or explicit `DynamicParameters` when invoking PostgreSQL routines and queries.
-  - Parameter names in `DynamicParameters` must explicitly match PostgreSQL function arguments (e.g., `parameters.Add("p_id", id)`).
+  - Parameter names in `DynamicParameters` must match the SQL placeholders used in the query (e.g., `@p_id`), not necessarily the PostgreSQL function/procedure argument names; note that positional routine calls do not require matching PostgreSQL argument names (unlike named notation `arg => @p_id`).
   - Avoid string interpolation or manual concatenation in SQL statements to prevent SQL injection vulnerabilities.
 - **PostgreSQL Routine Calls (Functions vs. Procedures)**:
   - Distinguish between PostgreSQL functions and procedures:
@@ -64,11 +64,13 @@ These engineering standards govern all development in the `TTA-backend` reposito
   - Keep database migrations, schema scripts, and routine definitions idempotent:
     - Use `CREATE OR REPLACE FUNCTION ...` and `CREATE OR REPLACE PROCEDURE ...` for routines.
       - Exception: when a change alters a function's return type or `OUT` parameter types, `CREATE OR REPLACE FUNCTION` fails. Drop dependent objects and then run `DROP FUNCTION IF EXISTS ...` (or run `DROP FUNCTION IF EXISTS ... CASCADE`), followed by `CREATE FUNCTION ...`, and recreate all affected dependent objects and grants in the same migration.
+      - When a change alters a function's argument types, `CREATE OR REPLACE FUNCTION` creates a new overload and leaves the old signature in place. Drop the old signature (e.g., `DROP FUNCTION IF EXISTS public.fn_name(integer)`) and its dependent objects, then create the new signature and restore affected dependent objects and grants in the same migration.
     - PostgreSQL does not support `CREATE TYPE IF NOT EXISTS`; guard `CREATE TYPE ... AS ENUM` with a catalog check joining `pg_type` and `pg_namespace` filtered by both `t.typname` and the target schema (`n.nspname = 'public'`) inside a `DO $$ ... $$` block, e.g.:
       ```sql
       DO $$ BEGIN IF NOT EXISTS ( SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE t.typname = 'your_enum_type' AND n.nspname = 'public' ) THEN CREATE TYPE public.your_enum_type AS ENUM ('value1', 'value2'); END IF; END $$;
       ```
     - Use `IF NOT EXISTS` for supported statements: `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, and `CREATE INDEX`.
+      - Exception: when a change alters an existing index's definition, `CREATE INDEX IF NOT EXISTS` keeps the old index unchanged. Run `DROP INDEX IF EXISTS <index_name>;` followed by `CREATE [UNIQUE] INDEX <index_name> ...` (without `IF NOT EXISTS`) in the same migration.
     - Write reversible, repeatable migrations and migration scripts.
 - **Transaction Boundaries**:
   - Maintain explicit database transactions (`using var transaction = ...`) for multi-step write operations to ensure atomicity.
