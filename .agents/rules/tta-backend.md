@@ -63,7 +63,10 @@ These engineering standards govern all development in the `TTA-backend` reposito
 - **Idempotency**:
   - Keep database migrations, schema scripts, and routine definitions idempotent:
     - Use `CREATE OR REPLACE FUNCTION ...` and `CREATE OR REPLACE PROCEDURE ...` for routines.
-    - PostgreSQL does not support `CREATE TYPE IF NOT EXISTS`; guard `CREATE TYPE ... AS ENUM` with a catalog check against `pg_type` inside a `DO $$ ... $$` block (e.g., `IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '...')`).
+    - PostgreSQL does not support `CREATE TYPE IF NOT EXISTS`; guard `CREATE TYPE ... AS ENUM` with a catalog check joining `pg_type` and `pg_namespace` filtered by both `t.typname` and the target schema (`n.nspname = 'public'`) inside a `DO $$ ... $$` block, e.g.:
+      ```sql
+      DO $$ BEGIN IF NOT EXISTS ( SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE t.typname = 'your_enum_type' AND n.nspname = 'public' ) THEN CREATE TYPE public.your_enum_type AS ENUM ('value1', 'value2'); END IF; END $$;
+      ```
     - Use `IF NOT EXISTS` for supported statements: `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, and `CREATE INDEX`.
     - Write reversible, repeatable migrations and migration scripts.
 - **Transaction Boundaries**:
