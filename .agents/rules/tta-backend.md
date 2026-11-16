@@ -33,11 +33,12 @@ These engineering standards govern all development in the `TTA-backend` reposito
   - Controllers must only accept HTTP requests, validate transport concerns, send MediatR commands/queries via `ISender`, and map results to HTTP status codes (`Ok`, `CreatedAtAction`, `NoContent`, etc.).
   - Never execute business logic, entity orchestration, or direct database queries inside controllers.
 - **CancellationToken Propagation**:
-  - Propagate `CancellationToken` through every asynchronous method signature without exception:
+  - Propagate `CancellationToken` through all async controller actions, MediatR handlers, Dapper `CommandDefinition` calls, and custom async methods wherever the signature permits it:
     - Controller actions -> `ISender.Send(request, cancellationToken)`
     - MediatR handlers -> `Handle(TRequest request, CancellationToken cancellationToken)`
     - Repository interfaces and implementations -> Dapper calls wrapped in `CommandDefinition(sql, parameters, cancellationToken: cancellationToken)`.
   - Avoid ignoring or dropping cancellation tokens.
+  - Framework-mandated async signatures that do not accept a cancellation token (such as `IAsyncDisposable.DisposeAsync()` or `IAsyncLifetime`) are explicitly exempt.
 - **DTOs and Encapsulation**:
   - Never expose database entities/models directly from API endpoints.
   - Use explicit DTOs or C# `record` types for all API request bodies and response payloads.
@@ -55,12 +56,15 @@ These engineering standards govern all development in the `TTA-backend` reposito
   - Always use parameterized queries or explicit `DynamicParameters` when invoking PostgreSQL routines and queries.
   - Parameter names in `DynamicParameters` must explicitly match PostgreSQL function arguments (e.g., `parameters.Add("p_id", id)`).
   - Avoid string interpolation or manual concatenation in SQL statements to prevent SQL injection vulnerabilities.
-- **PostgreSQL Function Calls**:
-  - When invoking stored functions or procedures in PostgreSQL (e.g., `public.*`), structure calls using Dapper's `CommandDefinition` and appropriate command types or explicit `SELECT * FROM function_name(@p_param)`.
+- **PostgreSQL Routine Calls (Functions vs. Procedures)**:
+  - Distinguish between PostgreSQL functions and procedures:
+    - **Functions** (`CREATE OR REPLACE FUNCTION`): Invoke via parameterized `SELECT` queries (e.g., `SELECT * FROM function_name(@p_param)`) using Dapper `CommandDefinition` and `DynamicParameters`.
+    - **Procedures** (`CREATE OR REPLACE PROCEDURE`): Invoke via parameterized `CALL` statements (e.g., `CALL procedure_name(@p_param)`) using Dapper `CommandDefinition` and `DynamicParameters`.
 - **Idempotency**:
-  - Keep database migrations, schema scripts, and function definitions idempotent:
-    - Use `CREATE OR REPLACE FUNCTION ...` for functions and procedures.
-    - Use `IF NOT EXISTS` for table, column, type, or index additions.
+  - Keep database migrations, schema scripts, and routine definitions idempotent:
+    - Use `CREATE OR REPLACE FUNCTION ...` and `CREATE OR REPLACE PROCEDURE ...` for routines.
+    - PostgreSQL does not support `CREATE TYPE IF NOT EXISTS`; guard `CREATE TYPE ... AS ENUM` with a catalog check against `pg_type` inside a `DO $$ ... $$` block (e.g., `IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '...')`).
+    - Use `IF NOT EXISTS` for supported statements: `CREATE TABLE`, `ALTER TABLE ... ADD COLUMN`, and `CREATE INDEX`.
     - Write reversible, repeatable migrations and migration scripts.
 - **Transaction Boundaries**:
   - Maintain explicit database transactions (`using var transaction = ...`) for multi-step write operations to ensure atomicity.
@@ -92,10 +96,10 @@ These engineering standards govern all development in the `TTA-backend` reposito
   - Use xUnit, Moq for mocking dependencies, and FluentAssertions for clear, readable assertions.
   - Structure test methods using the `Arrange` / `Act` / `Assert` pattern, naming tests clearly in English (e.g., `MethodName_ShouldExpectedBehavior_WhenStateUnderTest`).
 - **Terminal Verification Before Concluding**:
-  - Before concluding any task, run the full build and test suite in the terminal:
+  - Before concluding any task, run the full build and test suite from the repository root targeting the solution file:
     ```bash
-    dotnet build
-    dotnet test
+    dotnet build TTA-backend.sln
+    dotnet test TTA-backend.sln
     ```
   - Verify and resolve all compilation warnings, analyzer diagnostics, and failing tests before handoff.
 - **Git Branching Policy**:
