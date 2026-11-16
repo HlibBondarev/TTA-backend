@@ -30,9 +30,9 @@ These engineering standards govern all development in the `TTA-backend` reposito
     - **Application / Business Logic (`TTA.BusinessLogic`)**: MediatR Commands, Queries, Handlers, FluentValidation validators, and pipeline behaviors.
     - **Domain & Infrastructure (`TTA.DataAccess` / `TTA.Common`)**: Repository implementations, Dapper query executions, data models, database connection management, and shared utilities.
 - **Standard Feature Execution Pipeline**:
-  - Follow the vertical execution chain: `Controller Action (TTA.WebAPI)` -> `MediatR Command / Query + Handler + Validator (TTA.BusinessLogic)` -> `Entity Repository (TTA.DataAccess)` -> `SqlStatements` constant -> `BaseRepository` -> `PostgreSQL Stored Function / Procedure`.
+  - Follow the vertical execution chain: `Controller Action (TTA.WebAPI)` -> `MediatR Command / Query + Handler + Validator (TTA.BusinessLogic)` -> `Entity Repository (TTA.DataAccess)` -> `SqlStatements` constant -> `EntityRepositoryBase<TKey, TEntity>` -> `PostgreSQL Stored Function / Procedure`.
   - Define all SQL invocation strings in `SqlStatements` constants and parameter names in `SqlParameters` constants.
-  - Entity repositories must inherit from `BaseRepository` and delegate Dapper execution to `BaseRepository` methods rather than opening raw connections directly.
+  - Entity repositories must inherit from `EntityRepositoryBase<TKey, TEntity>` and delegate Dapper execution to `EntityRepositoryBase<TKey, TEntity>` methods rather than opening raw connections directly.
 - **Thin Controllers**:
   - Controllers must only accept HTTP requests, validate transport concerns, send MediatR commands/queries via `ISender`, and map results to HTTP status codes (`Ok`, `CreatedAtAction`, `NoContent`, etc.).
   - Never execute business logic, entity orchestration, or direct database queries inside controllers.
