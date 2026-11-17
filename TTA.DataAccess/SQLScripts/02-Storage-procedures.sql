@@ -2773,7 +2773,7 @@ RETURNS TABLE (
     firstname VARCHAR,
     lastname VARCHAR,
     number INT,
-    scores INT,
+    scores BIGINT,
     positivegoalleadingactions INT,
     negativegoalleadingactions INT,
     totalpositiveactions INT,
@@ -2801,7 +2801,7 @@ BEGIN
         p.lastname,
         ml.number,
         -- Total score accumulated from positive events (ed.ispositive = TRUE)
-        COALESCE(SUM(CASE WHEN ed.ispositive = TRUE THEN ed.score ELSE 0 END), 0)::INT AS scores,
+        COALESCE(SUM(CASE WHEN ed.ispositive = TRUE THEN ed.score ELSE 0 END), 0)::BIGINT AS scores,
         -- Positive goal-leading actions
         COALESCE(SUM(CASE WHEN ge.isleadtogoal = TRUE AND ed.ispositive = TRUE THEN 1 ELSE 0 END), 0)::INT AS positivegoalleadingactions,
         -- Negative goal-leading actions

@@ -18,7 +18,7 @@ public record TeamMatchSummaryReportResponse(
     string FirstName,
     string LastName,
     int Number,
-    int Scores,
+    long Scores,
     int PositiveGoalLeadingActions,
     int NegativeGoalLeadingActions,
     int TotalPositiveActions,

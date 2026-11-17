@@ -988,6 +988,64 @@ public class MatchRepositoryTests : BaseIntegrationTest
         playerSummary.PlayPercentage.Should().Be(100.0);
     }
 
+    /// <summary>
+    /// Verifies that <see cref="MatchRepository.GetTeamSummaryReportAsync"/> preserves the full <see cref="long"/> total
+    /// without integer overflow when two individually valid positive <see cref="int"/> event scores sum past <see cref="int.MaxValue"/>.
+    /// </summary>
+    /// <returns>A task representing the asynchronous test operation.</returns>
+    [Fact]
+    public async Task GetTeamSummaryReportAsync_ShouldReturnFullBigIntTotal_WhenPositiveScoresExceedInt32MaxValue()
+    {
+        // Arrange
+        var context = await SeedMatchEnvironmentAsync();
+        var match = CreateMatchModel(context.TournamentId, context.HomeTeamId, context.GuestTeamId);
+        await _repository.UpsertMatchAsync(match, CancellationToken.None);
+
+        using var conn = (DbConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+
+        var rosterData = await conn.QueryFirstAsync<(Guid id, Guid positionid)>(
+            "SELECT id, positionid FROM public.playerrosters WHERE tournamentid = @tId AND teamid = @teamId LIMIT 1",
+            new { tId = context.TournamentId, teamId = context.HomeTeamId });
+
+        var targetLineupId = Guid.NewGuid();
+        await conn.ExecuteAsync(
+            "INSERT INTO public.matchlineups (id, matchid, playerrosterid, number, positionid) VALUES (@id, @mId, @rId, 12, @posId)",
+            new { id = targetLineupId, mId = match.Id, rId = rosterData.id, posId = rosterData.positionid });
+
+        var sportId = await conn.ExecuteScalarAsync<Guid>(
+            "SELECT sportid FROM public.tournaments WHERE id = @tId",
+            new { tId = context.TournamentId });
+
+        var firstHighScoreDefId = Guid.NewGuid();
+        var secondHighScoreDefId = Guid.NewGuid();
+        const int firstScore = 1_500_000_000;
+        const int secondScore = 1_600_000_000;
+        const long expectedTotalScore = (long)firstScore + secondScore;
+
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, score, createdat) VALUES 
+            (@def1, @sId, 'High Score Action 1', 'HS1', true, @score1, NOW()),
+            (@def2, @sId, 'High Score Action 2', 'HS2', true, @score2, NOW());",
+            new { def1 = firstHighScoreDefId, def2 = secondHighScoreDefId, sId = sportId, score1 = firstScore, score2 = secondScore });
+
+        var eventTime = DateTime.UtcNow;
+        await conn.ExecuteAsync(@"
+            INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, isleadtogoal, createdat) VALUES 
+            (@e1, @lineupId, @def1, 1, @ts1, false, NOW()),
+            (@e2, @lineupId, @def2, 1, @ts2, false, NOW());",
+            new { e1 = Guid.NewGuid(), e2 = Guid.NewGuid(), lineupId = targetLineupId, def1 = firstHighScoreDefId, def2 = secondHighScoreDefId, ts1 = eventTime, ts2 = eventTime.AddSeconds(10) });
+
+        // Act
+        var report = (await _repository.GetTeamSummaryReportAsync(match.Id, context.HomeTeamId, CancellationToken.None)).ToList();
+
+        // Assert
+        var playerSummary = report.FirstOrDefault(r => r.MatchLineupId == targetLineupId);
+        playerSummary.Should().NotBeNull();
+        playerSummary!.Scores.Should().Be(expectedTotalScore);
+        playerSummary.TotalPositiveActions.Should().Be(2);
+    }
+
     #endregion
 
     #region User Tracked Matches Tests
