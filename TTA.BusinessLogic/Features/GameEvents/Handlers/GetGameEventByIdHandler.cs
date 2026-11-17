@@ -45,6 +45,7 @@ public class GetGameEventByIdHandler(
             EventDefinitionId: e.EventDefinitionId,
             EventName: e.EventName,
             IsPositive: e.IsPositive,
+            Score: e.Score,
             PeriodNumber: e.PeriodNumber,
             EventTimestamp: e.EventTimestamp,
             NormalizedMatchTime: e.NormalizedMatchTime,

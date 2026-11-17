@@ -51,7 +51,7 @@ public class GetTeamSummaryReportHandler(
             FirstName: p.FirstName,
             LastName: p.LastName,
             Number: p.Number,
-            Goals: p.Goals,
+            Scores: p.Scores,
             PositiveGoalLeadingActions: p.PositiveGoalLeadingActions,
             NegativeGoalLeadingActions: p.NegativeGoalLeadingActions,
             TotalPositiveActions: p.TotalPositiveActions,

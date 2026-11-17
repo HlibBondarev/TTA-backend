@@ -262,6 +262,7 @@ CREATE TABLE eventdefinitions (
     shortname VARCHAR(10) NOT NULL,
     ispositive BOOLEAN NOT NULL,
     isshot BOOLEAN NOT NULL DEFAULT FALSE,
+    score INT NOT NULL DEFAULT 0 CHECK (score >= 0),
     defaultposition INT NULL,
     issoftdeleted BOOLEAN NOT NULL DEFAULT FALSE,
     createdat TIMESTAMPTZ NOT NULL

@@ -64,7 +64,7 @@ public class GetTeamSummaryReportHandlerTests
                 FirstName: "John",
                 LastName: "Doe",
                 Number: 10,
-                Goals: 2,
+                Scores: 2,
                 PositiveGoalLeadingActions: 1,
                 NegativeGoalLeadingActions: 0,
                 TotalPositiveActions: 5,
@@ -76,7 +76,7 @@ public class GetTeamSummaryReportHandlerTests
                 FirstName: "Jane",
                 LastName: "Smith",
                 Number: 7,
-                Goals: 0,
+                Scores: 0,
                 PositiveGoalLeadingActions: 2,
                 NegativeGoalLeadingActions: 1,
                 TotalPositiveActions: 3,
@@ -98,7 +98,7 @@ public class GetTeamSummaryReportHandlerTests
         resultList.Should().HaveCount(2);
 
         resultList[0].FirstName.Should().Be("John");
-        resultList[0].Goals.Should().Be(2);
+        resultList[0].Scores.Should().Be(2);
         resultList[0].PlayPercentage.Should().Be(85.5);
 
         resultList[1].FirstName.Should().Be("Jane");

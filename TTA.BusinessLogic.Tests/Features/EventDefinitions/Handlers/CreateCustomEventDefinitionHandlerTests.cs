@@ -41,7 +41,8 @@ public class CreateCustomEventDefinitionHandlerTests
             Name: "Custom Block",
             ShortName: "C-BLK",
             IsPositive: true,
-            IsShot: false);
+            IsShot: false,
+            Score: 2);
 
         var createdEntity = new EventDefinition
         {
@@ -52,6 +53,7 @@ public class CreateCustomEventDefinitionHandlerTests
             ShortName = command.ShortName,
             IsPositive = command.IsPositive,
             IsShot = command.IsShot,
+            Score = command.Score,
             IsSoftDeleted = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -65,6 +67,7 @@ public class CreateCustomEventDefinitionHandlerTests
                 e.ShortName == command.ShortName &&
                 e.IsPositive == command.IsPositive &&
                 e.IsShot == command.IsShot &&
+                e.Score == command.Score &&
                 !e.IsSoftDeleted), It.IsAny<CancellationToken>()))
             .ReturnsAsync(createdEntity);
 
@@ -79,6 +82,7 @@ public class CreateCustomEventDefinitionHandlerTests
         result.ShortName.Should().Be("C-BLK");
         result.IsPositive.Should().BeTrue();
         result.IsShot.Should().BeFalse();
+        result.Score.Should().Be(2);
         result.IsCustom.Should().BeTrue();
         result.IsEnabled.Should().BeFalse();
         result.SortOrder.Should().Be(0);

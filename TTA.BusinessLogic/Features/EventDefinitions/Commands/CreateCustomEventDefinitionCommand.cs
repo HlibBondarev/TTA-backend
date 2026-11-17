@@ -13,6 +13,7 @@ namespace TTA.BusinessLogic.Features.EventDefinitions.Commands;
 /// <param name="ShortName">The abbreviated short code of the custom event definition.</param>
 /// <param name="IsPositive">Indicates whether the custom action has a positive statistical impact.</param>
 /// <param name="IsShot">Indicates whether the custom action requires goal shot target location tracking.</param>
+/// <param name="Score">The score points awarded for this custom event action.</param>
 public record CreateCustomEventDefinitionCommand(
     Guid Id,
     Guid SportId,
@@ -20,7 +21,8 @@ public record CreateCustomEventDefinitionCommand(
     string Name,
     string ShortName,
     bool IsPositive,
-    bool IsShot = false) : IRequest<EventDefinitionResponse>;
+    bool IsShot = false,
+    int Score = 0) : IRequest<EventDefinitionResponse>;
 
 /// <summary>
 /// Extension methods for mapping CreateCustomEventDefinitionRequest DTO to CreateCustomEventDefinitionCommand.
@@ -46,6 +48,7 @@ public static class CreateCustomEventDefinitionCommandExtensions
             Name: request.Name,
             ShortName: request.ShortName,
             IsPositive: request.IsPositive,
-            IsShot: request.IsShot);
+            IsShot: request.IsShot,
+            Score: request.Score);
     }
 }

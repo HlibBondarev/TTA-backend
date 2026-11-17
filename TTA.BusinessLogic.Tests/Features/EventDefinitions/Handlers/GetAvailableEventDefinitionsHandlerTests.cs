@@ -46,6 +46,7 @@ public class GetAvailableEventDefinitionsHandlerTests
                 ShortName: "ST",
                 IsPositive: true,
                 IsShot: false,
+                Score: 0,
                 IsCustom: false,
                 IsEnabled: true,
                 SortOrder: 1
@@ -57,6 +58,7 @@ public class GetAvailableEventDefinitionsHandlerTests
                 ShortName: "PEN",
                 IsPositive: true,
                 IsShot: true,
+                Score: 1,
                 IsCustom: true,
                 IsEnabled: false,
                 SortOrder: 2
@@ -84,6 +86,7 @@ public class GetAvailableEventDefinitionsHandlerTests
         list[0].ShortName.Should().Be("ST");
         list[0].IsPositive.Should().BeTrue();
         list[0].IsShot.Should().BeFalse();
+        list[0].Score.Should().Be(0);
         list[0].IsCustom.Should().BeFalse();
         list[0].IsEnabled.Should().BeTrue();
         list[0].SortOrder.Should().Be(1);
@@ -95,6 +98,7 @@ public class GetAvailableEventDefinitionsHandlerTests
         list[1].ShortName.Should().Be("PEN");
         list[1].IsPositive.Should().BeTrue();
         list[1].IsShot.Should().BeTrue("IsShot must be mapped to true for shot event definitions");
+        list[1].Score.Should().Be(1);
         list[1].IsCustom.Should().BeTrue();
         list[1].IsEnabled.Should().BeFalse();
         list[1].SortOrder.Should().Be(2);
@@ -115,11 +119,11 @@ public class GetAvailableEventDefinitionsHandlerTests
 
         var nonShotProjection = new UserEventDefinitionProjection(
             Id: Guid.NewGuid(), SportId: sportId, Name: "Exclusion", ShortName: "E",
-            IsPositive: false, IsShot: false, IsCustom: false, IsEnabled: true, SortOrder: 1);
+            IsPositive: false, IsShot: false, Score: 0, IsCustom: false, IsEnabled: true, SortOrder: 1);
 
         var shotProjection = new UserEventDefinitionProjection(
             Id: Guid.NewGuid(), SportId: sportId, Name: "Goal", ShortName: "G",
-            IsPositive: true, IsShot: true, IsCustom: false, IsEnabled: true, SortOrder: 2);
+            IsPositive: true, IsShot: true, Score: 1, IsCustom: false, IsEnabled: true, SortOrder: 2);
 
         _repositoryMock
             .Setup(r => r.GetAvailableForUserAsync(userId, sportId, It.IsAny<CancellationToken>()))
@@ -153,9 +157,9 @@ public class GetAvailableEventDefinitionsHandlerTests
 
         var mockProjections = new List<UserEventDefinitionProjection>
         {
-            new(id1, sportId, "Action 1", "A1", true, false, false, true, 1),
-            new(id2, sportId, "Action 2", "A2", true, true, false, true, 2),
-            new(id3, sportId, "Action 3", "A3", false, false, false, false, 3)
+            new(id1, sportId, "Action 1", "A1", true, false, 0, false, true, 1),
+            new(id2, sportId, "Action 2", "A2", true, true, 1, false, true, 2),
+            new(id3, sportId, "Action 3", "A3", false, false, 0, false, false, 3)
         };
 
         _repositoryMock

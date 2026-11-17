@@ -294,8 +294,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             new { id = Guid.NewGuid(), lId = lineupId, @in = startTime, @out = endTime });
 
         // 3. Seed Event Definitions (exact name 'Goal' with positive and negative flags)
-        var posGoalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", isPositive: true);
-        var negGoalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", isPositive: false);
+        var posGoalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", isPositive: true, score: 1);
+        var negGoalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", isPositive: false, score: 1);
 
         // 4. Seed Events
         await conn.ExecuteAsync(@"
@@ -324,7 +324,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var playerReport = result!.FirstOrDefault(r => r.MatchLineupId == lineupId);
         playerReport.Should().NotBeNull();
 
-        playerReport!.Goals.Should().Be(1, "only positive Goal events should count towards Goals");
+        playerReport!.Scores.Should().Be(1, "only positive events should contribute their score towards Scores");
         playerReport.PositiveGoalLeadingActions.Should().Be(1);
         playerReport.TotalPositiveActions.Should().Be(1);
         playerReport.TotalNegativeActions.Should().Be(1);
@@ -3082,16 +3082,16 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             new { id = Guid.NewGuid(), userId, role, targetType, targetId, now = DateTime.UtcNow });
     }
 
-    private async Task<Guid> SeedEventDefinitionAsync(Guid sportId, string name, bool isPositive)
+    private async Task<Guid> SeedEventDefinitionAsync(Guid sportId, string name, bool isPositive, int score = 0)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         var id = Guid.NewGuid();
         var shortName = name.Length > 10 ? name.Substring(0, 10) : name;
 
         await conn.ExecuteAsync(
-            @"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, createdat) 
-              VALUES (@id, @sportId, @name, @shortName, @isPositive, @isShot, @createdAt)",
-            new { id, sportId, name, shortName, isPositive, isShot = true, createdAt = DateTime.UtcNow });
+            @"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, score, createdat) 
+              VALUES (@id, @sportId, @name, @shortName, @isPositive, @isShot, @score, @createdAt)",
+            new { id, sportId, name, shortName, isPositive, isShot = true, score, createdAt = DateTime.UtcNow });
         return id;
     }
 

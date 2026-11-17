@@ -1753,14 +1753,16 @@ END;$$ LANGUAGE plpgsql;
  * Includes optional p_is_shot parameter to set shot-related event definitions.
  * Validates ownership and prohibits modifying system default definitions.
  **********************************************************************************/
- CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
+DROP FUNCTION IF EXISTS public.upsert_custom_event_definition(UUID, UUID, VARCHAR, VARCHAR, VARCHAR, BOOLEAN, BOOLEAN);
+CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
     p_id UUID,
     p_sport_id UUID,
     p_owner_id VARCHAR(64),
     p_name VARCHAR(50),
     p_short_name VARCHAR(10),
     p_is_positive BOOLEAN,
-    p_is_shot BOOLEAN DEFAULT FALSE
+    p_is_shot BOOLEAN DEFAULT FALSE,
+    p_score INT DEFAULT 0
 )
 RETURNS SETOF public.eventdefinitions AS $$
 DECLARE
@@ -1770,6 +1772,12 @@ BEGIN
     -- Validation: Owner ID must be provided for custom definitions
     IF p_owner_id IS NULL OR TRIM(p_owner_id) = '' THEN
         RAISE EXCEPTION 'Owner ID is required for custom event definitions.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Validation: Score must be non-negative
+    IF COALESCE(p_score, 0) < 0 THEN
+        RAISE EXCEPTION 'Score must be non-negative.'
             USING ERRCODE = 'P0001';
     END IF;
 
@@ -1795,11 +1803,11 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Validation: Existing definition cannot change immutable semantic attributes (including isshot)
+    -- Validation: Existing definition cannot change immutable semantic attributes (including isshot and score)
     IF EXISTS (
         SELECT 1 FROM public.eventdefinitions
         WHERE id = p_id
-          AND (sportid <> p_sport_id OR name <> p_name OR shortname <> p_short_name OR ispositive <> p_is_positive OR isshot <> COALESCE(p_is_shot, FALSE))
+          AND (sportid <> p_sport_id OR name <> p_name OR shortname <> p_short_name OR ispositive <> p_is_positive OR isshot <> COALESCE(p_is_shot, FALSE) OR score <> COALESCE(p_score, 0))
     ) THEN
         RAISE EXCEPTION 'Modifying existing custom event definition attributes is prohibited. Create a new event definition instead.'
             USING ERRCODE = 'P0001';
@@ -1819,18 +1827,19 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Upsert operation with isshot flag persistence
+    -- Upsert operation with isshot and score persistence
     INSERT INTO public.eventdefinitions (
-        id, sportid, ownerid, name, shortname, ispositive, isshot, issoftdeleted, createdat
+        id, sportid, ownerid, name, shortname, ispositive, isshot, score, issoftdeleted, createdat
     )
     VALUES (
-        p_id, p_sport_id, p_owner_id, p_name, p_short_name, p_is_positive, COALESCE(p_is_shot, FALSE), FALSE, v_now
+        p_id, p_sport_id, p_owner_id, p_name, p_short_name, p_is_positive, COALESCE(p_is_shot, FALSE), COALESCE(p_score, 0), FALSE, v_now
     )
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
         shortname = EXCLUDED.shortname,
         ispositive = EXCLUDED.ispositive,
-        isshot = EXCLUDED.isshot
+        isshot = EXCLUDED.isshot,
+        score = EXCLUDED.score
     WHERE eventdefinitions.issoftdeleted = FALSE AND eventdefinitions.ownerid = p_owner_id;
 
     GET DIAGNOSTICS v_rows = ROW_COUNT;
@@ -1958,8 +1967,9 @@ $$ LANGUAGE plpgsql;
 
 /**********************************************************************************
  * Retrieves all available event definitions for a user and sport context.
- * Includes isshot column in projection output.
+ * Includes isshot and score columns in projection output.
  **********************************************************************************/
+DROP FUNCTION IF EXISTS public.get_user_available_event_definitions(VARCHAR, UUID);
 CREATE OR REPLACE FUNCTION public.get_user_available_event_definitions(
     p_user_id VARCHAR(64),
     p_sport_id UUID
@@ -1971,6 +1981,7 @@ RETURNS TABLE (
     shortname VARCHAR,
     ispositive BOOLEAN,
     isshot BOOLEAN,
+    score INT,
     iscustom BOOLEAN,
     isenabled BOOLEAN,
     sortorder INT
@@ -1984,6 +1995,7 @@ BEGIN
         ed.shortname,
         ed.ispositive,
         ed.isshot,
+        ed.score,
         (ed.ownerid IS NOT NULL) AS iscustom,
         (uep.eventdefinitionid IS NOT NULL) AS isenabled,
         COALESCE(uep.sortorder, ed.defaultposition, 0) AS sortorder
@@ -2004,8 +2016,9 @@ $$ LANGUAGE plpgsql;
 
 /**********************************************************************************
  * Retrieves active event definitions required for match hydration.
- * Includes isshot column in output projection.
+ * Includes isshot and score columns in output projection.
  **********************************************************************************/
+DROP FUNCTION IF EXISTS public.get_match_event_definitions(UUID, VARCHAR);
 CREATE OR REPLACE FUNCTION public.get_match_event_definitions(
     p_match_id UUID,
     p_user_id VARCHAR(64) DEFAULT NULL
@@ -2017,6 +2030,7 @@ RETURNS TABLE (
     shortname VARCHAR,
     ispositive BOOLEAN,
     isshot BOOLEAN,
+    score INT,
     iscustom BOOLEAN,
     isenabled BOOLEAN,
     sortorder INT
@@ -2055,6 +2069,7 @@ BEGIN
             ed.shortname,
             ed.ispositive,
             ed.isshot,
+            ed.score,
             (ed.ownerid IS NOT NULL) AS iscustom,
             TRUE AS isenabled,
             uep.sortorder
@@ -2074,6 +2089,7 @@ BEGIN
             ed.shortname,
             ed.ispositive,
             ed.isshot,
+            ed.score,
             FALSE AS iscustom,
             TRUE AS isenabled,
             COALESCE(ed.defaultposition, 0) AS sortorder
@@ -2227,6 +2243,7 @@ END;$$ LANGUAGE plpgsql;
 /**********************************************************************************
  * Retrieves a single game event enriched with metadata and spatial coordinates.
  **********************************************************************************/
+DROP FUNCTION IF EXISTS public.get_game_event_by_id_with_details(UUID);
 CREATE OR REPLACE FUNCTION public.get_game_event_by_id_with_details(p_id UUID)
 RETURNS TABLE (
     id UUID,
@@ -2234,6 +2251,7 @@ RETURNS TABLE (
     eventdefinitionid UUID,
     eventname VARCHAR,
     ispositive BOOLEAN,
+    score INT,
     periodnumber INT,
     eventtimestamp TIMESTAMPTZ,
     normalizedmatchtime INTERVAL,
@@ -2250,7 +2268,7 @@ RETURNS TABLE (
 BEGIN
     RETURN QUERY
     SELECT 
-        ge.id, ge.matchlineupid, ge.eventdefinitionid, ed.name AS eventname, ed.ispositive,
+        ge.id, ge.matchlineupid, ge.eventdefinitionid, ed.name AS eventname, ed.ispositive, ed.score,
         ge.periodnumber, ge.eventtimestamp, ge.normalizedmatchtime, ge.isleadtogoal,
         ge.locationx, ge.locationy, ge.shotlocationx, ge.shotlocationy,
         (p.firstname || ' ' || p.lastname) AS playername, ml.number AS playernumber,
@@ -2268,6 +2286,7 @@ END;$$ LANGUAGE plpgsql;
  * Retrieves all events for a specific match including spatial coordinates.
  * Mapped to TTA.BusinessLogic.Features.GameEvents.DTOs.GameEventResponse.
  **********************************************************************************/
+DROP FUNCTION IF EXISTS public.get_match_events(UUID);
 CREATE OR REPLACE FUNCTION public.get_match_events(
     p_match_id UUID
 )
@@ -2277,6 +2296,7 @@ RETURNS TABLE (
     eventdefinitionid UUID,
     eventname VARCHAR,
     ispositive BOOLEAN,
+    score INT,
     periodnumber INT,
     eventtimestamp TIMESTAMPTZ,
     normalizedmatchtime INTERVAL,
@@ -2298,6 +2318,7 @@ BEGIN
         ge.eventdefinitionid, 
         ed.name AS eventname, 
         ed.ispositive,
+        ed.score,
         ge.periodnumber, 
         ge.eventtimestamp, 
         ge.normalizedmatchtime,
@@ -2742,6 +2763,7 @@ $$ LANGUAGE plpgsql;
  * Description: Generates a generalized summary report for all players of a specific 
  *              team in a match (Type 1 report) with calculated play percentage.
  **********************************************************************************/
+DROP FUNCTION IF EXISTS public.get_match_team_summary_report(UUID, UUID);
 CREATE OR REPLACE FUNCTION public.get_match_team_summary_report(
     p_match_id UUID,
     p_team_id UUID
@@ -2751,7 +2773,7 @@ RETURNS TABLE (
     firstname VARCHAR,
     lastname VARCHAR,
     number INT,
-    goals INT,
+    scores INT,
     positivegoalleadingactions INT,
     negativegoalleadingactions INT,
     totalpositiveactions INT,
@@ -2778,8 +2800,8 @@ BEGIN
         p.firstname,
         p.lastname,
         ml.number,
-        -- Goals scored (event name = 'Goal' AND ispositive = TRUE)
-        COALESCE(SUM(CASE WHEN ed.name ILIKE 'Goal' AND ed.ispositive = TRUE THEN 1 ELSE 0 END), 0)::INT AS goals,
+        -- Total score accumulated from positive events (ed.ispositive = TRUE)
+        COALESCE(SUM(CASE WHEN ed.ispositive = TRUE THEN ed.score ELSE 0 END), 0)::INT AS scores,
         -- Positive goal-leading actions
         COALESCE(SUM(CASE WHEN ge.isleadtogoal = TRUE AND ed.ispositive = TRUE THEN 1 ELSE 0 END), 0)::INT AS positivegoalleadingactions,
         -- Negative goal-leading actions

@@ -62,9 +62,11 @@ public class GetMatchEventsTimelineHandlerTests
         resultList.Should().HaveCount(2);
 
         resultList[0].EventName.Should().Be("Goal");
+        resultList[0].Score.Should().Be(1);
         resultList[0].PeriodNumber.Should().Be(1);
 
         resultList[1].EventName.Should().Be("Yellow Card");
+        resultList[1].Score.Should().Be(0);
         resultList[1].PeriodNumber.Should().Be(2);
 
         _gameEventRepositoryMock.Verify(r => r.GetMatchEventsAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
@@ -305,6 +307,7 @@ public class GetMatchEventsTimelineHandlerTests
             EventDefinitionId: Guid.NewGuid(),
             EventName: name,
             IsPositive: true,
+            Score: name == "Goal" ? 1 : 0,
             PeriodNumber: period,
             EventTimestamp: eventTimestamp ?? DateTime.UtcNow,
             NormalizedMatchTime: normalizedMatchTime ?? TimeSpan.FromMinutes(20),

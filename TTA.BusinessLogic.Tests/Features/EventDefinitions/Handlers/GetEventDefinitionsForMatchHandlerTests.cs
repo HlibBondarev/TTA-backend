@@ -59,6 +59,7 @@ public class GetEventDefinitionsForMatchHandlerTests
                 ShortName: "G",
                 IsPositive: true,
                 IsShot: true,
+                Score: 1,
                 IsCustom: false,
                 IsEnabled: true,
                 SortOrder: 1
@@ -70,6 +71,7 @@ public class GetEventDefinitionsForMatchHandlerTests
                 ShortName: "CTTA",
                 IsPositive: false,
                 IsShot: false,
+                Score: 0,
                 IsCustom: true,
                 IsEnabled: false,
                 SortOrder: 2
@@ -97,6 +99,7 @@ public class GetEventDefinitionsForMatchHandlerTests
         list[0].ShortName.Should().Be("G");
         list[0].IsPositive.Should().BeTrue();
         list[0].IsShot.Should().BeTrue("IsShot must be mapped to true for Goal");
+        list[0].Score.Should().Be(1);
         list[0].IsCustom.Should().BeFalse();
         list[0].IsEnabled.Should().BeTrue();
         list[0].SortOrder.Should().Be(1);
@@ -108,6 +111,7 @@ public class GetEventDefinitionsForMatchHandlerTests
         list[1].ShortName.Should().Be("CTTA");
         list[1].IsPositive.Should().BeFalse();
         list[1].IsShot.Should().BeFalse();
+        list[1].Score.Should().Be(0);
         list[1].IsCustom.Should().BeTrue();
         list[1].IsEnabled.Should().BeFalse();
         list[1].SortOrder.Should().Be(2);
@@ -133,11 +137,11 @@ public class GetEventDefinitionsForMatchHandlerTests
 
         var nonShotProjection = new UserEventDefinitionProjection(
             Id: Guid.NewGuid(), SportId: sportId, Name: "Exclusion", ShortName: "E",
-            IsPositive: false, IsShot: false, IsCustom: false, IsEnabled: true, SortOrder: 1);
+            IsPositive: false, IsShot: false, Score: 0, IsCustom: false, IsEnabled: true, SortOrder: 1);
 
         var shotProjection = new UserEventDefinitionProjection(
             Id: Guid.NewGuid(), SportId: sportId, Name: "Shot on Target", ShortName: "SOT",
-            IsPositive: true, IsShot: true, IsCustom: false, IsEnabled: true, SortOrder: 2);
+            IsPositive: true, IsShot: true, Score: 0, IsCustom: false, IsEnabled: true, SortOrder: 2);
 
         _eventDefinitionRepositoryMock
             .Setup(r => r.GetMatchEventDefinitionsAsync(matchId, null, It.IsAny<CancellationToken>()))
@@ -178,6 +182,7 @@ public class GetEventDefinitionsForMatchHandlerTests
                 ShortName: "G",
                 IsPositive: true,
                 IsShot: true,
+                Score: 1,
                 IsCustom: false,
                 IsEnabled: true,
                 SortOrder: 1

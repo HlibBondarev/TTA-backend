@@ -880,7 +880,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var sportId = await conn.ExecuteScalarAsync<Guid>("SELECT sportid FROM public.tournaments WHERE id = @tId", new { tId = context.TournamentId });
 
         await conn.ExecuteAsync(
-            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES (@id, @sId, 'Goal', 'G', true, NOW())",
+            "INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, score, createdat) VALUES (@id, @sId, 'Goal', 'G', true, 1, NOW())",
             new { id = eventDefId, sId = sportId });
 
         await conn.ExecuteAsync(
@@ -894,7 +894,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
         report.Should().NotBeEmpty();
         var playerSummary = report.FirstOrDefault(r => r.MatchLineupId == targetLineupId);
         playerSummary.Should().NotBeNull();
-        playerSummary!.Goals.Should().Be(1);
+        playerSummary!.Scores.Should().Be(1);
         playerSummary.TotalPositiveActions.Should().Be(1);
         playerSummary.PositiveGoalLeadingActions.Should().Be(1);
         playerSummary.PlayPercentage.Should().Be(100.0);
@@ -954,10 +954,10 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var badPassDefId = Guid.NewGuid();
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, createdat) VALUES 
-            (@gPosId, @sId, 'Goal', 'G', true, NOW()),
-            (@gNegId, @sId, 'Goal', 'GC', false, NOW()),
-            (@bpId, @sId, 'Bad Pass', 'BP', false, NOW());",
+            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, score, createdat) VALUES 
+            (@gPosId, @sId, 'Goal', 'G', true, 1, NOW()),
+            (@gNegId, @sId, 'Goal', 'GC', false, 1, NOW()),
+            (@bpId, @sId, 'Bad Pass', 'BP', false, 0, NOW());",
             new { gPosId = positiveGoalDefId, gNegId = negativeGoalDefId, bpId = badPassDefId, sId = sportId });
 
         await conn.ExecuteAsync(
@@ -980,7 +980,7 @@ public class MatchRepositoryTests : BaseIntegrationTest
         var playerSummary = report.FirstOrDefault(r => r.MatchLineupId == targetLineupId);
         playerSummary.Should().NotBeNull();
 
-        playerSummary!.Goals.Should().Be(1, "only positive 'Goal' events should be counted as scored goals");
+        playerSummary!.Scores.Should().Be(1, "only positive events should contribute their score to Scores");
         playerSummary.PositiveGoalLeadingActions.Should().Be(1, "positive goal event with isleadtogoal = true");
         playerSummary.NegativeGoalLeadingActions.Should().Be(1, "bad pass event with isleadtogoal = true");
         playerSummary.TotalPositiveActions.Should().Be(1);
