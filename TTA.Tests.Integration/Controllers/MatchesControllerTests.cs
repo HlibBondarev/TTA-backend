@@ -643,7 +643,12 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-EVDEF-01");
 
         var goalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", true);
-        var foulDefId = await SeedEventDefinitionAsync(context.SportId, "Foul", false);
+        var foulDefId = await SeedEventDefinitionAsync(
+            context.SportId,
+            "Red Card (18s)",
+            isPositive: false,
+            foulImpact: FoulImpact.DisqualificationWithSub,
+            penaltyDurationSeconds: 18);
 
         try
         {
@@ -671,10 +676,10 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
             var foulDef = definitions.FirstOrDefault(d => d.Id == foulDefId);
             foulDef.Should().NotBeNull();
-            foulDef!.Name.Should().Be("Foul");
+            foulDef!.Name.Should().Be("Red Card (18s)");
             foulDef.IsPositive.Should().BeFalse();
-            foulDef.FoulImpact.Should().Be(FoulImpact.None);
-            foulDef.PenaltyDurationSeconds.Should().BeNull();
+            foulDef.FoulImpact.Should().Be(FoulImpact.DisqualificationWithSub);
+            foulDef.PenaltyDurationSeconds.Should().Be(18);
             foulDef.IsCustom.Should().BeFalse();
             foulDef.IsEnabled.Should().BeTrue();
         }
@@ -1017,10 +1022,16 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         await SeedMatchLineupAsync(matchId, homeTeamId, context.CityId, context.TournamentId, context.SportId);
 
         var lineupId = await GetLineupIdAsync(matchId, homeTeamId);
-        var eventDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", true);
+        var goalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", true);
+        var foulDefId = await SeedEventDefinitionAsync(
+            context.SportId,
+            "Exclusion",
+            isPositive: false,
+            foulImpact: FoulImpact.PersonalFoul,
+            penaltyDurationSeconds: 18);
 
-        await SeedGameEventAsync(lineupId, eventDefId, DateTime.UtcNow.AddMinutes(-5), TimeSpan.FromMinutes(40));
-        await SeedGameEventAsync(lineupId, eventDefId, DateTime.UtcNow.AddMinutes(-15), TimeSpan.FromMinutes(10));
+        await SeedGameEventAsync(lineupId, goalDefId, DateTime.UtcNow.AddMinutes(-5), TimeSpan.FromMinutes(40));
+        await SeedGameEventAsync(lineupId, foulDefId, DateTime.UtcNow.AddMinutes(-15), TimeSpan.FromMinutes(10));
 
         // Act
         var response = await Client.GetAsync($"{BaseUrl}/{matchId}/events");
@@ -1033,9 +1044,12 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         events.Should().HaveCount(2);
 
         events![0].NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(10));
-        events[0].FoulImpact.Should().Be(FoulImpact.None);
-        events[0].PenaltyDurationSeconds.Should().BeNull();
+        events[0].FoulImpact.Should().Be(FoulImpact.PersonalFoul);
+        events[0].PenaltyDurationSeconds.Should().Be(18);
+
         events[1].NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(40));
+        events[1].FoulImpact.Should().Be(FoulImpact.None);
+        events[1].PenaltyDurationSeconds.Should().BeNull();
     }
 
     /// <summary>
@@ -3094,16 +3108,34 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             new { id = Guid.NewGuid(), userId, role, targetType, targetId, now = DateTime.UtcNow });
     }
 
-    private async Task<Guid> SeedEventDefinitionAsync(Guid sportId, string name, bool isPositive, int score = 0)
+    private async Task<Guid> SeedEventDefinitionAsync(
+        Guid sportId,
+        string name,
+        bool isPositive,
+        int score = 0,
+        FoulImpact foulImpact = FoulImpact.None,
+        int? penaltyDurationSeconds = null)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         var id = Guid.NewGuid();
         var shortName = name.Length > 10 ? name.Substring(0, 10) : name;
 
         await conn.ExecuteAsync(
-            @"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, score, createdat) 
-              VALUES (@id, @sportId, @name, @shortName, @isPositive, @isShot, @score, @createdAt)",
-            new { id, sportId, name, shortName, isPositive, isShot = true, score, createdAt = DateTime.UtcNow });
+            @"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, score, foulimpact, penaltydurationseconds, createdat) 
+              VALUES (@id, @sportId, @name, @shortName, @isPositive, @isShot, @score, @foulImpact, @penaltyDurationSeconds, @createdAt)",
+            new
+            {
+                id,
+                sportId,
+                name,
+                shortName,
+                isPositive,
+                isShot = true,
+                score,
+                foulImpact = (int)foulImpact,
+                penaltyDurationSeconds,
+                createdAt = DateTime.UtcNow
+            });
         return id;
     }
 

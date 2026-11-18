@@ -62,7 +62,7 @@ public class WaterpoloSeedDataTests(DatabaseFixture fixture) : BaseIntegrationTe
     /// <summary>
     /// Verifies that only the five disciplinary events carry a non-default foul impact and that every other
     /// Waterpolo event (positive actions, Exclusion Earned, Penalty Earned, Offensive Foul, Ball Under, etc.)
-    /// is seeded with <c>FoulImpact.None</c> and no penalty duration.
+    /// is seeded with <c>FoulImpact.None</c> and no penalty duration, with expected polarity for every definition.
     /// </summary>
     [Fact]
     public async Task Seed_ShouldAssignNoneAndNullDuration_ToAllOtherWaterpoloEvents()
@@ -79,10 +79,14 @@ public class WaterpoloSeedDataTests(DatabaseFixture fixture) : BaseIntegrationTe
         definitions.Should().HaveCount(34);
         others.Should().HaveCount(29);
         others.Should().OnlyContain(d => d.FoulImpact == (int)FoulImpact.None && d.PenaltyDurationSeconds == null);
-        others.Should().Contain(d => d.Name == "Offensive Foul");
-        others.Should().Contain(d => d.Name == "Ball Under");
-        others.Should().Contain(d => d.Name == "Exclusion Earned");
-        others.Should().Contain(d => d.Name == "Penalty Earned");
+
+        definitions.Where(d => d.IsPositive)
+            .Select(d => d.ShortName)
+            .Should().BeEquivalentTo(["G", "ST", "SP", "DA", "SOG", "ASV", "FB", "A", "FT", "EE", "CAS", "SW", "PE"]);
+
+        definitions.Where(d => !d.IsPositive)
+            .Select(d => d.ShortName)
+            .Should().BeEquivalentTo(["GC", "TO", "BP", "PEO", "PED", "PB", "OF", "MS", "SB", "GKE", "E", "STO", "STD", "CAC", "BU", "SL", "PC", "RC18", "RC4M", "RCP", "OG"]);
     }
 
     /// <summary>

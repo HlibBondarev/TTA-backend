@@ -102,37 +102,25 @@ public class SportConfigurationRepositoryTests(DatabaseFixture fixture) : BaseIn
     #region MaxPersonalFouls Tests
 
     /// <summary>
-    /// Verifies that <c>MaxPersonalFouls</c> is returned as null when the column is not set.
+    /// Verifies that <c>MaxPersonalFouls</c> is returned by both the by-id and by-sport queries,
+    /// preserving the default <c>null</c> value when unset.
     /// </summary>
-    [Fact]
-    public async Task GetByIdAsync_ShouldReturnNullMaxPersonalFouls_WhenNotConfigured()
-    {
-        // Arrange
-        var configId = Guid.NewGuid();
-        await SeedSportWithConfigAsync(Guid.NewGuid(), "Chess", "CH", configId);
-
-        // Act
-        var result = await _repository.GetByIdAsync(configId);
-
-        // Assert
-        result!.MaxPersonalFouls.Should().BeNull();
-    }
-
-    /// <summary>
-    /// Verifies that <c>MaxPersonalFouls</c> is returned by both the by-id and by-sport queries when configured.
-    /// </summary>
-    [Fact]
-    public async Task GetByIdAndGetBySportIdAsync_ShouldReturnMaxPersonalFouls_WhenConfigured()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(3)]
+    public async Task GetByIdAndGetBySportIdAsync_ShouldReturnExpectedMaxPersonalFouls(int? expectedMaxPersonalFouls)
     {
         // Arrange
         var sportId = Guid.NewGuid();
         var configId = Guid.NewGuid();
-        await SeedSportWithConfigAsync(sportId, "Handball", "HB", configId);
+        await SeedSportWithConfigAsync(sportId, $"Sport_{sportId:N}"[..20], "SP", configId);
 
-        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        if (expectedMaxPersonalFouls.HasValue)
         {
+            using var conn = Fixture.ConnectionFactory.CreateConnection();
             await Dapper.SqlMapper.ExecuteAsync(conn,
-                "UPDATE public.sportconfigurations SET maxpersonalfouls = 3 WHERE id = @id", new { id = configId });
+                "UPDATE public.sportconfigurations SET maxpersonalfouls = @maxFouls WHERE id = @id",
+                new { id = configId, maxFouls = expectedMaxPersonalFouls.Value });
         }
 
         // Act
@@ -140,8 +128,8 @@ public class SportConfigurationRepositoryTests(DatabaseFixture fixture) : BaseIn
         var bySport = (await _repository.GetBySportIdAsync(sportId)).ToList();
 
         // Assert
-        byId!.MaxPersonalFouls.Should().Be(3);
-        bySport.Should().ContainSingle().Which.MaxPersonalFouls.Should().Be(3);
+        byId!.MaxPersonalFouls.Should().Be(expectedMaxPersonalFouls);
+        bySport.Should().ContainSingle().Which.MaxPersonalFouls.Should().Be(expectedMaxPersonalFouls);
     }
 
     /// <summary>

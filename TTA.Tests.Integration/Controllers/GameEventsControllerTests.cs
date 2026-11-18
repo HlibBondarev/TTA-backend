@@ -95,6 +95,39 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
     }
 
     /// <summary>
+    /// Verifies that a goal event returns a non-zero <see cref="GameEventResponse.Score"/> of 1 end to end.
+    /// </summary>
+    [Fact]
+    public async Task GetById_ShouldReturnOkWithScore_WhenGoalEventExists()
+    {
+        // Arrange
+        var context = await SetupGameEventContextAsync(
+            TestUserId,
+            eventName: "Goal",
+            eventShortName: "G",
+            isPositive: true,
+            score: 1,
+            foulImpact: FoulImpact.None,
+            penaltyDurationSeconds: null);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{context.EventId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var rawJson = await response.Content.ReadAsStringAsync();
+        var result = JsonSerializer.Deserialize<GameEventResponse>(rawJson, JsonOptions);
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(context.EventId);
+        result.EventName.Should().Be("Goal");
+        result.IsPositive.Should().BeTrue();
+        result.Score.Should().Be(1);
+        result.FoulImpact.Should().Be(FoulImpact.None);
+        result.PenaltyDurationSeconds.Should().BeNull();
+    }
+
+    /// <summary>
     /// Verifies that searching for a non-existent GUID returns 404 Not Found.
     /// </summary>
     [Fact]
@@ -182,8 +215,21 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
     /// to satisfy foreign key constraints and updated Sport table schema.
     /// </summary>
     /// <param name="ownerId">The unique identifier of the tournament owner.</param>
+    /// <param name="eventName">The name of the seeded event definition.</param>
+    /// <param name="eventShortName">The short name of the seeded event definition.</param>
+    /// <param name="isPositive">Indicates whether the seeded event definition is positive.</param>
+    /// <param name="score">The point value of the seeded event definition.</param>
+    /// <param name="foulImpact">The disciplinary foul impact of the seeded event definition.</param>
+    /// <param name="penaltyDurationSeconds">The team penalty duration in seconds, if applicable.</param>
     /// <returns>A tuple containing the IDs of the created entities (TournamentId, MatchId, EventId).</returns>
-    private async Task<(Guid TournamentId, Guid MatchId, Guid EventId)> SetupGameEventContextAsync(string ownerId)
+    private async Task<(Guid TournamentId, Guid MatchId, Guid EventId)> SetupGameEventContextAsync(
+        string ownerId,
+        string eventName = "Exclusion",
+        string eventShortName = "EX",
+        bool isPositive = false,
+        int score = 0,
+        FoulImpact foulImpact = FoulImpact.PersonalFoul,
+        int? penaltyDurationSeconds = 18)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
@@ -279,8 +325,18 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
         // 9. Event Definition & Game Event (seeding LocationX, LocationY, ShotLocationX, ShotLocationY)
         var defId = Guid.NewGuid();
         await conn.ExecuteAsync(@"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, score, foulimpact, penaltydurationseconds, createdat) 
-            VALUES (@id, @sId, 'Exclusion', 'EX', false, true, 0, @foulImpact, 18, NOW())",
-            new { id = defId, sId = sportId, foulImpact = (int)FoulImpact.PersonalFoul }, transaction: transaction);
+            VALUES (@id, @sId, @name, @shortName, @isPositive, true, @score, @foulImpact, @penaltyDurationSeconds, NOW())",
+            new
+            {
+                id = defId,
+                sId = sportId,
+                name = eventName,
+                shortName = eventShortName,
+                isPositive,
+                score,
+                foulImpact = (int)foulImpact,
+                penaltyDurationSeconds
+            }, transaction: transaction);
 
         var eventId = Guid.NewGuid();
         await conn.ExecuteAsync(@"

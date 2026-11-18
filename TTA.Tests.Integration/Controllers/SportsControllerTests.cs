@@ -3,6 +3,7 @@ using FluentAssertions;
 using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using TTA.BusinessLogic.Features.EventDefinitions.DTOs;
 using TTA.BusinessLogic.Features.SportConfigurations.DTOs;
 using TTA.BusinessLogic.Features.Sports.DTOs;
@@ -317,8 +318,9 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
     }
 
     /// <summary>
-    /// Verifies that <c>POST /api/sports/{sportId}/event-definitions/custom</c> persists and returns
-    /// <c>FoulImpact</c> and <c>PenaltyDurationSeconds</c> when provided on a custom foul definition.
+    /// Verifies that <c>POST /api/sports/{sportId}/event-definitions/custom</c> accepts string-serialized
+    /// <c>FoulImpact</c>, returns it as a JSON string in the HTTP response, and persists both
+    /// <c>FoulImpact</c> and <c>PenaltyDurationSeconds</c> to the database.
     /// </summary>
     [Fact]
     public async Task CreateCustomEventDefinition_ShouldPersistDisciplinaryAttributes_WhenProvided()
@@ -341,12 +343,20 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         );
 
         // Act
-        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{sportId}/event-definitions/custom", request);
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{sportId}/event-definitions/custom", request, JsonOptions);
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var result = await response.Content.ReadFromJsonAsync<EventDefinitionResponse>(JsonOptions);
 
+        var rawJson = await response.Content.ReadAsStringAsync();
+        using (var doc = JsonDocument.Parse(rawJson))
+        {
+            var foulImpactElement = doc.RootElement.GetProperty("foulImpact");
+            foulImpactElement.ValueKind.Should().Be(JsonValueKind.String);
+            foulImpactElement.GetString().Should().Be(nameof(FoulImpact.DisqualificationWithSub));
+        }
+
+        var result = JsonSerializer.Deserialize<EventDefinitionResponse>(rawJson, JsonOptions);
         result.Should().NotBeNull();
         result!.FoulImpact.Should().Be(FoulImpact.DisqualificationWithSub);
         result.PenaltyDurationSeconds.Should().Be(18);

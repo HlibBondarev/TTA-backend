@@ -1,7 +1,7 @@
-﻿using TTA.DataAccess.Enums;
-using Dapper;
+﻿using Dapper;
 using FluentAssertions;
 using System.Data.Common;
+using TTA.DataAccess.Enums;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
@@ -1243,23 +1243,44 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
     }
 
     /// <summary>
-    /// Verifies that a custom definition created without disciplinary attributes defaults to <see cref="FoulImpact.None"/>.
+    /// Verifies that calling <c>public.upsert_custom_event_definition</c> directly with only its original
+    /// eight arguments defaults <c>foulimpact</c> to <c>0</c> (<see cref="FoulImpact.None"/>) and
+    /// <c>penaltydurationseconds</c> to <c>NULL</c>.
     /// </summary>
     [Fact]
-    public async Task UpsertCustomAsync_ShouldDefaultToNoneAndNullDuration_WhenAttributesAreNotSpecified()
+    public async Task UpsertCustomEventDefinition_ShouldDefaultFoulColumns_WhenCalledWithOriginalEightArguments()
     {
         // Arrange
         var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
-        var definition = new EventDefinition
-        {
-            Id = Guid.NewGuid(), SportId = sportId, OwnerId = userId, Name = "Plain Action", ShortName = "PA", IsPositive = true
-        };
+        var id = Guid.NewGuid();
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
 
         // Act
-        var created = await _repository.UpsertCustomAsync(definition);
+        var created = await conn.QuerySingleAsync<EventDefinition>(@"
+            SELECT * FROM public.upsert_custom_event_definition(
+                @p_id,
+                @p_sport_id,
+                @p_owner_id,
+                @p_name,
+                @p_short_name,
+                @p_is_positive,
+                @p_is_shot,
+                @p_score
+            )",
+            new
+            {
+                p_id = id,
+                p_sport_id = sportId,
+                p_owner_id = userId,
+                p_name = "Plain Action",
+                p_short_name = "PA",
+                p_is_positive = true,
+                p_is_shot = false,
+                p_score = 0
+            });
 
         // Assert
-        created!.FoulImpact.Should().Be(FoulImpact.None);
+        created.FoulImpact.Should().Be(FoulImpact.None);
         created.PenaltyDurationSeconds.Should().BeNull();
     }
 
