@@ -45,8 +45,9 @@ public class GetMatchEventsTimelineHandlerTests
 
         var rawEvents = new List<GameEventProjection>
         {
-            CreateRawEvent(Guid.NewGuid(), "Goal", 1),
-            CreateRawEvent(Guid.NewGuid(), "Yellow Card", 2)
+            CreateRawEvent(Guid.NewGuid(), "Goal", 1, score: 1),
+            CreateRawEvent(Guid.NewGuid(), "Yellow Card", 2, score: 0),
+            CreateRawEvent(Guid.NewGuid(), "Three-Point Shot", 3, score: 3)
         };
 
         _gameEventRepositoryMock
@@ -59,7 +60,7 @@ public class GetMatchEventsTimelineHandlerTests
         // Assert
         result.Should().NotBeNull();
         var resultList = result.ToList();
-        resultList.Should().HaveCount(2);
+        resultList.Should().HaveCount(3);
 
         resultList[0].EventName.Should().Be("Goal");
         resultList[0].Score.Should().Be(1);
@@ -68,6 +69,10 @@ public class GetMatchEventsTimelineHandlerTests
         resultList[1].EventName.Should().Be("Yellow Card");
         resultList[1].Score.Should().Be(0);
         resultList[1].PeriodNumber.Should().Be(2);
+
+        resultList[2].EventName.Should().Be("Three-Point Shot");
+        resultList[2].Score.Should().Be(3);
+        resultList[2].PeriodNumber.Should().Be(3);
 
         _gameEventRepositoryMock.Verify(r => r.GetMatchEventsAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -298,7 +303,8 @@ public class GetMatchEventsTimelineHandlerTests
         decimal? locationX = null,
         decimal? locationY = null,
         decimal? shotLocationX = null,
-        decimal? shotLocationY = null)
+        decimal? shotLocationY = null,
+        int score = 0)
     {
         return new GameEventProjection
         (
@@ -307,7 +313,7 @@ public class GetMatchEventsTimelineHandlerTests
             EventDefinitionId: Guid.NewGuid(),
             EventName: name,
             IsPositive: true,
-            Score: name == "Goal" ? 1 : 0,
+            Score: score,
             PeriodNumber: period,
             EventTimestamp: eventTimestamp ?? DateTime.UtcNow,
             NormalizedMatchTime: normalizedMatchTime ?? TimeSpan.FromMinutes(20),
