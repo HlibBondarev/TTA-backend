@@ -1,11 +1,11 @@
-﻿using TTA.DataAccess.Enums;
-using FluentAssertions;
+﻿using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Npgsql;
 using TTA.BusinessLogic.Features.EventDefinitions.Commands;
 using TTA.BusinessLogic.Features.EventDefinitions.Handlers;
 using TTA.Common.Exceptions;
+using TTA.DataAccess.Enums;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 
@@ -334,7 +334,8 @@ public class CreateCustomEventDefinitionHandlerTests
 
     /// <summary>
     /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> passes <c>FoulImpact</c> and
-    /// <c>PenaltyDurationSeconds</c> to the repository entity and maps them into the response.
+    /// <c>PenaltyDurationSeconds</c> from the command to the repository entity and maps the repository-returned
+    /// entity values into the response DTO independently.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldMapFoulImpactAndPenaltyDuration_WhenProvided()
@@ -350,11 +351,27 @@ public class CreateCustomEventDefinitionHandlerTests
             FoulImpact: FoulImpact.DisqualificationWithSub,
             PenaltyDurationSeconds: 18);
 
+        var persistedEntity = new EventDefinition
+        {
+            Id = command.Id,
+            SportId = command.SportId,
+            OwnerId = command.OwnerId,
+            Name = command.Name,
+            ShortName = command.ShortName,
+            IsPositive = command.IsPositive,
+            IsShot = command.IsShot,
+            Score = command.Score,
+            FoulImpact = FoulImpact.DisqualificationNoSub,
+            PenaltyDurationSeconds = 300,
+            IsSoftDeleted = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
         EventDefinition? captured = null;
         _repositoryMock
             .Setup(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()))
             .Callback<EventDefinition, CancellationToken>((e, _) => captured = e)
-            .ReturnsAsync((EventDefinition e, CancellationToken _) => e);
+            .ReturnsAsync(persistedEntity);
 
         // Act
         var result = await _handler.Handle(command, CancellationToken.None);
@@ -363,8 +380,9 @@ public class CreateCustomEventDefinitionHandlerTests
         captured.Should().NotBeNull();
         captured!.FoulImpact.Should().Be(FoulImpact.DisqualificationWithSub);
         captured.PenaltyDurationSeconds.Should().Be(18);
-        result.FoulImpact.Should().Be(FoulImpact.DisqualificationWithSub);
-        result.PenaltyDurationSeconds.Should().Be(18);
+
+        result.FoulImpact.Should().Be(FoulImpact.DisqualificationNoSub);
+        result.PenaltyDurationSeconds.Should().Be(300);
     }
 
     /// <summary>
