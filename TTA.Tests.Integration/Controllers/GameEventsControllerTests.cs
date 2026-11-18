@@ -2,6 +2,7 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Any;
+using Microsoft.OpenApi.Models;
 using Npgsql;
 using Swashbuckle.AspNetCore.Swagger;
 using System.Net;
@@ -64,12 +65,26 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
 
         var swaggerProvider = Factory.Services.GetRequiredService<ISwaggerProvider>();
         var swaggerDoc = swaggerProvider.GetSwagger("v1");
-        var enumValues = swaggerDoc.Components.Schemas[nameof(FoulImpact)].Enum
-            .OfType<OpenApiString>()
-            .Select(v => v.Value)
-            .ToArray();
 
-        enumValues.Should().BeEquivalentTo(
+        var getOperation = swaggerDoc.Paths["/api/GameEvents/{id}"].Operations[OperationType.Get];
+        var responseSchema = getOperation.Responses["200"].Content["application/json"].Schema;
+        var resolvedResponseSchema = responseSchema.Reference != null
+            ? swaggerDoc.Components.Schemas[responseSchema.Reference.Id]
+            : responseSchema;
+
+        var foulImpactPropertySchema = resolvedResponseSchema.Properties["foulImpact"];
+        var resolvedFoulImpactSchema = foulImpactPropertySchema.Reference != null
+            ? swaggerDoc.Components.Schemas[foulImpactPropertySchema.Reference.Id]
+            : foulImpactPropertySchema.AllOf.FirstOrDefault()?.Reference is { } allOfRef
+                ? swaggerDoc.Components.Schemas[allOfRef.Id]
+                : foulImpactPropertySchema;
+
+        resolvedFoulImpactSchema.Type.Should().Be("string");
+        resolvedFoulImpactSchema.Enum.Should().AllBeOfType<OpenApiString>();
+        resolvedFoulImpactSchema.Enum
+            .Cast<OpenApiString>()
+            .Select(v => v.Value)
+            .Should().BeEquivalentTo(
             [
                 nameof(FoulImpact.None),
                 nameof(FoulImpact.PersonalFoul),
