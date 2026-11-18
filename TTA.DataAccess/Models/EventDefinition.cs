@@ -43,6 +43,11 @@ public class EventDefinition : IKeyedEntity<Guid>
     public bool IsShot { get; set; }
 
     /// <summary>
+    /// Gets or sets the score value points awarded for this event action.
+    /// </summary>
+    public int Score { get; set; }
+
+    /// <summary>
     /// Gets or sets the default frequency rank position for system default event definitions.
     /// </summary>
     public int? DefaultPosition { get; set; }

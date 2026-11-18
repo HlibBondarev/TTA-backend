@@ -74,6 +74,7 @@ public class GetGameEventByIdHandlerTests
             EventDefinitionId: Guid.NewGuid(),
             EventName: "Goal",
             IsPositive: true,
+            Score: 1,
             PeriodNumber: 1,
             EventTimestamp: DateTime.UtcNow,
             NormalizedMatchTime: TimeSpan.FromMinutes(15),
@@ -99,6 +100,7 @@ public class GetGameEventByIdHandlerTests
         result.Should().NotBeNull();
         result.Id.Should().Be(eventId);
         result.EventName.Should().Be("Goal");
+        result.Score.Should().Be(1);
         result.PlayerName.Should().Be("John Doe");
         result.TeamName.Should().Be("Warriors");
         result.LocationX.Should().Be(45.50m);
@@ -126,6 +128,7 @@ public class GetGameEventByIdHandlerTests
             EventDefinitionId: Guid.NewGuid(),
             EventName: "Shot on Target",
             IsPositive: true,
+            Score: 0,
             PeriodNumber: 2,
             EventTimestamp: DateTime.UtcNow,
             NormalizedMatchTime: TimeSpan.FromMinutes(8),
@@ -169,6 +172,7 @@ public class GetGameEventByIdHandlerTests
             EventDefinitionId: Guid.NewGuid(),
             EventName: "Foul",
             IsPositive: false,
+            Score: 0,
             PeriodNumber: 1,
             EventTimestamp: DateTime.UtcNow,
             NormalizedMatchTime: TimeSpan.FromMinutes(5),

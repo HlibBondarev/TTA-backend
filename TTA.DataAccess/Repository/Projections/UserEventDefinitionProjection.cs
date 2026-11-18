@@ -9,6 +9,7 @@
 /// <param name="ShortName">The abbreviated short name of the event definition.</param>
 /// <param name="IsPositive">Indicates whether the event action has a positive statistical impact.</param>
 /// <param name="IsShot">Indicates whether the event type requires goal shot target location tracking.</param>
+/// <param name="Score">The score points awarded for this event action.</param>
 /// <param name="IsCustom">Indicates whether this definition is custom user-owned.</param>
 /// <param name="IsEnabled">Indicates whether this definition is actively enabled in the user preset.</param>
 /// <param name="SortOrder">The display layout sort order index.</param>
@@ -19,6 +20,7 @@ public record UserEventDefinitionProjection(
     string ShortName,
     bool IsPositive,
     bool IsShot,
+    int Score,
     bool IsCustom,
     bool IsEnabled,
     int SortOrder);

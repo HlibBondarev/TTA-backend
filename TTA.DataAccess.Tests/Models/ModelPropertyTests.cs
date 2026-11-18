@@ -166,6 +166,20 @@ public class EventDefinitionTests
     }
 
     [Fact]
+    public void EventDefinition_Score_DefaultsToZero()
+    {
+        var def = new EventDefinition();
+        Assert.Equal(0, def.Score);
+    }
+
+    [Fact]
+    public void EventDefinition_Score_CanBeSetAndRetrieved()
+    {
+        var def = new EventDefinition { Score = 3 };
+        Assert.Equal(3, def.Score);
+    }
+
+    [Fact]
     public void EventDefinition_DefaultPosition_IsNullable_AndDefaultsToNull()
     {
         var def = new EventDefinition();

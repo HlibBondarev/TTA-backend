@@ -261,7 +261,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
     /// <summary>
     /// Verifies that <see cref="MatchesController.GetTeamSummaryReport"/> returns HTTP 200 OK
-    /// with correctly aggregated metrics via End-to-End HTTP request when game events exist.
+    /// with correctly aggregated metrics via End-to-End HTTP request, summing positive event scores
+    /// regardless of event name while excluding zero-score and negative events from <c>Scores</c>.
     /// </summary>
     [Fact]
     public async Task GetTeamSummaryReport_ShouldReturnOkWithAccurateMetrics_WhenEventsExist()
@@ -272,7 +273,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var guestId = await SeedTeamAsync(context.CityId, context.SportId, "Guest FC");
         var matchId = Guid.NewGuid();
 
-        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SUM-E2E", homeScore: 2, guestScore: 1);
+        await SeedMatchAsync(matchId, context.TournamentId, homeId, guestId, "M-SUM-E2E", homeScore: 3, guestScore: 1);
         var lineupId = await SeedMatchLineupAsync(matchId, homeId, context.CityId, context.TournamentId, context.SportId);
 
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
@@ -293,24 +294,29 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             "INSERT INTO public.playerpresences (id, matchlineupid, periodnumber, timein, timeout) VALUES (@id, @lId, 1, @in, @out)",
             new { id = Guid.NewGuid(), lId = lineupId, @in = startTime, @out = endTime });
 
-        // 3. Seed Event Definitions (exact name 'Goal' with positive and negative flags)
-        var posGoalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", isPositive: true);
-        var negGoalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", isPositive: false);
+        // 3. Seed Event Definitions: positive non-Goal (score = 3), positive Goal (score = 0), and negative Goal (score = 1)
+        var posThreePointDefId = await SeedEventDefinitionAsync(context.SportId, "3-Pointer", isPositive: true, score: 3);
+        var posZeroScoreGoalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", isPositive: true, score: 0);
+        var negGoalDefId = await SeedEventDefinitionAsync(context.SportId, "Goal", isPositive: false, score: 1);
 
         // 4. Seed Events
         await conn.ExecuteAsync(@"
             INSERT INTO public.gameevents (id, matchlineupid, eventdefinitionid, periodnumber, eventtimestamp, normalizedmatchtime, isleadtogoal, createdat) VALUES 
-            (@e1, @lId, @posDef, 1, @ts1, '00:03:00', true, NOW()),
-            (@e2, @lId, @negDef, 1, @ts2, '00:07:00', false, NOW());",
+            (@e1, @lId, @posThreePointDef, 1, @ts1, '00:03:00', true, NOW()),
+            (@e2, @lId, @posZeroScoreGoalDef, 1, @ts2, '00:05:00', false, NOW()),
+            (@e3, @lId, @negGoalDef, 1, @ts3, '00:07:00', false, NOW());",
             new
             {
                 e1 = Guid.NewGuid(),
                 e2 = Guid.NewGuid(),
+                e3 = Guid.NewGuid(),
                 lId = lineupId,
-                posDef = posGoalDefId,
-                negDef = negGoalDefId,
+                posThreePointDef = posThreePointDefId,
+                posZeroScoreGoalDef = posZeroScoreGoalDefId,
+                negGoalDef = negGoalDefId,
                 ts1 = startTime.AddMinutes(3),
-                ts2 = startTime.AddMinutes(7)
+                ts2 = startTime.AddMinutes(5),
+                ts3 = startTime.AddMinutes(7)
             });
 
         // Act
@@ -324,9 +330,9 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var playerReport = result!.FirstOrDefault(r => r.MatchLineupId == lineupId);
         playerReport.Should().NotBeNull();
 
-        playerReport!.Goals.Should().Be(1, "only positive Goal events should count towards Goals");
+        playerReport!.Scores.Should().Be(3, "positive event scores should be summed regardless of event name, while zero-score Goal and negative events contribute 0");
         playerReport.PositiveGoalLeadingActions.Should().Be(1);
-        playerReport.TotalPositiveActions.Should().Be(1);
+        playerReport.TotalPositiveActions.Should().Be(2);
         playerReport.TotalNegativeActions.Should().Be(1);
         playerReport.PlayPercentage.Should().Be(100.0);
     }
@@ -3082,16 +3088,16 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             new { id = Guid.NewGuid(), userId, role, targetType, targetId, now = DateTime.UtcNow });
     }
 
-    private async Task<Guid> SeedEventDefinitionAsync(Guid sportId, string name, bool isPositive)
+    private async Task<Guid> SeedEventDefinitionAsync(Guid sportId, string name, bool isPositive, int score = 0)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         var id = Guid.NewGuid();
         var shortName = name.Length > 10 ? name.Substring(0, 10) : name;
 
         await conn.ExecuteAsync(
-            @"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, createdat) 
-              VALUES (@id, @sportId, @name, @shortName, @isPositive, @isShot, @createdAt)",
-            new { id, sportId, name, shortName, isPositive, isShot = true, createdAt = DateTime.UtcNow });
+            @"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, score, createdat) 
+              VALUES (@id, @sportId, @name, @shortName, @isPositive, @isShot, @score, @createdAt)",
+            new { id, sportId, name, shortName, isPositive, isShot = true, score, createdAt = DateTime.UtcNow });
         return id;
     }
 

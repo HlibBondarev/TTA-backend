@@ -200,4 +200,56 @@ public class CreateCustomEventDefinitionRequestValidatorTests
         // Assert
         result.ShouldNotHaveValidationErrorFor(x => x.ShortName);
     }
+
+    /// <summary>
+    /// Verifies that an error is triggered when the score is negative.
+    /// </summary>
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(-10)]
+    public void Should_Have_Error_When_Score_Is_Negative(int invalidScore)
+    {
+        // Arrange
+        var request = new CreateCustomEventDefinitionRequest(
+            Id: Guid.NewGuid(),
+            Name: "Custom Goal",
+            ShortName: "CG",
+            IsPositive: true,
+            IsShot: true,
+            Score: invalidScore
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldHaveValidationErrorFor(x => x.Score)
+            .WithErrorMessage("Score must be non-negative.");
+    }
+
+    /// <summary>
+    /// Verifies that no validation error is triggered when the score is zero or positive.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void Should_Not_Have_Error_When_Score_Is_NonNegative(int validScore)
+    {
+        // Arrange
+        var request = new CreateCustomEventDefinitionRequest(
+            Id: Guid.NewGuid(),
+            Name: "Custom Goal",
+            ShortName: "CG",
+            IsPositive: true,
+            IsShot: true,
+            Score: validScore
+        );
+
+        // Act
+        var result = _validator.TestValidate(request);
+
+        // Assert
+        result.ShouldNotHaveValidationErrorFor(x => x.Score);
+    }
 }

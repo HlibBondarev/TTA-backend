@@ -8,9 +8,11 @@
 /// <param name="ShortName">The abbreviated short code of the custom event definition.</param>
 /// <param name="IsPositive">Indicates whether the custom event action has a positive statistical impact.</param>
 /// <param name="IsShot">Indicates whether the custom event action requires goal shot target location tracking.</param>
+/// <param name="Score">The score points awarded for this custom event action.</param>
 public record CreateCustomEventDefinitionRequest(
     Guid Id,
     string Name,
     string ShortName,
     bool IsPositive,
-    bool IsShot = false);
+    bool IsShot = false,
+    int Score = 0);

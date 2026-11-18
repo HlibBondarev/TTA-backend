@@ -142,8 +142,8 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
 
         await SeedUserAsync(TestUserId, "user@test.com", "Test User");
 
-        var sysDefId = await SeedEventDefinitionAsync(sportId, "Goal", "GL", isPositive: true, ownerId: null, isShot: true);
-        var customDefId = await SeedEventDefinitionAsync(sportId, "Custom Assist", "AST", isPositive: true, ownerId: TestUserId, isShot: false);
+        var sysDefId = await SeedEventDefinitionAsync(sportId, "Goal", "GL", isPositive: true, ownerId: null, isShot: true, score: 1);
+        var customDefId = await SeedEventDefinitionAsync(sportId, "Custom Assist", "AST", isPositive: true, ownerId: TestUserId, isShot: false, score: 0);
 
         // Act
         var response = await Client.GetAsync($"{BaseUrl}/{sportId}/event-definitions");
@@ -160,12 +160,14 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         sysDef.Should().NotBeNull();
         sysDef!.Name.Should().Be("Goal");
         sysDef.IsShot.Should().BeTrue();
+        sysDef.Score.Should().Be(1);
         sysDef.IsCustom.Should().BeFalse();
 
         var customDef = definitions.FirstOrDefault(d => d.Id == customDefId);
         customDef.Should().NotBeNull();
         customDef!.Name.Should().Be("Custom Assist");
         customDef.IsShot.Should().BeFalse();
+        customDef.Score.Should().Be(0);
         customDef.IsCustom.Should().BeTrue();
     }
 
@@ -239,7 +241,8 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
             Name: "Custom Penalty Shot",
             ShortName: "CPS",
             IsPositive: true,
-            IsShot: true
+            IsShot: true,
+            Score: 2
         );
 
         // Act
@@ -256,21 +259,23 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         result.ShortName.Should().Be("CPS");
         result.IsPositive.Should().BeTrue();
         result.IsShot.Should().BeTrue();
+        result.Score.Should().Be(2);
         result.IsCustom.Should().BeTrue();
         result.IsEnabled.Should().BeFalse();
 
-        // Verify database persistence including isshot column state
+        // Verify database persistence including isshot and score column state
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
 
-        var dbRecord = await conn.QuerySingleOrDefaultAsync<(string Name, string ShortName, bool IsPositive, bool IsShot, string OwnerId)>(
-            "SELECT name AS Name, shortname AS ShortName, ispositive AS IsPositive, isshot AS IsShot, ownerid AS OwnerId FROM public.eventdefinitions WHERE id = @id",
+        var dbRecord = await conn.QuerySingleOrDefaultAsync<(string Name, string ShortName, bool IsPositive, bool IsShot, int Score, string OwnerId)>(
+            "SELECT name AS Name, shortname AS ShortName, ispositive AS IsPositive, isshot AS IsShot, score AS Score, ownerid AS OwnerId FROM public.eventdefinitions WHERE id = @id",
             new { id = request.Id });
 
         dbRecord.Name.Should().Be("Custom Penalty Shot");
         dbRecord.ShortName.Should().Be("CPS");
         dbRecord.IsPositive.Should().BeTrue();
         dbRecord.IsShot.Should().BeTrue();
+        dbRecord.Score.Should().Be(2);
         dbRecord.OwnerId.Should().Be(TestUserId);
     }
 
@@ -485,17 +490,18 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         bool isPositive,
         string? ownerId,
         bool isSoftDeleted = false,
-        bool isShot = false)
+        bool isShot = false,
+        int score = 0)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
         var id = Guid.NewGuid();
 
         const string sql = @"
-            INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, isshot, issoftdeleted, createdat)
-            VALUES (@id, @sportId, @ownerId, @name, @shortName, @isPositive, @isShot, @isSoftDeleted, NOW())";
+            INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, isshot, score, issoftdeleted, createdat)
+            VALUES (@id, @sportId, @ownerId, @name, @shortName, @isPositive, @isShot, @score, @isSoftDeleted, NOW())";
 
-        await conn.ExecuteAsync(sql, new { id, sportId, ownerId, name, shortName, isPositive, isShot, isSoftDeleted });
+        await conn.ExecuteAsync(sql, new { id, sportId, ownerId, name, shortName, isPositive, isShot, score, isSoftDeleted });
         return id;
     }
 

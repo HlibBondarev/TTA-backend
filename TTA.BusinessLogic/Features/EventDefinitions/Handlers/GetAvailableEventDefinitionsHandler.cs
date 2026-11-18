@@ -40,6 +40,7 @@ public class GetAvailableEventDefinitionsHandler(
             ShortName: p.ShortName,
             IsPositive: p.IsPositive,
             IsShot: p.IsShot,
+            Score: p.Score,
             IsCustom: p.IsCustom,
             IsEnabled: p.IsEnabled,
             SortOrder: p.SortOrder

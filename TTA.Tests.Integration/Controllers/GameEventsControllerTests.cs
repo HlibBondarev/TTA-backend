@@ -40,6 +40,7 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
         result.Should().NotBeNull();
         result!.Id.Should().Be(context.EventId);
         result.EventName.Should().Be("Goal");
+        result.Score.Should().Be(1);
         result.PlayerNumber.Should().Be(10);
         result.LocationX.Should().Be(25.50m);
         result.LocationY.Should().Be(60.00m);
@@ -231,8 +232,8 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
 
         // 9. Event Definition & Game Event (seeding LocationX, LocationY, ShotLocationX, ShotLocationY)
         var defId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, createdat) 
-            VALUES (@id, @sId, 'Goal', 'G', true, true, NOW())", new { id = defId, sId = sportId }, transaction: transaction);
+        await conn.ExecuteAsync(@"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, score, createdat) 
+            VALUES (@id, @sId, 'Goal', 'G', true, true, 1, NOW())", new { id = defId, sId = sportId }, transaction: transaction);
 
         var eventId = Guid.NewGuid();
         await conn.ExecuteAsync(@"

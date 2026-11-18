@@ -83,6 +83,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
 
         // Assert
         Assert.Equal(newEvent.Id, result!.Id);
+        result.Score.Should().Be(1);
     }
 
     /// <summary>
@@ -104,6 +105,7 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         // Assert
         var events = timeline.ToList();
         events.Count.Should().BeGreaterThanOrEqualTo(2);
+        events.Should().OnlyContain(e => e.Score == 1);
     }
 
     /// <summary>
@@ -382,11 +384,12 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         var defId = Guid.NewGuid();
         var defName = isShotDefinition ? "Goal" : "Exclusion";
         var defShortName = isShotDefinition ? "G" : "EX";
+        var defScore = isShotDefinition ? 1 : 0;
 
         await conn.ExecuteAsync(@"
-            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, createdat) 
-            VALUES (@id, @sid, @name, @shortName, @isPositive, @isShot, NOW())",
-            new { id = defId, sid = sportId, name = defName, shortName = defShortName, isPositive = isShotDefinition, isShot = isShotDefinition }, transaction: transaction);
+            INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, score, createdat) 
+            VALUES (@id, @sid, @name, @shortName, @isPositive, @isShot, @score, NOW())",
+            new { id = defId, sid = sportId, name = defName, shortName = defShortName, isPositive = isShotDefinition, isShot = isShotDefinition, score = defScore }, transaction: transaction);
 
         await transaction.CommitAsync();
 

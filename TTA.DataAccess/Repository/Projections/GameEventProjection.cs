@@ -9,6 +9,7 @@
 /// <param name="EventDefinitionId">The identifier of the type of event (e.g., Goal, Card).</param>
 /// <param name="EventName">The display name of the event definition.</param>
 /// <param name="IsPositive">Indicates whether the event is positive (e.g., a goal) or negative (e.g., a foul).</param>
+/// <param name="Score">The score points awarded for this event action.</param>
 /// <param name="PeriodNumber">The match period during which the event occurred (e.g., 1 or 2).</param>
 /// <param name="EventTimestamp">The absolute UTC timestamp of when the event was recorded.</param>
 /// <param name="NormalizedMatchTime">The relative time from the start of the match (e.g., 00:15:00 for the 15th minute).</param>
@@ -27,6 +28,7 @@ public record GameEventProjection(
     Guid EventDefinitionId,
     string EventName,
     bool IsPositive,
+    int Score,
     int PeriodNumber,
     DateTime EventTimestamp,
     TimeSpan? NormalizedMatchTime,
