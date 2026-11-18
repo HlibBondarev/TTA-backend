@@ -1,9 +1,9 @@
-﻿using TTA.DataAccess.Enums;
-using FluentAssertions;
+﻿using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
 using TTA.BusinessLogic.Features.GameEvents.Handlers;
 using TTA.BusinessLogic.Features.GameEvents.Queries;
+using TTA.DataAccess.Enums;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Projections;
 
@@ -104,7 +104,8 @@ public class GetMatchEventsTimelineHandlerTests
 
     /// <summary>
     /// Verifies that the handler returns events in chronological order,
-    /// sorted primarily by NormalizedMatchTime and secondarily by EventTimestamp.
+    /// sorted primarily by NormalizedMatchTime and secondarily by EventTimestamp,
+    /// while preserving per-event disciplinary metadata.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldReturnEventsInChronologicalOrder()
@@ -114,7 +115,11 @@ public class GetMatchEventsTimelineHandlerTests
         var query = new GetMatchEventsTimelineQuery(matchId);
 
         var event1 = CreateRawEvent(Guid.NewGuid(), "Early Event", 1, DateTime.UtcNow.AddMinutes(-20), TimeSpan.FromMinutes(10));
-        var event2 = CreateRawEvent(Guid.NewGuid(), "Late Event", 2, DateTime.UtcNow.AddMinutes(-5), TimeSpan.FromMinutes(40));
+        var event2 = CreateRawEvent(Guid.NewGuid(), "Late Event", 2, DateTime.UtcNow.AddMinutes(-5), TimeSpan.FromMinutes(40)) with
+        {
+            FoulImpact = FoulImpact.PersonalFoul,
+            PenaltyDurationSeconds = 18
+        };
         var event3 = CreateRawEvent(Guid.NewGuid(), "Middle Event", 1, DateTime.UtcNow.AddMinutes(-15), TimeSpan.FromMinutes(25));
 
         // We return them out of order from the repository
@@ -138,6 +143,14 @@ public class GetMatchEventsTimelineHandlerTests
         result[2].NormalizedMatchTime.Should().NotBeNull();
         result[0].NormalizedMatchTime!.Value.Should().BeLessThanOrEqualTo(result[1].NormalizedMatchTime!.Value);
         result[1].NormalizedMatchTime!.Value.Should().BeLessThanOrEqualTo(result[2].NormalizedMatchTime!.Value);
+
+        var mappedEvent1 = result.Single(e => e.Id == event1.Id);
+        mappedEvent1.FoulImpact.Should().Be(FoulImpact.None);
+        mappedEvent1.PenaltyDurationSeconds.Should().BeNull();
+
+        var mappedEvent2 = result.Single(e => e.Id == event2.Id);
+        mappedEvent2.FoulImpact.Should().Be(FoulImpact.PersonalFoul);
+        mappedEvent2.PenaltyDurationSeconds.Should().Be(18);
     }
 
     /// <summary>
