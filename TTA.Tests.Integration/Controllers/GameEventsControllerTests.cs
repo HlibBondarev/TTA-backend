@@ -4,6 +4,7 @@ using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
 using TTA.BusinessLogic.Features.GameEvents.DTOs;
+using TTA.DataAccess.Enums;
 using TTA.Tests.Integration.Infrastructure;
 using Xunit.Abstractions;
 
@@ -36,11 +37,13 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var result = await response.Content.ReadFromJsonAsync<GameEventResponse>();
+        var result = await response.Content.ReadFromJsonAsync<GameEventResponse>(JsonOptions);
         result.Should().NotBeNull();
         result!.Id.Should().Be(context.EventId);
         result.EventName.Should().Be("Goal");
         result.Score.Should().Be(1);
+        result.FoulImpact.Should().Be(FoulImpact.None);
+        result.PenaltyDurationSeconds.Should().BeNull();
         result.PlayerNumber.Should().Be(10);
         result.LocationX.Should().Be(25.50m);
         result.LocationY.Should().Be(60.00m);

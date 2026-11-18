@@ -1,4 +1,5 @@
-﻿using FluentAssertions;
+﻿using TTA.DataAccess.Enums;
+using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
 using TTA.BusinessLogic.Features.EventDefinitions.Handlers;
@@ -60,6 +61,8 @@ public class GetEventDefinitionsForMatchHandlerTests
                 IsPositive: true,
                 IsShot: true,
                 Score: 1,
+                FoulImpact: FoulImpact.None,
+                PenaltyDurationSeconds: null,
                 IsCustom: false,
                 IsEnabled: true,
                 SortOrder: 1
@@ -72,6 +75,8 @@ public class GetEventDefinitionsForMatchHandlerTests
                 IsPositive: false,
                 IsShot: false,
                 Score: 0,
+                FoulImpact: FoulImpact.None,
+                PenaltyDurationSeconds: null,
                 IsCustom: true,
                 IsEnabled: false,
                 SortOrder: 2
@@ -137,11 +142,11 @@ public class GetEventDefinitionsForMatchHandlerTests
 
         var nonShotProjection = new UserEventDefinitionProjection(
             Id: Guid.NewGuid(), SportId: sportId, Name: "Exclusion", ShortName: "E",
-            IsPositive: false, IsShot: false, Score: 0, IsCustom: false, IsEnabled: true, SortOrder: 1);
+            IsPositive: false, IsShot: false, Score: 0, FoulImpact: FoulImpact.None, PenaltyDurationSeconds: null, IsCustom: false, IsEnabled: true, SortOrder: 1);
 
         var shotProjection = new UserEventDefinitionProjection(
             Id: Guid.NewGuid(), SportId: sportId, Name: "Shot on Target", ShortName: "SOT",
-            IsPositive: true, IsShot: true, Score: 0, IsCustom: false, IsEnabled: true, SortOrder: 2);
+            IsPositive: true, IsShot: true, Score: 0, FoulImpact: FoulImpact.None, PenaltyDurationSeconds: null, IsCustom: false, IsEnabled: true, SortOrder: 2);
 
         _eventDefinitionRepositoryMock
             .Setup(r => r.GetMatchEventDefinitionsAsync(matchId, null, It.IsAny<CancellationToken>()))
@@ -183,6 +188,8 @@ public class GetEventDefinitionsForMatchHandlerTests
                 IsPositive: true,
                 IsShot: true,
                 Score: 1,
+                FoulImpact: FoulImpact.None,
+                PenaltyDurationSeconds: null,
                 IsCustom: false,
                 IsEnabled: true,
                 SortOrder: 1

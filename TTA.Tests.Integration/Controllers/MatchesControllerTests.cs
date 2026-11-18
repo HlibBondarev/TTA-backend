@@ -654,7 +654,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
             // Assert
             response.StatusCode.Should().Be(HttpStatusCode.OK);
-            var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+            var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>(JsonOptions);
 
             result.Should().NotBeNull();
             var definitions = result!.ToList();
@@ -664,6 +664,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             goalDef.Should().NotBeNull();
             goalDef!.Name.Should().Be("Goal");
             goalDef.IsPositive.Should().BeTrue();
+            goalDef.FoulImpact.Should().Be(FoulImpact.None);
+            goalDef.PenaltyDurationSeconds.Should().BeNull();
             goalDef.IsCustom.Should().BeFalse();
             goalDef.IsEnabled.Should().BeTrue();
 
@@ -671,6 +673,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             foulDef.Should().NotBeNull();
             foulDef!.Name.Should().Be("Foul");
             foulDef.IsPositive.Should().BeFalse();
+            foulDef.FoulImpact.Should().Be(FoulImpact.None);
+            foulDef.PenaltyDurationSeconds.Should().BeNull();
             foulDef.IsCustom.Should().BeFalse();
             foulDef.IsEnabled.Should().BeTrue();
         }
@@ -713,7 +717,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>(JsonOptions);
 
         result.Should().NotBeNull();
         var definitions = result!.ToList();
@@ -743,7 +747,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>(JsonOptions);
 
         result.Should().NotBeNull();
         result.Should().BeEmpty();
@@ -798,7 +802,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>(JsonOptions);
 
         result.Should().NotBeNull();
         var definitions = result!.ToList();
@@ -843,7 +847,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>(JsonOptions);
 
         result.Should().NotBeNull();
         var definitions = result!.ToList();
@@ -888,7 +892,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>(JsonOptions);
 
         result.Should().NotBeNull();
         var definitions = result!.ToList();
@@ -940,7 +944,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>(JsonOptions);
 
         result.Should().NotBeNull();
         var definitions = result!.ToList();
@@ -1024,11 +1028,13 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var events = await response.Content.ReadFromJsonAsync<List<GameEventResponse>>();
+        var events = await response.Content.ReadFromJsonAsync<List<GameEventResponse>>(JsonOptions);
         events.Should().NotBeNull();
         events.Should().HaveCount(2);
 
         events![0].NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(10));
+        events[0].FoulImpact.Should().Be(FoulImpact.None);
+        events[0].PenaltyDurationSeconds.Should().BeNull();
         events[1].NormalizedMatchTime.Should().Be(TimeSpan.FromMinutes(40));
     }
 

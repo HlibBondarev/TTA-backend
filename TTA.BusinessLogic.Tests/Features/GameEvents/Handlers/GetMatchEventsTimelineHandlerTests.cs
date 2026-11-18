@@ -1,4 +1,5 @@
-﻿using FluentAssertions;
+﻿using TTA.DataAccess.Enums;
+using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
 using TTA.BusinessLogic.Features.GameEvents.Handlers;
@@ -314,6 +315,8 @@ public class GetMatchEventsTimelineHandlerTests
             EventName: name,
             IsPositive: true,
             Score: score,
+            FoulImpact: FoulImpact.None,
+            PenaltyDurationSeconds: null,
             PeriodNumber: period,
             EventTimestamp: eventTimestamp ?? DateTime.UtcNow,
             NormalizedMatchTime: normalizedMatchTime ?? TimeSpan.FromMinutes(20),

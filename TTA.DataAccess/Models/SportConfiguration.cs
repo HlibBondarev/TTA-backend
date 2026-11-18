@@ -71,4 +71,9 @@ public class SportConfiguration : IKeyedEntity<Guid>
     /// Gets or sets the exact physical width of the playing field in meters.
     /// </summary>
     public decimal FieldWidth { get; set; }
+
+    /// <summary>
+    /// Gets or sets the number of countable personal fouls after which a player is disqualified for the rest of the match, or null when unlimited.
+    /// </summary>
+    public int? MaxPersonalFouls { get; set; }
 }

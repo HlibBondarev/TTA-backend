@@ -1,4 +1,5 @@
-﻿using Dapper;
+﻿using TTA.DataAccess.Enums;
+using Dapper;
 using FluentAssertions;
 using System.Data.Common;
 using TTA.DataAccess.Models;
@@ -278,6 +279,63 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         persisted.LocationY.Should().Be(28.25m, "general action location must be preserved");
         persisted.ShotLocationX.Should().BeNull("shotlocationx must be masked to NULL when isshot = false");
         persisted.ShotLocationY.Should().BeNull("shotlocationy must be masked to NULL when isshot = false");
+    }
+
+    #endregion
+
+    #region FoulImpact Tests
+
+    /// <summary>
+    /// Verifies that detailed game event data and the match timeline expose the event definition's
+    /// <c>FoulImpact</c> and <c>PenaltyDurationSeconds</c>.
+    /// </summary>
+    [Fact]
+    public async Task GetByIdWithDetailsAndMatchEvents_ShouldReturnFoulImpactAndPenaltyDuration_FromEventDefinition()
+    {
+        // Arrange
+        var context = await SeedEventEnvironmentAsync();
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(
+                "UPDATE public.eventdefinitions SET foulimpact = 1, penaltydurationseconds = 18 WHERE id = @id",
+                new { id = context.DefinitionId });
+        }
+
+        var gameEvent = CreateEventModel(context.LineupId, context.DefinitionId);
+        await _repository.UpsertAsync([gameEvent]);
+
+        // Act
+        var detailed = await _repository.GetByIdWithDetailsAsync(gameEvent.Id);
+        var timeline = (await _repository.GetMatchEventsAsync(context.MatchId)).ToList();
+
+        // Assert
+        detailed.Should().NotBeNull();
+        detailed!.FoulImpact.Should().Be(FoulImpact.PersonalFoul);
+        detailed.PenaltyDurationSeconds.Should().Be(18);
+
+        var fromTimeline = timeline.Should().ContainSingle(e => e.Id == gameEvent.Id).Subject;
+        fromTimeline.FoulImpact.Should().Be(FoulImpact.PersonalFoul);
+        fromTimeline.PenaltyDurationSeconds.Should().Be(18);
+    }
+
+    /// <summary>
+    /// Verifies that game events default to <c>FoulImpact.None</c> and a null penalty duration
+    /// when the event definition has no disciplinary attributes.
+    /// </summary>
+    [Fact]
+    public async Task GetByIdWithDetailsAsync_ShouldReturnNoneAndNullDuration_WhenDefinitionHasDefaults()
+    {
+        // Arrange
+        var context = await SeedEventEnvironmentAsync();
+        var gameEvent = CreateEventModel(context.LineupId, context.DefinitionId);
+        await _repository.UpsertAsync([gameEvent]);
+
+        // Act
+        var detailed = await _repository.GetByIdWithDetailsAsync(gameEvent.Id);
+
+        // Assert
+        detailed!.FoulImpact.Should().Be(FoulImpact.None);
+        detailed.PenaltyDurationSeconds.Should().BeNull();
     }
 
     #endregion

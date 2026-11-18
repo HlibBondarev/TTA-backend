@@ -98,4 +98,72 @@ public class SportConfigurationRepositoryTests(DatabaseFixture fixture) : BaseIn
     }
 
     #endregion
+
+    #region MaxPersonalFouls Tests
+
+    /// <summary>
+    /// Verifies that <c>MaxPersonalFouls</c> is returned as null when the column is not set.
+    /// </summary>
+    [Fact]
+    public async Task GetByIdAsync_ShouldReturnNullMaxPersonalFouls_WhenNotConfigured()
+    {
+        // Arrange
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(Guid.NewGuid(), "Chess", "CH", configId);
+
+        // Act
+        var result = await _repository.GetByIdAsync(configId);
+
+        // Assert
+        result!.MaxPersonalFouls.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <c>MaxPersonalFouls</c> is returned by both the by-id and by-sport queries when configured.
+    /// </summary>
+    [Fact]
+    public async Task GetByIdAndGetBySportIdAsync_ShouldReturnMaxPersonalFouls_WhenConfigured()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(sportId, "Handball", "HB", configId);
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await Dapper.SqlMapper.ExecuteAsync(conn,
+                "UPDATE public.sportconfigurations SET maxpersonalfouls = 3 WHERE id = @id", new { id = configId });
+        }
+
+        // Act
+        var byId = await _repository.GetByIdAsync(configId);
+        var bySport = (await _repository.GetBySportIdAsync(sportId)).ToList();
+
+        // Assert
+        byId!.MaxPersonalFouls.Should().Be(3);
+        bySport.Should().ContainSingle().Which.MaxPersonalFouls.Should().Be(3);
+    }
+
+    /// <summary>
+    /// Verifies that the CHECK constraint rejects a zero or negative <c>maxpersonalfouls</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-3)]
+    public async Task Table_ShouldRejectNonPositiveMaxPersonalFouls_WithCheckViolation(int value)
+    {
+        // Arrange
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(Guid.NewGuid(), "Rugby", "RG", configId);
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // Act
+        Func<Task> act = async () => await Dapper.SqlMapper.ExecuteAsync(conn,
+            "UPDATE public.sportconfigurations SET maxpersonalfouls = @value WHERE id = @id", new { id = configId, value });
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>().Where(ex => ex.SqlState == "23514");
+    }
+
+    #endregion
 }

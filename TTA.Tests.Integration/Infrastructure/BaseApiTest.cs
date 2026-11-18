@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Authentication;
+﻿using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -19,6 +21,14 @@ namespace TTA.Tests.Integration.Infrastructure;
 /// </summary>
 public abstract class BaseApiTest : BaseIntegrationTest
 {
+    /// <summary>
+    /// JSON serializer options matching the WebAPI configuration, including string enum conversion.
+    /// </summary>
+    protected static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     protected readonly HttpClient Client;
     protected readonly WebApplicationFactory<Program> Factory;
     public const string TestUserId = "auth0|test-user";

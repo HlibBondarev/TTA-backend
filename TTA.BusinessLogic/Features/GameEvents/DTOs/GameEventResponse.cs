@@ -1,4 +1,6 @@
-﻿namespace TTA.BusinessLogic.Features.GameEvents.DTOs;
+﻿using TTA.DataAccess.Enums;
+
+namespace TTA.BusinessLogic.Features.GameEvents.DTOs;
 
 /// <summary>
 /// Response data transfer object representing a game event, 
@@ -10,6 +12,8 @@
 /// <param name="EventName">The human-readable name of the event type.</param>
 /// <param name="IsPositive">Indicates if the event has a positive impact based on definition.</param>
 /// <param name="Score">The score points awarded for this event action.</param>
+/// <param name="FoulImpact">The disciplinary impact of the event on the player.</param>
+/// <param name="PenaltyDurationSeconds">The team penalty duration in seconds, or null when not time-limited.</param>
 /// <param name="PeriodNumber">The match period when the event occurred.</param>
 /// <param name="EventTimestamp">The UTC timestamp of the event.</param>
 /// <param name="NormalizedMatchTime">The calculated match time (interval) when the event occurred.</param>
@@ -29,6 +33,8 @@ public record GameEventResponse(
     string EventName,
     bool IsPositive,
     int Score,
+    FoulImpact FoulImpact,
+    int? PenaltyDurationSeconds,
     int PeriodNumber,
     DateTime EventTimestamp,
     TimeSpan? NormalizedMatchTime,
