@@ -33,20 +33,7 @@ public class GetAvailableEventDefinitionsHandler(
 
         var projections = await _eventDefinitionRepository.GetAvailableForUserAsync(request.UserId, request.SportId, cancellationToken);
 
-        var response = projections.Select(p => new EventDefinitionResponse(
-            Id: p.Id,
-            SportId: p.SportId,
-            Name: p.Name,
-            ShortName: p.ShortName,
-            IsPositive: p.IsPositive,
-            IsShot: p.IsShot,
-            Score: p.Score,
-            FoulImpact: p.FoulImpact,
-            PenaltyDurationSeconds: p.PenaltyDurationSeconds,
-            IsCustom: p.IsCustom,
-            IsEnabled: p.IsEnabled,
-            SortOrder: p.SortOrder
-        )).ToList();
+        var response = projections.Select(p => p.ToResponse()).ToList();
 
         _logger.LogInformation("Successfully retrieved {Count} available event definitions for Sport {SportId}.", response.Count, request.SportId);
 

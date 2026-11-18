@@ -1,4 +1,5 @@
 ﻿using TTA.DataAccess.Enums;
+using TTA.DataAccess.Repository.Projections;
 
 namespace TTA.BusinessLogic.Features.EventDefinitions.DTOs;
 
@@ -30,3 +31,31 @@ public record EventDefinitionResponse(
     bool IsCustom,
     bool IsEnabled,
     int SortOrder);
+
+/// <summary>
+/// Extension methods for mapping <see cref="UserEventDefinitionProjection"/> to <see cref="EventDefinitionResponse"/>.
+/// </summary>
+public static class EventDefinitionResponseExtensions
+{
+    /// <summary>
+    /// Maps a <see cref="UserEventDefinitionProjection"/> to an <see cref="EventDefinitionResponse"/> DTO.
+    /// </summary>
+    /// <param name="projection">The user event definition projection.</param>
+    /// <returns>The mapped response DTO.</returns>
+    public static EventDefinitionResponse ToResponse(this UserEventDefinitionProjection projection)
+    {
+        return new EventDefinitionResponse(
+            Id: projection.Id,
+            SportId: projection.SportId,
+            Name: projection.Name,
+            ShortName: projection.ShortName,
+            IsPositive: projection.IsPositive,
+            IsShot: projection.IsShot,
+            Score: projection.Score,
+            FoulImpact: projection.FoulImpact,
+            PenaltyDurationSeconds: projection.PenaltyDurationSeconds,
+            IsCustom: projection.IsCustom,
+            IsEnabled: projection.IsEnabled,
+            SortOrder: projection.SortOrder);
+    }
+}
