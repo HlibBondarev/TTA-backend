@@ -266,6 +266,7 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
             ShortName = "C-PEN",
             IsPositive = true,
             IsShot = true,
+            Score = 2,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -276,14 +277,47 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         created.Should().NotBeNull();
         created!.Id.Should().Be(shotDefinition.Id);
         created.IsShot.Should().BeTrue("IsShot flag must be persisted as true in the database");
+        created.Score.Should().Be(2, "Score must be persisted in the database");
 
         // Verify database state directly
         using var conn = Fixture.ConnectionFactory.CreateConnection();
-        var dbIsShot = await conn.ExecuteScalarAsync<bool>(
-            "SELECT isshot FROM public.eventdefinitions WHERE id = @id",
+        var dbRow = await conn.QuerySingleAsync<(bool IsShot, int Score)>(
+            "SELECT isshot AS IsShot, score AS Score FROM public.eventdefinitions WHERE id = @id",
             new { id = shotDefinition.Id });
 
-        dbIsShot.Should().BeTrue();
+        dbRow.IsShot.Should().BeTrue();
+        dbRow.Score.Should().Be(2);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> throws PostgresException (P0001)
+    /// when attempting to create a custom event definition with a negative score.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenScoreIsNegative()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+
+        var invalidDefinition = new EventDefinition
+        {
+            Id = Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = "Negative Score Event",
+            ShortName = "NEG",
+            IsPositive = true,
+            IsShot = false,
+            Score = -1,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(invalidDefinition);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .Where(ex => ex.SqlState == "P0001" && ex.MessageText.Contains("Score must be non-negative."));
     }
 
     /// <summary>

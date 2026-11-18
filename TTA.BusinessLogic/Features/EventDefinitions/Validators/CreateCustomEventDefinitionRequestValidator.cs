@@ -28,5 +28,9 @@ public class CreateCustomEventDefinitionRequestValidator : AbstractValidator<Cre
             .WithMessage("Short name is required.")
             .MaximumLength(10)
             .WithMessage("Short name must not exceed 10 characters.");
+
+        RuleFor(x => x.Score)
+            .GreaterThanOrEqualTo(0)
+            .WithMessage("Score must be non-negative.");
     }
 }

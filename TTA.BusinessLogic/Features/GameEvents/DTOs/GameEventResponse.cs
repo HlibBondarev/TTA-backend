@@ -9,6 +9,7 @@
 /// <param name="EventDefinitionId">The identifier of the specific event type definition.</param>
 /// <param name="EventName">The human-readable name of the event type.</param>
 /// <param name="IsPositive">Indicates if the event has a positive impact based on definition.</param>
+/// <param name="Score">The score points awarded for this event action.</param>
 /// <param name="PeriodNumber">The match period when the event occurred.</param>
 /// <param name="EventTimestamp">The UTC timestamp of the event.</param>
 /// <param name="NormalizedMatchTime">The calculated match time (interval) when the event occurred.</param>
@@ -27,6 +28,7 @@ public record GameEventResponse(
     Guid EventDefinitionId,
     string EventName,
     bool IsPositive,
+    int Score,
     int PeriodNumber,
     DateTime EventTimestamp,
     TimeSpan? NormalizedMatchTime,

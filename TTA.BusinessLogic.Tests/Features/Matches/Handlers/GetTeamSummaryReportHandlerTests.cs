@@ -64,7 +64,7 @@ public class GetTeamSummaryReportHandlerTests
                 FirstName: "John",
                 LastName: "Doe",
                 Number: 10,
-                Goals: 2,
+                Scores: 2,
                 PositiveGoalLeadingActions: 1,
                 NegativeGoalLeadingActions: 0,
                 TotalPositiveActions: 5,
@@ -76,7 +76,7 @@ public class GetTeamSummaryReportHandlerTests
                 FirstName: "Jane",
                 LastName: "Smith",
                 Number: 7,
-                Goals: 0,
+                Scores: 0,
                 PositiveGoalLeadingActions: 2,
                 NegativeGoalLeadingActions: 1,
                 TotalPositiveActions: 3,
@@ -98,7 +98,7 @@ public class GetTeamSummaryReportHandlerTests
         resultList.Should().HaveCount(2);
 
         resultList[0].FirstName.Should().Be("John");
-        resultList[0].Goals.Should().Be(2);
+        resultList[0].Scores.Should().Be(2);
         resultList[0].PlayPercentage.Should().Be(85.5);
 
         resultList[1].FirstName.Should().Be("Jane");
@@ -207,5 +207,50 @@ public class GetTeamSummaryReportHandlerTests
 
         _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
         _matchRepositoryMock.Verify(r => r.GetTeamSummaryReportAsync(matchId, teamId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that the handler preserves <see cref="long"/> score totals exceeding <see cref="int.MaxValue"/>
+    /// when mapping projections to response DTOs.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_PreserveLargeLongScores_When_TotalExceedsInt32MaxValue()
+    {
+        // Arrange
+        var matchId = Guid.NewGuid();
+        var teamId = Guid.NewGuid();
+        var query = new GetTeamSummaryReportQuery(matchId, teamId);
+        const long largeScoreTotal = 3_100_000_000L;
+
+        _matchRepositoryMock
+            .Setup(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Match { Id = matchId, HomeScore = 1, GuestScore = 0 });
+
+        var projections = new List<TeamMatchSummaryReportProjection>
+        {
+            new(
+                MatchLineupId: Guid.NewGuid(),
+                FirstName: "John",
+                LastName: "Doe",
+                Number: 10,
+                Scores: largeScoreTotal,
+                PositiveGoalLeadingActions: 0,
+                NegativeGoalLeadingActions: 0,
+                TotalPositiveActions: 2,
+                TotalNegativeActions: 0,
+                PlayPercentage: 100.0
+            )
+        };
+
+        _matchRepositoryMock
+            .Setup(r => r.GetTeamSummaryReportAsync(matchId, teamId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(projections);
+
+        // Act
+        var result = (await _handler.Handle(query, CancellationToken.None)).ToList();
+
+        // Assert
+        result.Should().ContainSingle();
+        result[0].Scores.Should().Be(largeScoreTotal);
     }
 }
