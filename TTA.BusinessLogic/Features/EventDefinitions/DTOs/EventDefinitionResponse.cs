@@ -13,7 +13,7 @@ namespace TTA.BusinessLogic.Features.EventDefinitions.DTOs;
 /// <param name="IsShot">Indicates whether the event action requires goal shot target location tracking.</param>
 /// <param name="Score">The score points awarded for this event action.</param>
 /// <param name="FoulImpact">The disciplinary impact of the event on the player.</param>
-/// <param name="PenaltyDurationSeconds">The team penalty duration in seconds, or null when not time-limited.</param>
+/// <param name="PenaltyDurationSeconds">The temporary team shorthanded penalty duration in clean match seconds, or null when no timed team penalty applies (or when combined with <see cref="FoulImpact.DisqualificationNoSub"/>, indicating the team remains shorthanded until match end).</param>
 /// <param name="IsCustom">Indicates whether this definition is custom user-owned.</param>
 /// <param name="IsEnabled">Indicates whether this definition is enabled in the user preset layout.</param>
 /// <param name="SortOrder">The display layout sort order index.</param>
