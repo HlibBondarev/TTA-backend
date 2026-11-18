@@ -19,8 +19,9 @@ public enum FoulImpact
     PersonalFoul = 1,
 
     /// <summary>
-    /// Immediate player disqualification for the rest of the match, with substitution allowed
-    /// after the team penalty expires.
+    /// Immediate disqualification of the player for the rest of the match; substitution is allowed
+    /// after the timed team penalty expires, or immediately when penalty duration is <c>null</c>
+    /// (for example, a water polo red card with a penalty throw and no timed exclusion).
     /// </summary>
     DisqualificationWithSub = 2,
 
