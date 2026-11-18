@@ -10,6 +10,11 @@ namespace TTA.DataAccess.Tests.Enums;
 /// </summary>
 public class FoulImpactTests
 {
+    private static readonly JsonSerializerOptions StringEnumJsonOptions = new()
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     [Fact]
     public void FoulImpact_HasFourMembers()
     {
@@ -49,9 +54,7 @@ public class FoulImpactTests
     [InlineData(FoulImpact.DisqualificationNoSub, "\"DisqualificationNoSub\"")]
     public void FoulImpact_SerializesAsString_WhenJsonStringEnumConverterIsRegistered(FoulImpact impact, string expectedJson)
     {
-        var options = new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } };
-
-        var json = JsonSerializer.Serialize(impact, options);
+        var json = JsonSerializer.Serialize(impact, StringEnumJsonOptions);
 
         Assert.Equal(expectedJson, json);
     }
@@ -61,9 +64,7 @@ public class FoulImpactTests
     [InlineData("\"DisqualificationNoSub\"", FoulImpact.DisqualificationNoSub)]
     public void FoulImpact_DeserializesFromString_WhenJsonStringEnumConverterIsRegistered(string json, FoulImpact expected)
     {
-        var options = new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } };
-
-        var result = JsonSerializer.Deserialize<FoulImpact>(json, options);
+        var result = JsonSerializer.Deserialize<FoulImpact>(json, StringEnumJsonOptions);
 
         Assert.Equal(expected, result);
     }
