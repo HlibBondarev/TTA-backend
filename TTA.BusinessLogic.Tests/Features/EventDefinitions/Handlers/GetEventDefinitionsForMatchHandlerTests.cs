@@ -1,9 +1,9 @@
-﻿using TTA.DataAccess.Enums;
-using FluentAssertions;
+﻿using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
 using TTA.BusinessLogic.Features.EventDefinitions.Handlers;
 using TTA.BusinessLogic.Features.EventDefinitions.Queries;
+using TTA.DataAccess.Enums;
 using TTA.DataAccess.Repository.Api;
 using TTA.DataAccess.Repository.Projections;
 using Match = TTA.DataAccess.Models.Match;
@@ -165,7 +165,7 @@ public class GetEventDefinitionsForMatchHandlerTests
 
     /// <summary>
     /// Verifies that <see cref="GetEventDefinitionsForMatchHandler.Handle"/> retrieves active system default definitions
-    /// when the user identifier is null.
+    /// when the user identifier is null, preserving disciplinary metadata.
     /// </summary>
     [Fact]
     public async Task Handle_ShouldReturnSystemDefaults_WhenUserIdIsNull()
@@ -193,6 +193,20 @@ public class GetEventDefinitionsForMatchHandlerTests
                 IsCustom: false,
                 IsEnabled: true,
                 SortOrder: 1
+            ),
+            new(
+                Id: Guid.NewGuid(),
+                SportId: sportId,
+                Name: "Exclusion",
+                ShortName: "E",
+                IsPositive: false,
+                IsShot: false,
+                Score: 0,
+                FoulImpact: FoulImpact.PersonalFoul,
+                PenaltyDurationSeconds: 18,
+                IsCustom: false,
+                IsEnabled: true,
+                SortOrder: 2
             )
         };
 
@@ -208,9 +222,16 @@ public class GetEventDefinitionsForMatchHandlerTests
         // Assert
         result.Should().NotBeNull();
         var list = result.ToList();
-        list.Should().HaveCount(1);
+        list.Should().HaveCount(2);
+
         list[0].Name.Should().Be("Goal");
         list[0].IsShot.Should().BeTrue();
+        list[0].FoulImpact.Should().Be(FoulImpact.None);
+        list[0].PenaltyDurationSeconds.Should().BeNull();
+
+        list[1].Name.Should().Be("Exclusion");
+        list[1].FoulImpact.Should().Be(FoulImpact.PersonalFoul);
+        list[1].PenaltyDurationSeconds.Should().Be(18);
 
         _matchRepositoryMock.Verify(r => r.GetByIdAsync(matchId, It.IsAny<CancellationToken>()), Times.Once);
         _eventDefinitionRepositoryMock.Verify(r => r.GetMatchEventDefinitionsAsync(matchId, null, It.IsAny<CancellationToken>()), Times.Once);
