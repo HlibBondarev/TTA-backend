@@ -1,8 +1,11 @@
 ﻿using Dapper;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.OpenApi.Any;
 using Npgsql;
+using Swashbuckle.AspNetCore.Swagger;
 using System.Net;
-using System.Net.Http.Json;
+using System.Text.Json;
 using TTA.BusinessLogic.Features.GameEvents.DTOs;
 using TTA.DataAccess.Enums;
 using TTA.Tests.Integration.Infrastructure;
@@ -23,7 +26,8 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
 
     /// <summary>
     /// Verifies that an existing game event can be retrieved and correctly mapped to a <see cref="GameEventResponse"/>,
-    /// including spatial field coordinates and shot frame coordinates.
+    /// including spatial field coordinates, shot frame coordinates, string-serialized <see cref="FoulImpact"/>,
+    /// and OpenAPI schema enum values.
     /// </summary>
     [Fact]
     public async Task GetById_ShouldReturnOk_WhenEventExists()
@@ -37,7 +41,15 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var result = await response.Content.ReadFromJsonAsync<GameEventResponse>(JsonOptions);
+        var rawJson = await response.Content.ReadAsStringAsync();
+        using (var doc = JsonDocument.Parse(rawJson))
+        {
+            var foulImpactElement = doc.RootElement.GetProperty("foulImpact");
+            foulImpactElement.ValueKind.Should().Be(JsonValueKind.String);
+            foulImpactElement.GetString().Should().Be("PersonalFoul");
+        }
+
+        var result = JsonSerializer.Deserialize<GameEventResponse>(rawJson, JsonOptions);
         result.Should().NotBeNull();
         result!.Id.Should().Be(context.EventId);
         result.EventName.Should().Be("Exclusion");
@@ -49,6 +61,22 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
         result.LocationY.Should().Be(60.00m);
         result.ShotLocationX.Should().Be(15.25m);
         result.ShotLocationY.Should().Be(80.50m);
+
+        var swaggerProvider = Factory.Services.GetRequiredService<ISwaggerProvider>();
+        var swaggerDoc = swaggerProvider.GetSwagger("v1");
+        var enumValues = swaggerDoc.Components.Schemas[nameof(FoulImpact)].Enum
+            .OfType<OpenApiString>()
+            .Select(v => v.Value)
+            .ToArray();
+
+        enumValues.Should().BeEquivalentTo(
+            [
+                nameof(FoulImpact.None),
+                nameof(FoulImpact.PersonalFoul),
+                nameof(FoulImpact.DisqualificationWithSub),
+                nameof(FoulImpact.DisqualificationNoSub)
+            ],
+            options => options.WithStrictOrdering());
     }
 
     /// <summary>
