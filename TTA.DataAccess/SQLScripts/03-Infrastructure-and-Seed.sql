@@ -103,7 +103,7 @@ BEGIN
     )
     ON CONFLICT DO NOTHING;
     
-    -- Waterpolo Event Definitions (13 Positive, 20 Negative)
+    -- Waterpolo Event Definitions (13 Positive, 21 Negative)
     INSERT INTO eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, isshot, score, defaultposition, foulimpact, penaltydurationseconds, issoftdeleted, createdat) VALUES 
     -- Positive Actions (1..13)
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57', wp_sport_id, NULL, 'Goal', 'G', true, true, 1, 1, 0, NULL, false, NOW()),
@@ -119,7 +119,7 @@ BEGIN
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61', wp_sport_id, NULL, 'Counter-Attack Stopped', 'CAS', true, false, 0, 11, 0, NULL, false, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62', wp_sport_id, NULL, 'Sprint Won', 'SW', true, false, 0, 12, 0, NULL, false, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63', wp_sport_id, NULL, 'Penalty Earned', 'PE', true, false, 0, 13, 0, NULL, false, NOW()),
-    -- Negative Actions (1..20)
+    -- Negative Actions (1..21)
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f72', wp_sport_id, NULL, 'Goal', 'GC', false, true, 1, 1, 0, NULL, false, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64', wp_sport_id, NULL, 'Turnover', 'TO', false, false, 0, 2, 0, NULL, false, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65', wp_sport_id, NULL, 'Bad Pass', 'BP', false, false, 0, 3, 0, NULL, false, NOW()),
@@ -137,9 +137,10 @@ BEGIN
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f77', wp_sport_id, NULL, 'Ball Under', 'BU', false, false, 0, 15, 0, NULL, false, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f78', wp_sport_id, NULL, 'Sprint Lost', 'SL', false, false, 0, 16, 0, NULL, false, NOW()),
     ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f79', wp_sport_id, NULL, 'Penalty Committed', 'PC', false, false, 0, 17, 1, NULL, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f83', wp_sport_id, NULL, 'Red Card (With Substitution)', 'RCS', false, false, 0, 18, 2, 18, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f80', wp_sport_id, NULL, 'Red Card (No Substitution)', 'RCN', false, false, 0, 19, 3, 300, false, NOW()),
-    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82', wp_sport_id, NULL, 'Own Goal', 'OG', false, true, 1, 20, 0, NULL, false, NOW())
+('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f83', wp_sport_id, NULL, 'Red Card (18s)', 'RC18', false, false, 0, 18, 2, 18, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f80', wp_sport_id, NULL, 'Red Card (4 Min)', 'RC4M', false, false, 0, 19, 2, 240, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f84', wp_sport_id, NULL, 'Red Card (Penalty)', 'RCP', false, false, 0, 20, 2, NULL, false, NOW()),
+    ('6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82', wp_sport_id, NULL, 'Own Goal', 'OG', false, true, 1, 21, 0, NULL, false, NOW())
     ON CONFLICT (id) DO NOTHING;
 
     /*

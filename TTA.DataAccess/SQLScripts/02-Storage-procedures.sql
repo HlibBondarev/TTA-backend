@@ -1751,7 +1751,14 @@ END;$$ LANGUAGE plpgsql;
 /**********************************************************************************
  * Upserts a custom user event definition.
  * Includes optional p_is_shot parameter to set shot-related event definitions.
- * Includes optional p_foulimpact (0..3) and p_penaltydurationseconds (NULL or > 0) disciplinary attributes.
+ * Includes optional p_foulimpact (0..3) and p_penaltydurationseconds (NULL or > 0)
+ * disciplinary attributes:
+ *   - foulimpact = 2 (DisqualificationWithSub): > 0 means a substitute may enter
+ *     after the timed team penalty expires (e.g., 18s or 240s in water polo);
+ *     NULL means immediate substitution is allowed with no timed shorthanded penalty.
+ *   - foulimpact = 3 (DisqualificationNoSub): NULL means the team plays shorthanded
+ *     until the end of the match (e.g., football red card); > 0 applies a timed
+ *     shorthanded duration without player replacement.
  * Validates ownership and prohibits modifying system default definitions.
  **********************************************************************************/
 DROP FUNCTION IF EXISTS public.upsert_custom_event_definition(UUID, UUID, VARCHAR, VARCHAR, VARCHAR, BOOLEAN, BOOLEAN);
@@ -1791,7 +1798,10 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    -- Validation: Penalty duration must be positive when provided
+    -- Validation: Penalty duration must be positive when provided.
+    -- NULL is valid for:
+    --   - foulimpact = 2 (DisqualificationWithSub): immediate substitution allowed (no timed team penalty)
+    --   - foulimpact = 3 (DisqualificationNoSub): team remains shorthanded until match end
     IF p_penaltydurationseconds IS NOT NULL AND p_penaltydurationseconds <= 0 THEN
         RAISE EXCEPTION 'Penalty duration must be greater than zero.'
             USING ERRCODE = 'P0001';

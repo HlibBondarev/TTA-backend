@@ -41,8 +41,9 @@ public class WaterpoloSeedDataTests(DatabaseFixture fixture) : BaseIntegrationTe
     [Theory]
     [InlineData("Exclusion", "E", FoulImpact.PersonalFoul, 18)]
     [InlineData("Penalty Committed", "PC", FoulImpact.PersonalFoul, null)]
-    [InlineData("Red Card (With Substitution)", "RCS", FoulImpact.DisqualificationWithSub, 18)]
-    [InlineData("Red Card (No Substitution)", "RCN", FoulImpact.DisqualificationNoSub, 300)]
+    [InlineData("Red Card (18s)", "RC18", FoulImpact.DisqualificationWithSub, 18)]
+    [InlineData("Red Card (4 Min)", "RC4M", FoulImpact.DisqualificationWithSub, 240)]
+    [InlineData("Red Card (Penalty)", "RCP", FoulImpact.DisqualificationWithSub, null)]
     public async Task Seed_ShouldAssignDisciplinaryAttributes_ToWaterpoloFoulEvents(
         string name, string shortName, FoulImpact expectedImpact, int? expectedDuration)
     {
@@ -59,7 +60,7 @@ public class WaterpoloSeedDataTests(DatabaseFixture fixture) : BaseIntegrationTe
     }
 
     /// <summary>
-    /// Verifies that only the four disciplinary events carry a non-default foul impact and that every other
+    /// Verifies that only the five disciplinary events carry a non-default foul impact and that every other
     /// Waterpolo event (positive actions, Exclusion Earned, Penalty Earned, Offensive Foul, Ball Under, etc.)
     /// is seeded with <c>FoulImpact.None</c> and no penalty duration.
     /// </summary>
@@ -68,14 +69,14 @@ public class WaterpoloSeedDataTests(DatabaseFixture fixture) : BaseIntegrationTe
     {
         // Arrange
         await ReapplySeedAsync();
-        var disciplinaryShortNames = new[] { "E", "PC", "RCS", "RCN" };
+        var disciplinaryShortNames = new[] { "E", "PC", "RC18", "RC4M", "RCP" };
 
         // Act
         var definitions = await GetWaterpoloDefinitionsAsync();
         var others = definitions.Where(d => !disciplinaryShortNames.Contains(d.ShortName) || d.IsPositive).ToList();
 
         // Assert
-        definitions.Should().HaveCount(33);
+        definitions.Should().HaveCount(34);
         others.Should().HaveCount(29);
         others.Should().OnlyContain(d => d.FoulImpact == (int)FoulImpact.None && d.PenaltyDurationSeconds == null);
         others.Should().Contain(d => d.Name == "Offensive Foul");
@@ -85,10 +86,10 @@ public class WaterpoloSeedDataTests(DatabaseFixture fixture) : BaseIntegrationTe
     }
 
     /// <summary>
-    /// Verifies that the legacy single "Red Card" definition has been replaced by exactly two distinct red card definitions.
+    /// Verifies that the legacy single "Red Card" definition has been replaced by three distinct red card definitions.
     /// </summary>
     [Fact]
-    public async Task Seed_ShouldContainTwoRedCardDefinitions_AndNoLegacyRedCard()
+    public async Task Seed_ShouldContainThreeRedCardDefinitions_AndNoLegacyRedCard()
     {
         // Arrange
         await ReapplySeedAsync();
@@ -98,7 +99,7 @@ public class WaterpoloSeedDataTests(DatabaseFixture fixture) : BaseIntegrationTe
 
         // Assert
         definitions.Should().NotContain(d => d.Name == "Red Card");
-        definitions.Where(d => d.Name.StartsWith("Red Card")).Should().HaveCount(2);
+        definitions.Where(d => d.Name.StartsWith("Red Card")).Should().HaveCount(3);
     }
 
     private async Task<List<SeededDefinition>> GetWaterpoloDefinitionsAsync()
