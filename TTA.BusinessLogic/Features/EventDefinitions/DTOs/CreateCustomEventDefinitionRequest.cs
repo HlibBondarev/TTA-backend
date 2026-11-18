@@ -1,4 +1,6 @@
-﻿namespace TTA.BusinessLogic.Features.EventDefinitions.DTOs;
+﻿using TTA.DataAccess.Enums;
+
+namespace TTA.BusinessLogic.Features.EventDefinitions.DTOs;
 
 /// <summary>
 /// Request data transfer object for creating a custom user-owned event definition.
@@ -9,10 +11,14 @@
 /// <param name="IsPositive">Indicates whether the custom event action has a positive statistical impact.</param>
 /// <param name="IsShot">Indicates whether the custom event action requires goal shot target location tracking.</param>
 /// <param name="Score">The score points awarded for this custom event action.</param>
+/// <param name="FoulImpact">The disciplinary impact of the custom event on the player.</param>
+/// <param name="PenaltyDurationSeconds">The optional team penalty duration in seconds; must be greater than zero when provided.</param>
 public record CreateCustomEventDefinitionRequest(
     Guid Id,
     string Name,
     string ShortName,
     bool IsPositive,
     bool IsShot = false,
-    int Score = 0);
+    int Score = 0,
+    FoulImpact FoulImpact = FoulImpact.None,
+    int? PenaltyDurationSeconds = null);

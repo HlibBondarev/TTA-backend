@@ -52,6 +52,7 @@ public class GetSportConfigurationsBySportIdHandler(
             c.Playground,
             c.FieldLength,
             c.FieldWidth,
-            c.ShotMap));
+            c.ShotMap,
+            c.MaxPersonalFouls));
     }
 }

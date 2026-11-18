@@ -45,6 +45,8 @@ public class CreateCustomEventDefinitionHandler(
             IsPositive = request.IsPositive,
             IsShot = request.IsShot,
             Score = request.Score,
+            FoulImpact = request.FoulImpact,
+            PenaltyDurationSeconds = request.PenaltyDurationSeconds,
             IsSoftDeleted = false,
             CreatedAt = DateTime.UtcNow
         };
@@ -69,6 +71,8 @@ public class CreateCustomEventDefinitionHandler(
                 IsPositive: created.IsPositive,
                 IsShot: created.IsShot,
                 Score: created.Score,
+                FoulImpact: created.FoulImpact,
+                PenaltyDurationSeconds: created.PenaltyDurationSeconds,
                 IsCustom: true,
                 IsEnabled: false,
                 SortOrder: 0

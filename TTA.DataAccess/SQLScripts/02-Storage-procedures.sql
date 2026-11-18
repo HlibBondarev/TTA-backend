@@ -1751,9 +1751,18 @@ END;$$ LANGUAGE plpgsql;
 /**********************************************************************************
  * Upserts a custom user event definition.
  * Includes optional p_is_shot parameter to set shot-related event definitions.
+ * Includes optional p_foulimpact (0..3) and p_penaltydurationseconds (NULL or > 0)
+ * disciplinary attributes:
+ *   - foulimpact = 2 (DisqualificationWithSub): > 0 means a substitute may enter
+ *     after the timed team penalty expires (e.g., 18s or 240s in water polo);
+ *     NULL means immediate substitution is allowed with no timed shorthanded penalty.
+ *   - foulimpact = 3 (DisqualificationNoSub): NULL means the team plays shorthanded
+ *     until the end of the match (e.g., football red card); > 0 applies a timed
+ *     shorthanded duration without player replacement.
  * Validates ownership and prohibits modifying system default definitions.
  **********************************************************************************/
 DROP FUNCTION IF EXISTS public.upsert_custom_event_definition(UUID, UUID, VARCHAR, VARCHAR, VARCHAR, BOOLEAN, BOOLEAN);
+DROP FUNCTION IF EXISTS public.upsert_custom_event_definition(UUID, UUID, VARCHAR, VARCHAR, VARCHAR, BOOLEAN, BOOLEAN, INT);
 CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
     p_id UUID,
     p_sport_id UUID,
@@ -1762,7 +1771,9 @@ CREATE OR REPLACE FUNCTION public.upsert_custom_event_definition(
     p_short_name VARCHAR(10),
     p_is_positive BOOLEAN,
     p_is_shot BOOLEAN DEFAULT FALSE,
-    p_score INT DEFAULT 0
+    p_score INT DEFAULT 0,
+    p_foulimpact INT DEFAULT 0,
+    p_penaltydurationseconds INT DEFAULT NULL
 )
 RETURNS SETOF public.eventdefinitions AS $$
 DECLARE
@@ -1778,6 +1789,21 @@ BEGIN
     -- Validation: Score must be non-negative
     IF COALESCE(p_score, 0) < 0 THEN
         RAISE EXCEPTION 'Score must be non-negative.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Validation: Foul impact must be a defined FoulImpact value (0..3)
+    IF COALESCE(p_foulimpact, 0) NOT BETWEEN 0 AND 3 THEN
+        RAISE EXCEPTION 'Foul impact must be between 0 and 3.'
+            USING ERRCODE = 'P0001';
+    END IF;
+
+    -- Validation: Penalty duration must be positive when provided.
+    -- NULL is valid for:
+    --   - foulimpact = 2 (DisqualificationWithSub): immediate substitution allowed (no timed team penalty)
+    --   - foulimpact = 3 (DisqualificationNoSub): team remains shorthanded until match end
+    IF p_penaltydurationseconds IS NOT NULL AND p_penaltydurationseconds <= 0 THEN
+        RAISE EXCEPTION 'Penalty duration must be greater than zero.'
             USING ERRCODE = 'P0001';
     END IF;
 
@@ -1807,7 +1833,7 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM public.eventdefinitions
         WHERE id = p_id
-          AND (sportid <> p_sport_id OR name <> p_name OR shortname <> p_short_name OR ispositive <> p_is_positive OR isshot <> COALESCE(p_is_shot, FALSE) OR score <> COALESCE(p_score, 0))
+          AND (sportid <> p_sport_id OR name <> p_name OR shortname <> p_short_name OR ispositive <> p_is_positive OR isshot <> COALESCE(p_is_shot, FALSE) OR score <> COALESCE(p_score, 0) OR foulimpact <> COALESCE(p_foulimpact, 0) OR penaltydurationseconds IS DISTINCT FROM p_penaltydurationseconds)
     ) THEN
         RAISE EXCEPTION 'Modifying existing custom event definition attributes is prohibited. Create a new event definition instead.'
             USING ERRCODE = 'P0001';
@@ -1829,17 +1855,19 @@ BEGIN
 
     -- Upsert operation with isshot and score persistence
     INSERT INTO public.eventdefinitions (
-        id, sportid, ownerid, name, shortname, ispositive, isshot, score, issoftdeleted, createdat
+        id, sportid, ownerid, name, shortname, ispositive, isshot, score, foulimpact, penaltydurationseconds, issoftdeleted, createdat
     )
     VALUES (
-        p_id, p_sport_id, p_owner_id, p_name, p_short_name, p_is_positive, COALESCE(p_is_shot, FALSE), COALESCE(p_score, 0), FALSE, v_now
+        p_id, p_sport_id, p_owner_id, p_name, p_short_name, p_is_positive, COALESCE(p_is_shot, FALSE), COALESCE(p_score, 0), COALESCE(p_foulimpact, 0), p_penaltydurationseconds, FALSE, v_now
     )
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
         shortname = EXCLUDED.shortname,
         ispositive = EXCLUDED.ispositive,
         isshot = EXCLUDED.isshot,
-        score = EXCLUDED.score
+        score = EXCLUDED.score,
+        foulimpact = EXCLUDED.foulimpact,
+        penaltydurationseconds = EXCLUDED.penaltydurationseconds
     WHERE eventdefinitions.issoftdeleted = FALSE AND eventdefinitions.ownerid = p_owner_id;
 
     GET DIAGNOSTICS v_rows = ROW_COUNT;
@@ -1982,6 +2010,8 @@ RETURNS TABLE (
     ispositive BOOLEAN,
     isshot BOOLEAN,
     score INT,
+    foulimpact INT,
+    penaltydurationseconds INT,
     iscustom BOOLEAN,
     isenabled BOOLEAN,
     sortorder INT
@@ -1996,6 +2026,8 @@ BEGIN
         ed.ispositive,
         ed.isshot,
         ed.score,
+        ed.foulimpact,
+        ed.penaltydurationseconds,
         (ed.ownerid IS NOT NULL) AS iscustom,
         (uep.eventdefinitionid IS NOT NULL) AS isenabled,
         COALESCE(uep.sortorder, ed.defaultposition, 0) AS sortorder
@@ -2031,6 +2063,8 @@ RETURNS TABLE (
     ispositive BOOLEAN,
     isshot BOOLEAN,
     score INT,
+    foulimpact INT,
+    penaltydurationseconds INT,
     iscustom BOOLEAN,
     isenabled BOOLEAN,
     sortorder INT
@@ -2070,6 +2104,8 @@ BEGIN
             ed.ispositive,
             ed.isshot,
             ed.score,
+            ed.foulimpact,
+            ed.penaltydurationseconds,
             (ed.ownerid IS NOT NULL) AS iscustom,
             TRUE AS isenabled,
             uep.sortorder
@@ -2090,6 +2126,8 @@ BEGIN
             ed.ispositive,
             ed.isshot,
             ed.score,
+            ed.foulimpact,
+            ed.penaltydurationseconds,
             FALSE AS iscustom,
             TRUE AS isenabled,
             COALESCE(ed.defaultposition, 0) AS sortorder
@@ -2252,6 +2290,8 @@ RETURNS TABLE (
     eventname VARCHAR,
     ispositive BOOLEAN,
     score INT,
+    foulimpact INT,
+    penaltydurationseconds INT,
     periodnumber INT,
     eventtimestamp TIMESTAMPTZ,
     normalizedmatchtime INTERVAL,
@@ -2269,6 +2309,7 @@ BEGIN
     RETURN QUERY
     SELECT 
         ge.id, ge.matchlineupid, ge.eventdefinitionid, ed.name AS eventname, ed.ispositive, ed.score,
+        ed.foulimpact, ed.penaltydurationseconds,
         ge.periodnumber, ge.eventtimestamp, ge.normalizedmatchtime, ge.isleadtogoal,
         ge.locationx, ge.locationy, ge.shotlocationx, ge.shotlocationy,
         (p.firstname || ' ' || p.lastname) AS playername, ml.number AS playernumber,
@@ -2297,6 +2338,8 @@ RETURNS TABLE (
     eventname VARCHAR,
     ispositive BOOLEAN,
     score INT,
+    foulimpact INT,
+    penaltydurationseconds INT,
     periodnumber INT,
     eventtimestamp TIMESTAMPTZ,
     normalizedmatchtime INTERVAL,
@@ -2319,6 +2362,8 @@ BEGIN
         ed.name AS eventname, 
         ed.ispositive,
         ed.score,
+        ed.foulimpact,
+        ed.penaltydurationseconds,
         ge.periodnumber, 
         ge.eventtimestamp, 
         ge.normalizedmatchtime,

@@ -1,4 +1,5 @@
-﻿using FluentAssertions;
+﻿using TTA.DataAccess.Enums;
+using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
 using TTA.BusinessLogic.Features.GameEvents.Handlers;
@@ -75,6 +76,8 @@ public class GetGameEventByIdHandlerTests
             EventName: "Goal",
             IsPositive: true,
             Score: 1,
+            FoulImpact: FoulImpact.None,
+            PenaltyDurationSeconds: null,
             PeriodNumber: 1,
             EventTimestamp: DateTime.UtcNow,
             NormalizedMatchTime: TimeSpan.FromMinutes(15),
@@ -129,6 +132,8 @@ public class GetGameEventByIdHandlerTests
             EventName: "Shot on Target",
             IsPositive: true,
             Score: 0,
+            FoulImpact: FoulImpact.None,
+            PenaltyDurationSeconds: null,
             PeriodNumber: 2,
             EventTimestamp: DateTime.UtcNow,
             NormalizedMatchTime: TimeSpan.FromMinutes(8),
@@ -173,6 +178,8 @@ public class GetGameEventByIdHandlerTests
             EventName: "Foul",
             IsPositive: false,
             Score: 0,
+            FoulImpact: FoulImpact.None,
+            PenaltyDurationSeconds: null,
             PeriodNumber: 1,
             EventTimestamp: DateTime.UtcNow,
             NormalizedMatchTime: TimeSpan.FromMinutes(5),
@@ -200,5 +207,48 @@ public class GetGameEventByIdHandlerTests
         result.LocationY.Should().BeNull();
         result.ShotLocationX.Should().BeNull();
         result.ShotLocationY.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="GetGameEventByIdHandler.Handle"/> maps <c>FoulImpact</c> and
+    /// <c>PenaltyDurationSeconds</c> from the projection into the response DTO.
+    /// </summary>
+    [Fact]
+    public async Task Handle_Should_MapFoulImpactAndPenaltyDuration_When_PresentInProjection()
+    {
+        // Arrange
+        var eventId = Guid.NewGuid();
+        GameEventProjection detailedEvent = new(
+            Id: eventId,
+            MatchLineupId: Guid.NewGuid(),
+            EventDefinitionId: Guid.NewGuid(),
+            EventName: "Exclusion",
+            IsPositive: false,
+            Score: 0,
+            FoulImpact: FoulImpact.PersonalFoul,
+            PenaltyDurationSeconds: 18,
+            PeriodNumber: 2,
+            EventTimestamp: DateTime.UtcNow,
+            NormalizedMatchTime: TimeSpan.FromMinutes(3),
+            IsLeadToGoal: false,
+            LocationX: null,
+            LocationY: null,
+            ShotLocationX: null,
+            ShotLocationY: null,
+            PlayerName: "John Doe",
+            PlayerNumber: 5,
+            TeamId: Guid.NewGuid(),
+            TeamName: "Warriors");
+
+        _gameEventRepositoryMock
+            .Setup(r => r.GetByIdWithDetailsAsync(eventId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(detailedEvent);
+
+        // Act
+        var result = await _handler.Handle(new GetGameEventByIdQuery(eventId), CancellationToken.None);
+
+        // Assert
+        result.FoulImpact.Should().Be(FoulImpact.PersonalFoul);
+        result.PenaltyDurationSeconds.Should().Be(18);
     }
 }

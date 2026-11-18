@@ -1,5 +1,6 @@
 ﻿using MediatR;
 using TTA.BusinessLogic.Features.EventDefinitions.DTOs;
+using TTA.DataAccess.Enums;
 
 namespace TTA.BusinessLogic.Features.EventDefinitions.Commands;
 
@@ -14,6 +15,8 @@ namespace TTA.BusinessLogic.Features.EventDefinitions.Commands;
 /// <param name="IsPositive">Indicates whether the custom action has a positive statistical impact.</param>
 /// <param name="IsShot">Indicates whether the custom action requires goal shot target location tracking.</param>
 /// <param name="Score">The score points awarded for this custom event action.</param>
+/// <param name="FoulImpact">The disciplinary impact of the custom event on the player.</param>
+/// <param name="PenaltyDurationSeconds">The optional team penalty duration in seconds.</param>
 public record CreateCustomEventDefinitionCommand(
     Guid Id,
     Guid SportId,
@@ -22,7 +25,9 @@ public record CreateCustomEventDefinitionCommand(
     string ShortName,
     bool IsPositive,
     bool IsShot = false,
-    int Score = 0) : IRequest<EventDefinitionResponse>;
+    int Score = 0,
+    FoulImpact FoulImpact = FoulImpact.None,
+    int? PenaltyDurationSeconds = null) : IRequest<EventDefinitionResponse>;
 
 /// <summary>
 /// Extension methods for mapping CreateCustomEventDefinitionRequest DTO to CreateCustomEventDefinitionCommand.
@@ -49,6 +54,8 @@ public static class CreateCustomEventDefinitionCommandExtensions
             ShortName: request.ShortName,
             IsPositive: request.IsPositive,
             IsShot: request.IsShot,
-            Score: request.Score);
+            Score: request.Score,
+            FoulImpact: request.FoulImpact,
+            PenaltyDurationSeconds: request.PenaltyDurationSeconds);
     }
 }

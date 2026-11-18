@@ -5,6 +5,7 @@ using Npgsql;
 using TTA.BusinessLogic.Features.EventDefinitions.Commands;
 using TTA.BusinessLogic.Features.EventDefinitions.Handlers;
 using TTA.Common.Exceptions;
+using TTA.DataAccess.Enums;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository.Api;
 
@@ -329,5 +330,80 @@ public class CreateCustomEventDefinitionHandlerTests
         // Assert
         await act.Should().ThrowAsync<ConflictException>()
             .WithMessage("*An active custom event definition with this name and positivity already exists for the sport.*");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="CreateCustomEventDefinitionHandler.Handle"/> passes <c>FoulImpact</c> and
+    /// <c>PenaltyDurationSeconds</c> from the command to the repository entity and maps the repository-returned
+    /// entity values into the response DTO independently.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldMapFoulImpactAndPenaltyDuration_WhenProvided()
+    {
+        // Arrange
+        var command = new CreateCustomEventDefinitionCommand(
+            Id: Guid.NewGuid(),
+            SportId: Guid.NewGuid(),
+            OwnerId: "auth0|user123",
+            Name: "Custom Red Card",
+            ShortName: "CRC",
+            IsPositive: false,
+            FoulImpact: FoulImpact.DisqualificationWithSub,
+            PenaltyDurationSeconds: 18);
+
+        var persistedEntity = new EventDefinition
+        {
+            Id = command.Id,
+            SportId = command.SportId,
+            OwnerId = command.OwnerId,
+            Name = command.Name,
+            ShortName = command.ShortName,
+            IsPositive = command.IsPositive,
+            IsShot = command.IsShot,
+            Score = command.Score,
+            FoulImpact = FoulImpact.DisqualificationNoSub,
+            PenaltyDurationSeconds = 300,
+            IsSoftDeleted = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        EventDefinition? captured = null;
+        _repositoryMock
+            .Setup(r => r.UpsertCustomAsync(It.IsAny<EventDefinition>(), It.IsAny<CancellationToken>()))
+            .Callback<EventDefinition, CancellationToken>((e, _) => captured = e)
+            .ReturnsAsync(persistedEntity);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        captured.Should().NotBeNull();
+        captured!.FoulImpact.Should().Be(FoulImpact.DisqualificationWithSub);
+        captured.PenaltyDurationSeconds.Should().Be(18);
+
+        result.FoulImpact.Should().Be(FoulImpact.DisqualificationNoSub);
+        result.PenaltyDurationSeconds.Should().Be(300);
+    }
+
+    /// <summary>
+    /// Verifies that the command defaults to <see cref="FoulImpact.None"/> with no penalty duration, and that
+    /// the request-to-command mapping preserves both fields.
+    /// </summary>
+    [Fact]
+    public void ToCommand_ShouldPreserveFoulImpactAndPenaltyDuration()
+    {
+        // Arrange
+        var request = new TTA.BusinessLogic.Features.EventDefinitions.DTOs.CreateCustomEventDefinitionRequest(
+            Guid.NewGuid(), "Custom", "C", false,
+            FoulImpact: FoulImpact.DisqualificationNoSub, PenaltyDurationSeconds: 300);
+
+        // Act
+        var command = request.ToCommand(Guid.NewGuid(), "auth0|user123");
+
+        // Assert
+        command.FoulImpact.Should().Be(FoulImpact.DisqualificationNoSub);
+        command.PenaltyDurationSeconds.Should().Be(300);
+        new CreateCustomEventDefinitionCommand(Guid.NewGuid(), Guid.NewGuid(), "u", "n", "s", true)
+            .FoulImpact.Should().Be(FoulImpact.None);
     }
 }

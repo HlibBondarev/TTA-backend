@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using FluentAssertions;
 using System.Data.Common;
+using TTA.DataAccess.Enums;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
@@ -1185,6 +1186,310 @@ public class EventDefinitionRepositoryTests : BaseIntegrationTest
         // Assert
         await act.Should().ThrowAsync<Npgsql.PostgresException>()
             .WithMessage("*Modifying existing custom event definition attributes is prohibited.*");
+    }
+
+    #endregion
+
+    #region FoulImpact & Penalty Duration Tests
+
+    private static EventDefinition BuildFoulDefinition(
+        Guid sportId, string userId, FoulImpact foulImpact, int? penaltyDurationSeconds, Guid? id = null, string name = "Custom Red Card")
+    {
+        return new EventDefinition
+        {
+            Id = id ?? Guid.NewGuid(),
+            SportId = sportId,
+            OwnerId = userId,
+            Name = name,
+            ShortName = "CRC",
+            IsPositive = false,
+            IsShot = false,
+            FoulImpact = foulImpact,
+            PenaltyDurationSeconds = penaltyDurationSeconds,
+            CreatedAt = DateTime.UtcNow
+        };
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="EventDefinitionRepository.UpsertCustomAsync"/> persists and returns
+    /// <c>FoulImpact</c> and <c>PenaltyDurationSeconds</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(FoulImpact.None, null)]
+    [InlineData(FoulImpact.PersonalFoul, 18)]
+    [InlineData(FoulImpact.DisqualificationWithSub, 18)]
+    [InlineData(FoulImpact.DisqualificationNoSub, 300)]
+    [InlineData(FoulImpact.DisqualificationNoSub, null)]
+    public async Task UpsertCustomAsync_ShouldPersistFoulImpactAndPenaltyDuration(FoulImpact foulImpact, int? penaltySeconds)
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var definition = BuildFoulDefinition(sportId, userId, foulImpact, penaltySeconds);
+
+        // Act
+        var created = await _repository.UpsertCustomAsync(definition);
+
+        // Assert
+        created.Should().NotBeNull();
+        created!.FoulImpact.Should().Be(foulImpact);
+        created.PenaltyDurationSeconds.Should().Be(penaltySeconds);
+
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+        var stored = await conn.QuerySingleAsync<(int FoulImpact, int? Penalty)>(
+            "SELECT foulimpact AS FoulImpact, penaltydurationseconds AS Penalty FROM public.eventdefinitions WHERE id = @id",
+            new { id = definition.Id });
+        stored.FoulImpact.Should().Be((int)foulImpact);
+        stored.Penalty.Should().Be(penaltySeconds);
+    }
+
+    /// <summary>
+    /// Verifies that calling <c>public.upsert_custom_event_definition</c> directly with only its original
+    /// eight arguments defaults <c>foulimpact</c> to <c>0</c> (<see cref="FoulImpact.None"/>) and
+    /// <c>penaltydurationseconds</c> to <c>NULL</c>.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomEventDefinition_ShouldDefaultFoulColumns_WhenCalledWithOriginalEightArguments()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var id = Guid.NewGuid();
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // Act
+        var created = await conn.QuerySingleAsync<EventDefinition>(@"
+            SELECT * FROM public.upsert_custom_event_definition(
+                @p_id,
+                @p_sport_id,
+                @p_owner_id,
+                @p_name,
+                @p_short_name,
+                @p_is_positive,
+                @p_is_shot,
+                @p_score
+            )",
+            new
+            {
+                p_id = id,
+                p_sport_id = sportId,
+                p_owner_id = userId,
+                p_name = "Plain Action",
+                p_short_name = "PA",
+                p_is_positive = true,
+                p_is_shot = false,
+                p_score = 0
+            });
+
+        // Assert
+        created.FoulImpact.Should().Be(FoulImpact.None);
+        created.PenaltyDurationSeconds.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Verifies that the stored function rejects an out-of-range foul impact with a business rule error (P0001).
+    /// </summary>
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(4)]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenFoulImpactIsOutOfRange(int rawValue)
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var definition = BuildFoulDefinition(sportId, userId, (FoulImpact)rawValue, null);
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(definition);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .Where(ex => ex.SqlState == "P0001")
+            .WithMessage("*Foul impact must be between 0 and 3.*");
+    }
+
+    /// <summary>
+    /// Verifies that the stored function rejects a zero or negative penalty duration with a business rule error (P0001).
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenPenaltyDurationIsNotPositive(int seconds)
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var definition = BuildFoulDefinition(sportId, userId, FoulImpact.DisqualificationWithSub, seconds);
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(definition);
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .Where(ex => ex.SqlState == "P0001")
+            .WithMessage("*Penalty duration must be greater than zero.*");
+    }
+
+    /// <summary>
+    /// Verifies that re-posting an existing custom definition with identical foul attributes is idempotent.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldBeIdempotent_WhenRePostingSameFoulAttributes()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var id = Guid.NewGuid();
+        await _repository.UpsertCustomAsync(BuildFoulDefinition(sportId, userId, FoulImpact.PersonalFoul, 18, id));
+
+        // Act
+        var result = await _repository.UpsertCustomAsync(BuildFoulDefinition(sportId, userId, FoulImpact.PersonalFoul, 18, id));
+
+        // Assert
+        result!.FoulImpact.Should().Be(FoulImpact.PersonalFoul);
+        result.PenaltyDurationSeconds.Should().Be(18);
+    }
+
+    /// <summary>
+    /// Verifies that <c>FoulImpact</c> is an immutable attribute of an existing custom definition.
+    /// </summary>
+    [Fact]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenChangingFoulImpactOfExistingDefinition()
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var id = Guid.NewGuid();
+        await _repository.UpsertCustomAsync(BuildFoulDefinition(sportId, userId, FoulImpact.PersonalFoul, 18, id));
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(
+            BuildFoulDefinition(sportId, userId, FoulImpact.DisqualificationNoSub, 18, id));
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*Modifying existing custom event definition attributes is prohibited.*");
+    }
+
+    /// <summary>
+    /// Verifies that <c>PenaltyDurationSeconds</c> is an immutable attribute of an existing custom definition,
+    /// including changes from a value to <c>NULL</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(300)]
+    [InlineData(null)]
+    public async Task UpsertCustomAsync_ShouldThrowException_WhenChangingPenaltyDurationOfExistingDefinition(int? newSeconds)
+    {
+        // Arrange
+        var (_, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var id = Guid.NewGuid();
+        await _repository.UpsertCustomAsync(BuildFoulDefinition(sportId, userId, FoulImpact.DisqualificationWithSub, 18, id));
+
+        // Act
+        Func<Task> act = async () => await _repository.UpsertCustomAsync(
+            BuildFoulDefinition(sportId, userId, FoulImpact.DisqualificationWithSub, newSeconds, id));
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>()
+            .WithMessage("*Modifying existing custom event definition attributes is prohibited.*");
+    }
+
+    /// <summary>
+    /// Verifies that the table CHECK constraints reject invalid <c>foulimpact</c> and <c>penaltydurationseconds</c> values.
+    /// </summary>
+    [Theory]
+    [InlineData(4, null)]
+    [InlineData(-1, null)]
+    [InlineData(0, 0)]
+    [InlineData(1, -18)]
+    public async Task Table_ShouldRejectInvalidFoulColumns_WithCheckViolation(int foulImpact, int? penaltySeconds)
+    {
+        // Arrange
+        var (_, sportId, _, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // Act
+        Func<Task> act = async () => await conn.ExecuteAsync(@"
+            INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, foulimpact, penaltydurationseconds, createdat)
+            VALUES (@id, @sportId, NULL, 'Invalid Foul', 'IF', false, @foulImpact, @penalty, NOW())",
+            new { id = Guid.NewGuid(), sportId, foulImpact, penalty = penaltySeconds });
+
+        // Assert
+        await act.Should().ThrowAsync<Npgsql.PostgresException>().Where(ex => ex.SqlState == "23514");
+    }
+
+    /// <summary>
+    /// Verifies that system definitions inserted without the new columns default to <c>foulimpact = 0</c> and a NULL duration.
+    /// </summary>
+    [Fact]
+    public async Task Table_ShouldDefaultFoulColumns_WhenNotSpecifiedOnInsert()
+    {
+        // Arrange
+        var (_, _, _, definitionIds) = await SeedFullEnvironmentAsync(createSystemDefs: true);
+        using var conn = Fixture.ConnectionFactory.CreateConnection();
+
+        // Act
+        var rows = (await conn.QueryAsync<(int FoulImpact, int? Penalty)>(
+            "SELECT foulimpact AS FoulImpact, penaltydurationseconds AS Penalty FROM public.eventdefinitions WHERE id = ANY(@ids)",
+            new { ids = definitionIds.ToArray() })).ToList();
+
+        // Assert
+        rows.Should().HaveCount(definitionIds.Count);
+        rows.Should().OnlyContain(r => r.FoulImpact == 0 && r.Penalty == null);
+    }
+
+    /// <summary>
+    /// Verifies that match hydration (default system branch) returns <c>FoulImpact</c> and <c>PenaltyDurationSeconds</c>.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchEventDefinitionsAsync_ShouldReturnFoulAttributes_ForSystemDefinitions()
+    {
+        // Arrange
+        var (matchId, sportId, _, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var redCardId = Guid.NewGuid();
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.eventdefinitions (id, sportid, ownerid, name, shortname, ispositive, foulimpact, penaltydurationseconds, createdat)
+                VALUES (@id, @sportId, NULL, 'Red Card (No Substitution)', 'RCN', false, 3, 300, NOW())",
+                new { id = redCardId, sportId });
+        }
+
+        // Act
+        var result = (await _repository.GetMatchEventDefinitionsAsync(matchId)).ToList();
+
+        // Assert
+        var projection = result.Should().ContainSingle(d => d.Id == redCardId).Subject;
+        projection.FoulImpact.Should().Be(FoulImpact.DisqualificationNoSub);
+        projection.PenaltyDurationSeconds.Should().Be(300);
+    }
+
+    /// <summary>
+    /// Verifies that match hydration (user preset branch) and the available-definitions query return
+    /// <c>FoulImpact</c> and <c>PenaltyDurationSeconds</c> for custom definitions.
+    /// </summary>
+    [Fact]
+    public async Task GetMatchEventDefinitionsAndAvailableForUser_ShouldReturnFoulAttributes_ForCustomDefinitions()
+    {
+        // Arrange
+        var (matchId, sportId, userId, _) = await SeedFullEnvironmentAsync(createSystemDefs: false);
+        var definition = BuildFoulDefinition(sportId, userId, FoulImpact.DisqualificationWithSub, 18);
+        await _repository.UpsertCustomAsync(definition);
+
+        using (var conn = Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO public.usereventpresets (userid, eventdefinitionid, sortorder, createdat)
+                VALUES (@userId, @defId, 0, NOW())",
+                new { userId, defId = definition.Id });
+        }
+
+        // Act
+        var matchDefinitions = (await _repository.GetMatchEventDefinitionsAsync(matchId, userId)).ToList();
+        var availableDefinitions = (await _repository.GetAvailableForUserAsync(userId, sportId)).ToList();
+
+        // Assert
+        var fromMatch = matchDefinitions.Should().ContainSingle(d => d.Id == definition.Id).Subject;
+        fromMatch.FoulImpact.Should().Be(FoulImpact.DisqualificationWithSub);
+        fromMatch.PenaltyDurationSeconds.Should().Be(18);
+
+        var fromAvailable = availableDefinitions.Should().ContainSingle(d => d.Id == definition.Id).Subject;
+        fromAvailable.FoulImpact.Should().Be(FoulImpact.DisqualificationWithSub);
+        fromAvailable.PenaltyDurationSeconds.Should().Be(18);
     }
 
     #endregion

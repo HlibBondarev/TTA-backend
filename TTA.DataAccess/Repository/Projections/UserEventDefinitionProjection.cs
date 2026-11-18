@@ -1,4 +1,6 @@
-﻿namespace TTA.DataAccess.Repository.Projections;
+﻿using TTA.DataAccess.Enums;
+
+namespace TTA.DataAccess.Repository.Projections;
 
 /// <summary>
 /// Data transfer object representing an event definition enriched with user preset state and display order.
@@ -10,6 +12,8 @@
 /// <param name="IsPositive">Indicates whether the event action has a positive statistical impact.</param>
 /// <param name="IsShot">Indicates whether the event type requires goal shot target location tracking.</param>
 /// <param name="Score">The score points awarded for this event action.</param>
+/// <param name="FoulImpact">The disciplinary impact of the event on the player.</param>
+/// <param name="PenaltyDurationSeconds">The team penalty duration in seconds, or null when not time-limited.</param>
 /// <param name="IsCustom">Indicates whether this definition is custom user-owned.</param>
 /// <param name="IsEnabled">Indicates whether this definition is actively enabled in the user preset.</param>
 /// <param name="SortOrder">The display layout sort order index.</param>
@@ -21,6 +25,8 @@ public record UserEventDefinitionProjection(
     bool IsPositive,
     bool IsShot,
     int Score,
+    FoulImpact FoulImpact,
+    int? PenaltyDurationSeconds,
     bool IsCustom,
     bool IsEnabled,
     int SortOrder);

@@ -3,9 +3,11 @@ using FluentAssertions;
 using Npgsql;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using TTA.BusinessLogic.Features.EventDefinitions.DTOs;
 using TTA.BusinessLogic.Features.SportConfigurations.DTOs;
 using TTA.BusinessLogic.Features.Sports.DTOs;
+using TTA.DataAccess.Enums;
 using TTA.Tests.Integration.Infrastructure;
 using Xunit.Abstractions;
 
@@ -95,7 +97,7 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<SportConfigurationResponse>>();
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<SportConfigurationResponse>>(JsonOptions);
         result.Should().NotBeNull();
 
         var configs = result!.ToList();
@@ -105,6 +107,36 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         configs[0].PeriodsCount.Should().Be(2);
         configs[0].PeriodDurationMinutes.Should().Be(45);
         configs[0].FieldSize.Should().Be("Standard");
+        configs[0].MaxPersonalFouls.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Verifies that <c>GET /api/sports/{sportId}/configurations</c> returns <c>MaxPersonalFouls</c>
+    /// when configured on the sport configuration record.
+    /// </summary>
+    [Fact]
+    public async Task GetConfigurationsBySportId_ShouldReturnMaxPersonalFouls_WhenConfigured()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(sportId, $"WaterPolo_{Guid.NewGuid():N}", "WP3", configId);
+
+        using (var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
+        {
+            await conn.OpenAsync();
+            await conn.ExecuteAsync(
+                "UPDATE public.sportconfigurations SET maxpersonalfouls = 3 WHERE id = @id",
+                new { id = configId });
+        }
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{sportId}/configurations");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var configs = (await response.Content.ReadFromJsonAsync<IEnumerable<SportConfigurationResponse>>(JsonOptions))!.ToList();
+        configs.Should().ContainSingle().Which.MaxPersonalFouls.Should().Be(3);
     }
 
     /// <summary>
@@ -150,7 +182,7 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>();
+        var result = await response.Content.ReadFromJsonAsync<IEnumerable<EventDefinitionResponse>>(JsonOptions);
         result.Should().NotBeNull();
 
         var definitions = result!.ToList();
@@ -161,6 +193,8 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         sysDef!.Name.Should().Be("Goal");
         sysDef.IsShot.Should().BeTrue();
         sysDef.Score.Should().Be(1);
+        sysDef.FoulImpact.Should().Be(FoulImpact.None);
+        sysDef.PenaltyDurationSeconds.Should().BeNull();
         sysDef.IsCustom.Should().BeFalse();
 
         var customDef = definitions.FirstOrDefault(d => d.Id == customDefId);
@@ -168,6 +202,8 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         customDef!.Name.Should().Be("Custom Assist");
         customDef.IsShot.Should().BeFalse();
         customDef.Score.Should().Be(0);
+        customDef.FoulImpact.Should().Be(FoulImpact.None);
+        customDef.PenaltyDurationSeconds.Should().BeNull();
         customDef.IsCustom.Should().BeTrue();
     }
 
@@ -250,7 +286,7 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
-        var result = await response.Content.ReadFromJsonAsync<EventDefinitionResponse>();
+        var result = await response.Content.ReadFromJsonAsync<EventDefinitionResponse>(JsonOptions);
 
         result.Should().NotBeNull();
         result!.Id.Should().Be(request.Id);
@@ -260,6 +296,8 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         result.IsPositive.Should().BeTrue();
         result.IsShot.Should().BeTrue();
         result.Score.Should().Be(2);
+        result.FoulImpact.Should().Be(FoulImpact.None);
+        result.PenaltyDurationSeconds.Should().BeNull();
         result.IsCustom.Should().BeTrue();
         result.IsEnabled.Should().BeFalse();
 
@@ -277,6 +315,59 @@ public class SportsControllerTests(DatabaseFixture fixture, ITestOutputHelper ou
         dbRecord.IsShot.Should().BeTrue();
         dbRecord.Score.Should().Be(2);
         dbRecord.OwnerId.Should().Be(TestUserId);
+    }
+
+    /// <summary>
+    /// Verifies that <c>POST /api/sports/{sportId}/event-definitions/custom</c> accepts string-serialized
+    /// <c>FoulImpact</c>, returns it as a JSON string in the HTTP response, and persists both
+    /// <c>FoulImpact</c> and <c>PenaltyDurationSeconds</c> to the database.
+    /// </summary>
+    [Fact]
+    public async Task CreateCustomEventDefinition_ShouldPersistDisciplinaryAttributes_WhenProvided()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configId = Guid.NewGuid();
+        await SeedSportWithConfigAsync(sportId, $"Sport_{Guid.NewGuid():N}", "SPT", configId);
+        await SeedUserAsync(TestUserId, "creator@test.com", "Creator User");
+
+        var request = new CreateCustomEventDefinitionRequest(
+            Id: Guid.NewGuid(),
+            Name: "Custom Exclusion",
+            ShortName: "CEX",
+            IsPositive: false,
+            IsShot: false,
+            Score: 0,
+            FoulImpact: FoulImpact.DisqualificationWithSub,
+            PenaltyDurationSeconds: 18
+        );
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/{sportId}/event-definitions/custom", request, JsonOptions);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var rawJson = await response.Content.ReadAsStringAsync();
+        using (var doc = JsonDocument.Parse(rawJson))
+        {
+            var foulImpactElement = doc.RootElement.GetProperty("foulImpact");
+            foulImpactElement.ValueKind.Should().Be(JsonValueKind.String);
+            foulImpactElement.GetString().Should().Be(nameof(FoulImpact.DisqualificationWithSub));
+        }
+
+        var result = JsonSerializer.Deserialize<EventDefinitionResponse>(rawJson, JsonOptions);
+        result.Should().NotBeNull();
+        result!.FoulImpact.Should().Be(FoulImpact.DisqualificationWithSub);
+        result.PenaltyDurationSeconds.Should().Be(18);
+
+        using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+        await conn.OpenAsync();
+        var dbRecord = await conn.QuerySingleAsync<(int FoulImpact, int? PenaltyDurationSeconds)>(
+            "SELECT foulimpact AS FoulImpact, penaltydurationseconds AS PenaltyDurationSeconds FROM public.eventdefinitions WHERE id = @id",
+            new { id = request.Id });
+        dbRecord.FoulImpact.Should().Be((int)FoulImpact.DisqualificationWithSub);
+        dbRecord.PenaltyDurationSeconds.Should().Be(18);
     }
 
     /// <summary>
