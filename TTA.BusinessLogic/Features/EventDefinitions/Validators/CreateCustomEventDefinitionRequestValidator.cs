@@ -32,5 +32,14 @@ public class CreateCustomEventDefinitionRequestValidator : AbstractValidator<Cre
         RuleFor(x => x.Score)
             .GreaterThanOrEqualTo(0)
             .WithMessage("Score must be non-negative.");
+
+        RuleFor(x => x.FoulImpact)
+            .IsInEnum()
+            .WithMessage("Foul impact must be a valid value.");
+
+        RuleFor(x => x.PenaltyDurationSeconds)
+            .GreaterThan(0)
+            .When(x => x.PenaltyDurationSeconds.HasValue)
+            .WithMessage("Penalty duration must be greater than zero.");
     }
 }

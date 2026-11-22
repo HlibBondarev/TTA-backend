@@ -109,4 +109,30 @@ public class GetSportConfigurationsBySportIdHandlerTests
 
         _sportConfigurationRepoMock.Verify(x => x.GetBySportIdAsync(sportId, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    /// <summary>
+    /// Verifies that the handler maps <c>MaxPersonalFouls</c> (including a null value) into the response DTOs.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ConfigurationsExist_ShouldMapMaxPersonalFouls()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var configs = new List<SportConfiguration>
+        {
+            new() { Id = Guid.NewGuid(), SportId = sportId, MaxPersonalFouls = 3 },
+            new() { Id = Guid.NewGuid(), SportId = sportId, MaxPersonalFouls = null }
+        };
+
+        _sportConfigurationRepoMock
+            .Setup(x => x.GetBySportIdAsync(sportId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(configs);
+
+        // Act
+        var result = (await _handler.Handle(new GetSportConfigurationsBySportIdQuery(sportId), CancellationToken.None)).ToList();
+
+        // Assert
+        Assert.Equal(3, result[0].MaxPersonalFouls);
+        Assert.Null(result[1].MaxPersonalFouls);
+    }
 }

@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using FluentAssertions;
 using System.Data.Common;
+using TTA.DataAccess.Enums;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Repository;
 using TTA.Tests.Integration.Infrastructure;
@@ -278,6 +279,47 @@ public class GameEventRepositoryTests : BaseIntegrationTest
         persisted.LocationY.Should().Be(28.25m, "general action location must be preserved");
         persisted.ShotLocationX.Should().BeNull("shotlocationx must be masked to NULL when isshot = false");
         persisted.ShotLocationY.Should().BeNull("shotlocationy must be masked to NULL when isshot = false");
+    }
+
+    #endregion
+
+    #region FoulImpact Tests
+
+    /// <summary>
+    /// Verifies that both detailed game event queries and match timelines expose the event definition's
+    /// <c>FoulImpact</c> and <c>PenaltyDurationSeconds</c>, preserving defaults when unset.
+    /// </summary>
+    [Theory]
+    [InlineData(FoulImpact.None, null)]
+    [InlineData(FoulImpact.PersonalFoul, 18)]
+    public async Task GetByIdWithDetailsAndMatchEvents_ShouldReturnFoulImpactAndPenaltyDuration_FromEventDefinition(
+        FoulImpact expectedImpact, int? expectedDuration)
+    {
+        // Arrange
+        var context = await SeedEventEnvironmentAsync();
+        if (expectedImpact != FoulImpact.None || expectedDuration.HasValue)
+        {
+            using var conn = Fixture.ConnectionFactory.CreateConnection();
+            await conn.ExecuteAsync(
+                "UPDATE public.eventdefinitions SET foulimpact = @impact, penaltydurationseconds = @duration WHERE id = @id",
+                new { id = context.DefinitionId, impact = (int)expectedImpact, duration = expectedDuration });
+        }
+
+        var gameEvent = CreateEventModel(context.LineupId, context.DefinitionId);
+        await _repository.UpsertAsync([gameEvent]);
+
+        // Act
+        var detailed = await _repository.GetByIdWithDetailsAsync(gameEvent.Id);
+        var timeline = (await _repository.GetMatchEventsAsync(context.MatchId)).ToList();
+
+        // Assert
+        detailed.Should().NotBeNull();
+        detailed!.FoulImpact.Should().Be(expectedImpact);
+        detailed.PenaltyDurationSeconds.Should().Be(expectedDuration);
+
+        var fromTimeline = timeline.Should().ContainSingle(e => e.Id == gameEvent.Id).Subject;
+        fromTimeline.FoulImpact.Should().Be(expectedImpact);
+        fromTimeline.PenaltyDurationSeconds.Should().Be(expectedDuration);
     }
 
     #endregion

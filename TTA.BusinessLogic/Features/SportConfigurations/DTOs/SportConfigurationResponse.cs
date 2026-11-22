@@ -16,6 +16,7 @@
 /// <param name="FieldLength">The exact physical length of the playing field in meters.</param>
 /// <param name="FieldWidth">The exact physical width of the playing field in meters.</param>
 /// <param name="ShotMap">The optional vector SVG markup for the goal frame target area layout.</param>
+/// <param name="MaxPersonalFouls">The number of personal fouls after which a player is disqualified, or null when unlimited.</param>
 public record SportConfigurationResponse(
     Guid Id,
     Guid SportId,
@@ -29,4 +30,5 @@ public record SportConfigurationResponse(
     string Playground,
     decimal FieldLength,
     decimal FieldWidth,
-    string? ShotMap = null);
+    string? ShotMap = null,
+    int? MaxPersonalFouls = null);

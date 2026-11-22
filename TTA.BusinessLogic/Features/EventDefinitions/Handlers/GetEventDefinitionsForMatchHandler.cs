@@ -43,18 +43,7 @@ public class GetEventDefinitionsForMatchHandler(
 
         var projections = await _eventDefinitionRepository.GetMatchEventDefinitionsAsync(request.MatchId, request.UserId, cancellationToken);
 
-        var response = projections.Select(p => new EventDefinitionResponse(
-            Id: p.Id,
-            SportId: p.SportId,
-            Name: p.Name,
-            ShortName: p.ShortName,
-            IsPositive: p.IsPositive,
-            IsShot: p.IsShot,
-            Score: p.Score,
-            IsCustom: p.IsCustom,
-            IsEnabled: p.IsEnabled,
-            SortOrder: p.SortOrder
-        )).ToList();
+        var response = projections.Select(p => p.ToResponse()).ToList();
 
         _logger.LogInformation("Successfully retrieved {Count} event definitions for Match {MatchId}.", response.Count, request.MatchId);
 

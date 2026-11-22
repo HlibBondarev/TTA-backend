@@ -1,9 +1,14 @@
 ﻿using Dapper;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.OpenApi.Any;
+using Microsoft.OpenApi.Models;
 using Npgsql;
+using Swashbuckle.AspNetCore.Swagger;
 using System.Net;
-using System.Net.Http.Json;
+using System.Text.Json;
 using TTA.BusinessLogic.Features.GameEvents.DTOs;
+using TTA.DataAccess.Enums;
 using TTA.Tests.Integration.Infrastructure;
 using Xunit.Abstractions;
 
@@ -22,7 +27,8 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
 
     /// <summary>
     /// Verifies that an existing game event can be retrieved and correctly mapped to a <see cref="GameEventResponse"/>,
-    /// including spatial field coordinates and shot frame coordinates.
+    /// including spatial field coordinates, shot frame coordinates, string-serialized <see cref="FoulImpact"/>,
+    /// and OpenAPI schema enum values.
     /// </summary>
     [Fact]
     public async Task GetById_ShouldReturnOk_WhenEventExists()
@@ -36,16 +42,89 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var result = await response.Content.ReadFromJsonAsync<GameEventResponse>();
+        var rawJson = await response.Content.ReadAsStringAsync();
+        using (var doc = JsonDocument.Parse(rawJson))
+        {
+            var foulImpactElement = doc.RootElement.GetProperty("foulImpact");
+            foulImpactElement.ValueKind.Should().Be(JsonValueKind.String);
+            foulImpactElement.GetString().Should().Be("PersonalFoul");
+        }
+
+        var result = JsonSerializer.Deserialize<GameEventResponse>(rawJson, JsonOptions);
         result.Should().NotBeNull();
         result!.Id.Should().Be(context.EventId);
-        result.EventName.Should().Be("Goal");
-        result.Score.Should().Be(1);
+        result.EventName.Should().Be("Exclusion");
+        result.Score.Should().Be(0);
+        result.FoulImpact.Should().Be(FoulImpact.PersonalFoul);
+        result.PenaltyDurationSeconds.Should().Be(18);
         result.PlayerNumber.Should().Be(10);
         result.LocationX.Should().Be(25.50m);
         result.LocationY.Should().Be(60.00m);
         result.ShotLocationX.Should().Be(15.25m);
         result.ShotLocationY.Should().Be(80.50m);
+
+        var swaggerProvider = Factory.Services.GetRequiredService<ISwaggerProvider>();
+        var swaggerDoc = swaggerProvider.GetSwagger("v1");
+
+        var getOperation = swaggerDoc.Paths["/api/GameEvents/{id}"].Operations[OperationType.Get];
+        var responseSchema = getOperation.Responses["200"].Content["application/json"].Schema;
+        var resolvedResponseSchema = responseSchema.Reference != null
+            ? swaggerDoc.Components.Schemas[responseSchema.Reference.Id]
+            : responseSchema;
+
+        var foulImpactPropertySchema = resolvedResponseSchema.Properties["foulImpact"];
+        var resolvedFoulImpactSchema = foulImpactPropertySchema.Reference != null
+            ? swaggerDoc.Components.Schemas[foulImpactPropertySchema.Reference.Id]
+            : foulImpactPropertySchema.AllOf.FirstOrDefault()?.Reference is { } allOfRef
+                ? swaggerDoc.Components.Schemas[allOfRef.Id]
+                : foulImpactPropertySchema;
+
+        resolvedFoulImpactSchema.Type.Should().Be("string");
+        resolvedFoulImpactSchema.Enum.Should().AllBeOfType<OpenApiString>();
+        resolvedFoulImpactSchema.Enum
+            .Cast<OpenApiString>()
+            .Select(v => v.Value)
+            .Should().BeEquivalentTo(
+            [
+                nameof(FoulImpact.None),
+                nameof(FoulImpact.PersonalFoul),
+                nameof(FoulImpact.DisqualificationWithSub),
+                nameof(FoulImpact.DisqualificationNoSub)
+            ],
+            options => options.WithStrictOrdering());
+    }
+
+    /// <summary>
+    /// Verifies that a goal event returns a non-zero <see cref="GameEventResponse.Score"/> of 1 end to end.
+    /// </summary>
+    [Fact]
+    public async Task GetById_ShouldReturnOkWithScore_WhenGoalEventExists()
+    {
+        // Arrange
+        var context = await SetupGameEventContextAsync(
+            TestUserId,
+            eventName: "Goal",
+            eventShortName: "G",
+            isPositive: true,
+            score: 1,
+            foulImpact: FoulImpact.None,
+            penaltyDurationSeconds: null);
+
+        // Act
+        var response = await Client.GetAsync($"{BaseUrl}/{context.EventId}");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var rawJson = await response.Content.ReadAsStringAsync();
+        var result = JsonSerializer.Deserialize<GameEventResponse>(rawJson, JsonOptions);
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(context.EventId);
+        result.EventName.Should().Be("Goal");
+        result.IsPositive.Should().BeTrue();
+        result.Score.Should().Be(1);
+        result.FoulImpact.Should().Be(FoulImpact.None);
+        result.PenaltyDurationSeconds.Should().BeNull();
     }
 
     /// <summary>
@@ -136,8 +215,21 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
     /// to satisfy foreign key constraints and updated Sport table schema.
     /// </summary>
     /// <param name="ownerId">The unique identifier of the tournament owner.</param>
+    /// <param name="eventName">The name of the seeded event definition.</param>
+    /// <param name="eventShortName">The short name of the seeded event definition.</param>
+    /// <param name="isPositive">Indicates whether the seeded event definition is positive.</param>
+    /// <param name="score">The point value of the seeded event definition.</param>
+    /// <param name="foulImpact">The disciplinary foul impact of the seeded event definition.</param>
+    /// <param name="penaltyDurationSeconds">The team penalty duration in seconds, if applicable.</param>
     /// <returns>A tuple containing the IDs of the created entities (TournamentId, MatchId, EventId).</returns>
-    private async Task<(Guid TournamentId, Guid MatchId, Guid EventId)> SetupGameEventContextAsync(string ownerId)
+    private async Task<(Guid TournamentId, Guid MatchId, Guid EventId)> SetupGameEventContextAsync(
+        string ownerId,
+        string eventName = "Exclusion",
+        string eventShortName = "EX",
+        bool isPositive = false,
+        int score = 0,
+        FoulImpact foulImpact = FoulImpact.PersonalFoul,
+        int? penaltyDurationSeconds = 18)
     {
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
@@ -232,8 +324,19 @@ public class GameEventsControllerTests(DatabaseFixture fixture, ITestOutputHelpe
 
         // 9. Event Definition & Game Event (seeding LocationX, LocationY, ShotLocationX, ShotLocationY)
         var defId = Guid.NewGuid();
-        await conn.ExecuteAsync(@"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, score, createdat) 
-            VALUES (@id, @sId, 'Goal', 'G', true, true, 1, NOW())", new { id = defId, sId = sportId }, transaction: transaction);
+        await conn.ExecuteAsync(@"INSERT INTO public.eventdefinitions (id, sportid, name, shortname, ispositive, isshot, score, foulimpact, penaltydurationseconds, createdat) 
+            VALUES (@id, @sId, @name, @shortName, @isPositive, true, @score, @foulImpact, @penaltyDurationSeconds, NOW())",
+            new
+            {
+                id = defId,
+                sId = sportId,
+                name = eventName,
+                shortName = eventShortName,
+                isPositive,
+                score,
+                foulImpact = (int)foulImpact,
+                penaltyDurationSeconds
+            }, transaction: transaction);
 
         var eventId = Guid.NewGuid();
         await conn.ExecuteAsync(@"
