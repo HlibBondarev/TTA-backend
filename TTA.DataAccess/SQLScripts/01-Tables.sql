@@ -1,4 +1,4 @@
-﻿CREATE SCHEMA IF NOT EXISTS auth;
+CREATE SCHEMA IF NOT EXISTS auth;
 
 -- ==========================================
 -- 1. GEOGRAPHY & USERS
@@ -66,6 +66,7 @@ CREATE TABLE sportconfigurations (
     shotmap TEXT NULL,
     fieldlength NUMERIC(5,2) NOT NULL,
     fieldwidth NUMERIC(5,2) NOT NULL,
+    maxpersonalfouls INT NULL CHECK (maxpersonalfouls IS NULL OR maxpersonalfouls > 0),
     UNIQUE (sportid, id)
 );
 
@@ -264,6 +265,8 @@ CREATE TABLE eventdefinitions (
     isshot BOOLEAN NOT NULL DEFAULT FALSE,
     score INT NOT NULL DEFAULT 0 CHECK (score >= 0),
     defaultposition INT NULL,
+    foulimpact INT NOT NULL DEFAULT 0 CHECK (foulimpact BETWEEN 0 AND 3),
+    penaltydurationseconds INT NULL CHECK (penaltydurationseconds IS NULL OR penaltydurationseconds > 0),
     issoftdeleted BOOLEAN NOT NULL DEFAULT FALSE,
     createdat TIMESTAMPTZ NOT NULL
 );

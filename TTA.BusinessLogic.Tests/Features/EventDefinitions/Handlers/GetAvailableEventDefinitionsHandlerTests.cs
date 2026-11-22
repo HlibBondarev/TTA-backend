@@ -1,4 +1,5 @@
-﻿using FluentAssertions;
+﻿using TTA.DataAccess.Enums;
+using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
 using TTA.BusinessLogic.Features.EventDefinitions.Handlers;
@@ -47,6 +48,8 @@ public class GetAvailableEventDefinitionsHandlerTests
                 IsPositive: true,
                 IsShot: false,
                 Score: 0,
+                FoulImpact: FoulImpact.None,
+                PenaltyDurationSeconds: null,
                 IsCustom: false,
                 IsEnabled: true,
                 SortOrder: 1
@@ -59,6 +62,8 @@ public class GetAvailableEventDefinitionsHandlerTests
                 IsPositive: true,
                 IsShot: true,
                 Score: 1,
+                FoulImpact: FoulImpact.None,
+                PenaltyDurationSeconds: null,
                 IsCustom: true,
                 IsEnabled: false,
                 SortOrder: 2
@@ -119,11 +124,11 @@ public class GetAvailableEventDefinitionsHandlerTests
 
         var nonShotProjection = new UserEventDefinitionProjection(
             Id: Guid.NewGuid(), SportId: sportId, Name: "Exclusion", ShortName: "E",
-            IsPositive: false, IsShot: false, Score: 0, IsCustom: false, IsEnabled: true, SortOrder: 1);
+            IsPositive: false, IsShot: false, Score: 0, FoulImpact: FoulImpact.None, PenaltyDurationSeconds: null, IsCustom: false, IsEnabled: true, SortOrder: 1);
 
         var shotProjection = new UserEventDefinitionProjection(
             Id: Guid.NewGuid(), SportId: sportId, Name: "Goal", ShortName: "G",
-            IsPositive: true, IsShot: true, Score: 1, IsCustom: false, IsEnabled: true, SortOrder: 2);
+            IsPositive: true, IsShot: true, Score: 1, FoulImpact: FoulImpact.None, PenaltyDurationSeconds: null, IsCustom: false, IsEnabled: true, SortOrder: 2);
 
         _repositoryMock
             .Setup(r => r.GetAvailableForUserAsync(userId, sportId, It.IsAny<CancellationToken>()))
@@ -157,9 +162,9 @@ public class GetAvailableEventDefinitionsHandlerTests
 
         var mockProjections = new List<UserEventDefinitionProjection>
         {
-            new(id1, sportId, "Action 1", "A1", true, false, 0, false, true, 1),
-            new(id2, sportId, "Action 2", "A2", true, true, 1, false, true, 2),
-            new(id3, sportId, "Action 3", "A3", false, false, 0, false, false, 3)
+            new(id1, sportId, "Action 1", "A1", true, false, 0, FoulImpact.None, null, false, true, 1),
+            new(id2, sportId, "Action 2", "A2", true, true, 1, FoulImpact.None, null, false, true, 2),
+            new(id3, sportId, "Action 3", "A3", false, false, 0, FoulImpact.None, null, false, false, 3)
         };
 
         _repositoryMock
@@ -228,5 +233,33 @@ public class GetAvailableEventDefinitionsHandlerTests
 
         // Assert
         _repositoryMock.Verify(r => r.GetAvailableForUserAsync(userId, sportId, cancellationToken), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="GetAvailableEventDefinitionsHandler.Handle"/> maps <c>FoulImpact</c> and
+    /// <c>PenaltyDurationSeconds</c> from repository projections into response DTOs.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldMapFoulImpactAndPenaltyDuration_WhenProjectionsContainDisciplinaryData()
+    {
+        // Arrange
+        var sportId = Guid.NewGuid();
+        var projections = new List<UserEventDefinitionProjection>
+        {
+            new(Guid.NewGuid(), sportId, "Exclusion", "E", false, false, 0, FoulImpact.PersonalFoul, 18, false, true, 1),
+            new(Guid.NewGuid(), sportId, "Red Card (No Substitution)", "RCN", false, false, 0, FoulImpact.DisqualificationNoSub, 300, false, true, 2),
+            new(Guid.NewGuid(), sportId, "Steal", "ST", true, false, 0, FoulImpact.None, null, false, true, 3)
+        };
+
+        _repositoryMock
+            .Setup(r => r.GetAvailableForUserAsync("auth0|user123", sportId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(projections);
+
+        // Act
+        var result = (await _handler.Handle(new GetAvailableEventDefinitionsQuery(sportId, "auth0|user123"), CancellationToken.None)).ToList();
+
+        // Assert
+        result.Select(r => r.FoulImpact).Should().Equal(FoulImpact.PersonalFoul, FoulImpact.DisqualificationNoSub, FoulImpact.None);
+        result.Select(r => r.PenaltyDurationSeconds).Should().Equal(18, 300, null);
     }
 }

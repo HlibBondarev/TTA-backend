@@ -13,20 +13,20 @@ namespace TTA.DataAccess.Repository;
 public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
     : EntityRepositoryBase<Guid, EventDefinition>(connectionFactory), IEventDefinitionRepository
 {
-    private const string UserIdParameter = "p_user_id";
-
     /// <inheritdoc />
     public async Task<EventDefinition?> UpsertCustomAsync(EventDefinition entity, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_id", entity.Id);
-        parameters.Add("p_sport_id", entity.SportId);
-        parameters.Add("p_owner_id", entity.OwnerId);
-        parameters.Add("p_name", entity.Name);
-        parameters.Add("p_short_name", entity.ShortName);
-        parameters.Add("p_is_positive", entity.IsPositive);
-        parameters.Add("p_is_shot", entity.IsShot);
-        parameters.Add("p_score", entity.Score);
+        parameters.Add(SqlParameters.Id, entity.Id);
+        parameters.Add(SqlParameters.SportId, entity.SportId);
+        parameters.Add(SqlParameters.OwnerId, entity.OwnerId);
+        parameters.Add(SqlParameters.Name, entity.Name);
+        parameters.Add(SqlParameters.ShortName, entity.ShortName);
+        parameters.Add(SqlParameters.IsPositive, entity.IsPositive);
+        parameters.Add(SqlParameters.IsShot, entity.IsShot);
+        parameters.Add(SqlParameters.Score, entity.Score);
+        parameters.Add(SqlParameters.FoulImpact, (int)entity.FoulImpact);
+        parameters.Add(SqlParameters.PenaltyDurationSeconds, entity.PenaltyDurationSeconds);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
@@ -40,8 +40,8 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
     public async Task<bool> SoftDeleteAsync(Guid id, string userId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_id", id);
-        parameters.Add(UserIdParameter, userId);
+        parameters.Add(SqlParameters.Id, id);
+        parameters.Add(SqlParameters.UserId, userId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
@@ -55,8 +55,8 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
     public async Task<IEnumerable<UserEventDefinitionProjection>> GetAvailableForUserAsync(string userId, Guid sportId, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add(UserIdParameter, userId);
-        parameters.Add("p_sport_id", sportId);
+        parameters.Add(SqlParameters.UserId, userId);
+        parameters.Add(SqlParameters.SportId, sportId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 
@@ -70,8 +70,8 @@ public class EventDefinitionRepository(IDbConnectionFactory connectionFactory)
     public async Task<IEnumerable<UserEventDefinitionProjection>> GetMatchEventDefinitionsAsync(Guid matchId, string? userId = null, CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("p_match_id", matchId);
-        parameters.Add(UserIdParameter, userId);
+        parameters.Add(SqlParameters.MatchId, matchId);
+        parameters.Add(SqlParameters.UserId, userId);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
 

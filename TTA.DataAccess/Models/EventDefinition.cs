@@ -1,4 +1,5 @@
-﻿using TTA.DataAccess.Models.Base;
+﻿using TTA.DataAccess.Enums;
+using TTA.DataAccess.Models.Base;
 
 namespace TTA.DataAccess.Models;
 
@@ -46,6 +47,16 @@ public class EventDefinition : IKeyedEntity<Guid>
     /// Gets or sets the score value points awarded for this event action.
     /// </summary>
     public int Score { get; set; }
+
+    /// <summary>
+    /// Gets or sets how this event affects the disciplinary state of the player (foul counting or disqualification).
+    /// </summary>
+    public FoulImpact FoulImpact { get; set; } = FoulImpact.None;
+
+    /// <summary>
+    /// Gets or sets the team penalty duration in seconds, or null when the penalty is not time-limited.
+    /// </summary>
+    public int? PenaltyDurationSeconds { get; set; }
 
     /// <summary>
     /// Gets or sets the default frequency rank position for system default event definitions.
