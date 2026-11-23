@@ -50,6 +50,7 @@ class ActorMatcher:
             )
 
         best: MatchedTracklet | None = None
+        best_has_overlap = False
         diag = hypot(frame_width, frame_height)
         is_gk_event = candidate.definition.name.lower() in {"save", "goalkeeper error"}
         cap_hint = (
@@ -62,7 +63,7 @@ class ActorMatcher:
             if obs is None:
                 continue
 
-            score = self._score_candidate(
+            scored = self._score_candidate(
                 obs=obs,
                 tracklet=tracklet,
                 target_bbox_px=target_bbox_px,
@@ -72,8 +73,9 @@ class ActorMatcher:
                 event_time_sec=candidate.video_time_sec,
                 min_spatial_score=self._min_spatial_score,
             )
-            if score is None:
+            if scored is None:
                 continue
+            score, has_overlap = scored
             if best is None or score > best.match_score:
                 best = MatchedTracklet(
                     tracklet=tracklet,
@@ -81,9 +83,16 @@ class ActorMatcher:
                     nearest_observation=obs,
                     has_spatial_hint=has_spatial_hint,
                 )
+                best_has_overlap = has_overlap
 
-        if best is None or (has_spatial_hint and best.match_score < self._min_spatial_score):
+        if best is None:
             return None
+        if has_spatial_hint:
+            if best_has_overlap:
+                if best.match_score <= 0.0:
+                    return None
+            elif best.match_score < self._min_spatial_score:
+                return None
         return best
 
     @staticmethod
@@ -96,7 +105,7 @@ class ActorMatcher:
         is_gk_event: bool,
         event_time_sec: float,
         min_spatial_score: float = MIN_SPATIAL_SCORE,
-    ) -> float | None:
+    ) -> tuple[float, bool] | None:
         time_penalty = min(0.25, abs(obs.video_time_sec - event_time_sec) * 0.05)
         raw_label = obs.raw_class_name.strip().lower()
 
@@ -109,7 +118,11 @@ class ActorMatcher:
         if target_bbox_px is None:
             # Without a spatial hint from Pass 1, rank by stability + role cues for review
             stability = min(0.4, len(tracklet.observations) * 0.03)
-            return max(0.0, tracklet.mean_confidence * 0.4 + stability + team_bonus - time_penalty)
+            unhinted_score = max(
+                0.0,
+                tracklet.mean_confidence * 0.4 + stability + team_bonus - time_penalty,
+            )
+            return unhinted_score, False
 
         iou = _bbox_iou(target_bbox_px, obs.bbox_xyxy)
         tcx, tcy = _bbox_center(target_bbox_px)
@@ -117,10 +130,12 @@ class ActorMatcher:
         norm_dist = hypot(tcx - ocx, tcy - ocy) / max(1.0, diag)
         proximity = max(0.0, 1.0 - norm_dist * 4.0)
         spatial_score = iou * 0.55 + proximity * 0.35
-        if spatial_score < min_spatial_score:
+        has_overlap = iou > 0.0
+        if not has_overlap and spatial_score < min_spatial_score:
             return None
 
-        return max(
+        total_score = max(
             0.0,
             min(1.0, spatial_score + team_bonus - time_penalty),
         )
+        return total_score, has_overlap

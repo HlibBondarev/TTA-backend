@@ -372,3 +372,97 @@ def test_job_store_prunes_terminal_jobs_by_count_and_ttl(
         assert store.get(job_ids[3]) is not None
     finally:
         store.shutdown()
+
+
+def test_resubmission_and_eviction_serialize_with_callback_delivery(
+    sample_job_request: AnalyzeJobRequest,
+) -> None:
+    import json
+
+    callbacks: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        callbacks.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200)
+
+    mock_http = httpx.Client(transport=httpx.MockTransport(handler))
+    store = JobStore(
+        orchestrator=_build_mock_orchestrator(),
+        callback_allowed_origins=["https://backend.tta.local"],
+        max_workers=2,
+        max_retained_terminal_jobs=0,
+        terminal_job_ttl_sec=0.0,
+        http_client=mock_http,
+    )
+
+    first_dispatch_entered = threading.Event()
+    allow_first_dispatch = threading.Event()
+    original_dispatch = store._dispatch_callback
+    dispatch_count = 0
+
+    def controlled_dispatch(callback_url: str, payload: dict[str, object], job_id) -> None:
+        nonlocal dispatch_count
+        dispatch_count += 1
+        if dispatch_count == 1:
+            first_dispatch_entered.set()
+            assert allow_first_dispatch.wait(timeout=5.0)
+        original_dispatch(callback_url, payload, job_id)
+
+    store._dispatch_callback = controlled_dispatch  # type: ignore[method-assign]
+
+    resubmit_thread: threading.Thread | None = None
+    try:
+        shared_job_id = uuid4()
+        req1 = sample_job_request.model_copy(
+            update={"job_id": shared_job_id, "callback_url": "https://backend.tta.local/cb1"}
+        )
+        req2 = sample_job_request.model_copy(
+            update={"job_id": shared_job_id, "callback_url": "https://backend.tta.local/cb2"}
+        )
+
+        rec1 = store.submit(req1)
+        assert first_dispatch_entered.wait(timeout=3.0)
+
+        # Even with retention=0/ttl=0, in-flight callback keeps rec1 un-evicted
+        assert store.get(shared_job_id) is rec1
+
+        resubmit_done = threading.Event()
+        resubmitted: list[object] = []
+
+        def do_resubmit() -> None:
+            resubmitted.append(store.submit(req2))
+            resubmit_done.set()
+
+        resubmit_thread = threading.Thread(target=do_resubmit)
+        resubmit_thread.start()
+
+        # Replacement of the same job_id must block until callback 1 finishes delivery
+        assert not resubmit_done.wait(timeout=0.15)
+        assert callbacks == []
+
+        allow_first_dispatch.set()
+        assert resubmit_done.wait(timeout=3.0)
+        resubmit_thread.join(timeout=3.0)
+
+        rec2 = resubmitted[0]
+        assert rec2 is not rec1
+        assert rec1.execution_id != rec2.execution_id  # type: ignore[attr-defined]
+
+        for _ in range(40):
+            if len(callbacks) == 2 and rec2.finalized:  # type: ignore[attr-defined]
+                break
+            time.sleep(0.05)
+
+        assert len(callbacks) == 2
+        assert callbacks[0]["jobId"] == str(shared_job_id)
+        assert callbacks[0]["executionId"] == str(rec1.execution_id)
+        assert callbacks[1]["jobId"] == str(shared_job_id)
+        assert callbacks[1]["executionId"] == str(
+            rec2.execution_id  # type: ignore[attr-defined]
+        )
+    finally:
+        allow_first_dispatch.set()
+        if resubmit_thread is not None and resubmit_thread.is_alive():
+            resubmit_thread.join(timeout=2.0)
+        store.shutdown()
+        mock_http.close()

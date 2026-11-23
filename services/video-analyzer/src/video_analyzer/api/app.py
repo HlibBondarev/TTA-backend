@@ -88,6 +88,7 @@ def create_app(
             ) from exc
         return {
             "jobId": str(record.job_id),
+            "executionId": str(record.execution_id),
             "matchId": str(record.match_id),
             "status": record.status,
             "stage": record.stage,
@@ -126,6 +127,7 @@ def create_app(
 def _serialize_job(record: JobRecord) -> dict[str, Any]:
     return {
         "jobId": str(record.job_id),
+        "executionId": str(record.execution_id),
         "matchId": str(record.match_id),
         "status": record.status,
         "stage": record.stage,

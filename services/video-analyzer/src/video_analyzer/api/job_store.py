@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 
@@ -31,6 +31,7 @@ class JobRecord:
 
     job_id: UUID
     match_id: UUID
+    execution_id: UUID = field(default_factory=uuid4)
     status: JobStatus = "queued"
     stage: str = "queued"
     progress_percent: int = 0
@@ -38,6 +39,7 @@ class JobRecord:
     draft: VideoAnalysisDraft | None = None
     callback_url: str | None = None
     callback_dispatched: bool = False
+    callback_in_flight: bool = False
     finalized: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -72,6 +74,8 @@ class JobStore:
         self._http_client = http_client
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="va-job")
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._shutdown = False
         self._jobs: dict[UUID, JobRecord] = {}
 
     def validate_callback_url(self, callback_url: str | None) -> str | None:
@@ -96,9 +100,18 @@ class JobStore:
     def submit(self, request: AnalyzeJobRequest) -> JobRecord:
         """Validate callback target, enqueue a job, and immediately return its queued state."""
         validated_callback_url = self.validate_callback_url(request.callback_url)
-        now = datetime.now(UTC)
 
-        with self._lock:
+        with self._condition:
+            while not self._shutdown:
+                existing = self._jobs.get(request.job_id)
+                if existing is not None and existing.callback_in_flight:
+                    self._condition.wait()
+                    continue
+                break
+            if self._shutdown:
+                raise RuntimeError("JobStore has been shut down.")
+
+            now = datetime.now(UTC)
             self._prune_terminal_jobs_locked(now)
             existing = self._jobs.get(request.job_id)
             if existing is not None and existing.status in ("queued", "processing"):
@@ -118,13 +131,13 @@ class JobStore:
     def get(self, job_id: UUID) -> JobRecord | None:
         """Return an active or retained job record, pruning expired terminal records first."""
         now = datetime.now(UTC)
-        with self._lock:
+        with self._condition:
             self._prune_terminal_jobs_locked(now)
             return self._jobs.get(job_id)
 
     def cancel(self, job_id: UUID) -> bool:
         """Request cooperative cancellation for a tracked job."""
-        with self._lock:
+        with self._condition:
             record = self._jobs.get(job_id)
             if record is None:
                 return False
@@ -137,20 +150,23 @@ class JobStore:
 
     def shutdown(self) -> None:
         """Stop accepting new jobs and cancel queued futures on server shutdown."""
+        with self._condition:
+            self._shutdown = True
+            self._condition.notify_all()
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _run_job(self, request: AnalyzeJobRequest, record: JobRecord) -> None:
         if record.cancel_event.is_set():
             callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
             if callback_url is not None and payload is not None:
-                self._dispatch_callback(callback_url, payload, record.job_id)
+                self._deliver_callback_and_finalize(record, callback_url, payload)
             return
 
         if not self._update(record, status="processing", stage="starting", progress=1):
             if record.cancel_event.is_set():
                 callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
                 if callback_url is not None and payload is not None:
-                    self._dispatch_callback(callback_url, payload, record.job_id)
+                    self._deliver_callback_and_finalize(record, callback_url, payload)
             return
 
         def on_progress(stage: str, pct: int) -> None:
@@ -186,7 +202,7 @@ class JobStore:
                 )
 
         if callback_url is not None and payload is not None:
-            self._dispatch_callback(callback_url, payload, record.job_id)
+            self._deliver_callback_and_finalize(record, callback_url, payload)
 
     def _update(
         self,
@@ -195,7 +211,7 @@ class JobStore:
         stage: str | None = None,
         progress: int | None = None,
     ) -> bool:
-        with self._lock:
+        with self._condition:
             if self._jobs.get(record.job_id) is not record:
                 return False
             if record.status in _TERMINAL_STATUSES or record.cancel_event.is_set():
@@ -217,7 +233,7 @@ class JobStore:
         error_message: str | None = None,
     ) -> tuple[str | None, dict[str, Any] | None]:
         now = datetime.now(UTC)
-        with self._lock:
+        with self._condition:
             if self._jobs.get(record.job_id) is not record:
                 return None, None
 
@@ -236,17 +252,19 @@ class JobStore:
                 record.progress_percent = 100
             record.draft = final_draft
             record.error_message = final_error
-            record.finalized = True
             record.updated_at = now
 
-            self._prune_terminal_jobs_locked(now, preserve_job_id=record.job_id)
-
             if not record.callback_url or record.callback_dispatched:
+                record.finalized = True
+                self._prune_terminal_jobs_locked(now, preserve_job_id=record.job_id)
+                self._condition.notify_all()
                 return None, None
 
             record.callback_dispatched = True
+            record.callback_in_flight = True
             payload: dict[str, Any] = {
                 "jobId": str(record.job_id),
+                "executionId": str(record.execution_id),
                 "matchId": str(record.match_id),
                 "status": record.status,
                 "stage": record.stage,
@@ -258,6 +276,26 @@ class JobStore:
             }
             return record.callback_url, payload
 
+    def _deliver_callback_and_finalize(
+        self,
+        record: JobRecord,
+        callback_url: str,
+        payload: dict[str, Any],
+    ) -> None:
+        try:
+            self._dispatch_callback(callback_url, payload, record.job_id)
+        finally:
+            now = datetime.now(UTC)
+            with self._condition:
+                record.callback_in_flight = False
+                record.finalized = True
+                record.updated_at = now
+                if self._jobs.get(record.job_id) is record:
+                    self._prune_terminal_jobs_locked(now, preserve_job_id=record.job_id)
+                else:
+                    self._prune_terminal_jobs_locked(now)
+                self._condition.notify_all()
+
     def _prune_terminal_jobs_locked(
         self,
         now: datetime,
@@ -266,7 +304,7 @@ class JobStore:
         terminal_records: list[tuple[UUID, JobRecord]] = [
             (jid, rec)
             for jid, rec in self._jobs.items()
-            if rec.finalized and rec.status in _TERMINAL_STATUSES
+            if rec.finalized and not rec.callback_in_flight and rec.status in _TERMINAL_STATUSES
         ]
         if not terminal_records:
             return

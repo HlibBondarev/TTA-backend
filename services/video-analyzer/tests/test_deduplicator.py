@@ -239,3 +239,241 @@ def test_deduplicator_maintains_sorted_order_on_replacement_and_rejects_oob_offs
     assert "out-of-range" in warnings[0]
     assert len([e for e in events if e.definition.prompt_code == "EVT_02_ST_POS"]) == 1
     assert len([e for e in events if e.definition.prompt_code == "EVT_03_SP_POS"]) == 1
+
+
+def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
+    sample_snapshot: MatchSnapshot,
+    tmp_path: Path,
+) -> None:
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
+    chunk1 = VideoChunk(index=1, start_sec=105.0, end_sec=225.0, path=tmp_path / "c1.mp4")
+
+    # 1. Spatially disjoint shots at 112s and 114s across overlapping chunks
+    events_bbox, _, _ = EventDeduplicator(merge_window_sec=2.5).process(
+        chunk_results=[
+            (
+                chunk0,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=112.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            actor_bbox_normalized=[0.10, 0.35, 0.20, 0.60],
+                            confidence=0.88,
+                        )
+                    ]
+                ),
+            ),
+            (
+                chunk1,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=9.0,  # abs = 114.0s
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            actor_bbox_normalized=[0.75, 0.35, 0.85, 0.60],
+                            confidence=0.90,
+                        )
+                    ]
+                ),
+            ),
+        ],
+        event_definitions=sample_snapshot.event_definitions,
+        total_duration_sec=240.0,
+        min_confidence=0.65,
+    )
+    assert len(events_bbox) == 2
+
+    # 2. Conflicting pool zones at 112s and 114s across overlapping chunks
+    events_zone, _, _ = EventDeduplicator(merge_window_sec=2.5).process(
+        chunk_results=[
+            (
+                chunk0,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=112.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            pool_zone_hint="left_wing_5m",
+                            confidence=0.88,
+                        )
+                    ]
+                ),
+            ),
+            (
+                chunk1,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=9.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            pool_zone_hint="right_wing_5m",
+                            confidence=0.90,
+                        )
+                    ]
+                ),
+            ),
+        ],
+        event_definitions=sample_snapshot.event_definitions,
+        total_duration_sec=240.0,
+        min_confidence=0.65,
+    )
+    assert len(events_zone) == 2
+
+    # 3. Conflicting cap colors at 112s and 114s across overlapping chunks
+    events_cap, _, _ = EventDeduplicator(merge_window_sec=2.5).process(
+        chunk_results=[
+            (
+                chunk0,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=112.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            cap_color_hint="white",
+                            confidence=0.88,
+                        )
+                    ]
+                ),
+            ),
+            (
+                chunk1,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=9.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            cap_color_hint="blue",
+                            confidence=0.90,
+                        )
+                    ]
+                ),
+            ),
+        ],
+        event_definitions=sample_snapshot.event_definitions,
+        total_duration_sec=240.0,
+        min_confidence=0.65,
+    )
+    assert len(events_cap) == 2
+
+    # 4. Different period numbers at 112s and 114s across overlapping chunks
+    events_period, _, _ = EventDeduplicator(merge_window_sec=2.5).process(
+        chunk_results=[
+            (
+                chunk0,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=112.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            confidence=0.88,
+                        )
+                    ]
+                ),
+            ),
+            (
+                chunk1,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=9.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=2,
+                            confidence=0.90,
+                        )
+                    ]
+                ),
+            ),
+        ],
+        event_definitions=sample_snapshot.event_definitions,
+        total_duration_sec=240.0,
+        min_confidence=0.65,
+    )
+    assert len(events_period) == 2
+
+    # 5. Non-overlapping adjacent chunks reporting near boundary stay separate
+    adj_chunk1 = VideoChunk(index=1, start_sec=120.0, end_sec=240.0, path=tmp_path / "c1_adj.mp4")
+    events_non_overlap, _, _ = EventDeduplicator(merge_window_sec=2.5).process(
+        chunk_results=[
+            (
+                chunk0,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=119.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            confidence=0.88,
+                        )
+                    ]
+                ),
+            ),
+            (
+                adj_chunk1,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=1.0,  # abs = 121.0s
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            confidence=0.90,
+                        )
+                    ]
+                ),
+            ),
+        ],
+        event_definitions=sample_snapshot.event_definitions,
+        total_duration_sec=240.0,
+        min_confidence=0.65,
+    )
+    assert len(events_non_overlap) == 2
+
+    # 6. Compatible cross-chunk duplicate in overlap zone still merges
+    events_compatible, _, _ = EventDeduplicator(merge_window_sec=2.5).process(
+        chunk_results=[
+            (
+                chunk0,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=112.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            cap_color_hint="white",
+                            pool_zone_hint="center_5m",
+                            actor_bbox_normalized=[0.42, 0.35, 0.52, 0.60],
+                            confidence=0.82,
+                        )
+                    ]
+                ),
+            ),
+            (
+                chunk1,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=9.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            cap_color_hint="White",
+                            pool_zone_hint="center 5m",
+                            actor_bbox_normalized=[0.44, 0.36, 0.54, 0.61],
+                            confidence=0.91,
+                        )
+                    ]
+                ),
+            ),
+        ],
+        event_definitions=sample_snapshot.event_definitions,
+        total_duration_sec=240.0,
+        min_confidence=0.65,
+    )
+    assert len(events_compatible) == 1
+    assert events_compatible[0].confidence == 0.91
