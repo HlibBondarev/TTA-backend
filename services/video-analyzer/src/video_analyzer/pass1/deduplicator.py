@@ -106,20 +106,11 @@ class EventDeduplicator:
             entry = merged[match_idx]
             entry.source_chunks.add(chunk_index)
             existing = entry.candidate
-            ambiguous = not self._has_corroborating_action_hint(existing, candidate)
             if candidate.confidence > existing.confidence:
-                entry.candidate = self._merge_candidates(
-                    winner=candidate,
-                    loser=existing,
-                    ambiguous=ambiguous,
-                )
+                entry.candidate = self._merge_candidates(winner=candidate, loser=existing)
                 self._reposition_entry(merged, match_idx)
             else:
-                entry.candidate = self._merge_candidates(
-                    winner=existing,
-                    loser=candidate,
-                    ambiguous=ambiguous,
-                )
+                entry.candidate = self._merge_candidates(winner=existing, loser=candidate)
 
         return sorted(
             (entry.candidate for entry in merged),
@@ -232,24 +223,9 @@ class EventDeduplicator:
         return False
 
     @staticmethod
-    def _has_corroborating_action_hint(
-        prev: Pass1EventCandidate,
-        candidate: Pass1EventCandidate,
-    ) -> bool:
-        if _normalize_hint(prev.cap_color_hint) and _normalize_hint(candidate.cap_color_hint):
-            return True
-        if _normalize_zone(prev.pool_zone_hint) and _normalize_zone(candidate.pool_zone_hint):
-            return True
-        if prev.actor_bbox_normalized is not None and candidate.actor_bbox_normalized is not None:
-            return True
-        return False
-
-    @staticmethod
     def _merge_candidates(
         winner: Pass1EventCandidate,
         loser: Pass1EventCandidate,
-        *,
-        ambiguous: bool = False,
     ) -> Pass1EventCandidate:
         if winner.video_time_sec == loser.video_time_sec and winner.actor_bbox_normalized is None:
             winner.actor_bbox_normalized = loser.actor_bbox_normalized
@@ -258,11 +234,13 @@ class EventDeduplicator:
         if winner.cap_color_hint is None:
             winner.cap_color_hint = loser.cap_color_hint
         winner.is_lead_to_goal = winner.is_lead_to_goal or loser.is_lead_to_goal
-        winner.needs_review = winner.needs_review or loser.needs_review or ambiguous
+        # Optional Pass 1 hints cannot uniquely distinguish rapid back-to-back actions across
+        # overlapping chunks, so any cross-chunk merge is flagged for Human-in-the-Loop review.
+        winner.needs_review = True
         for reason in loser.review_reasons:
             if reason not in winner.review_reasons:
                 winner.review_reasons.append(reason)
-        if ambiguous and _AMBIGUOUS_OVERLAP_MERGE_REASON not in winner.review_reasons:
+        if _AMBIGUOUS_OVERLAP_MERGE_REASON not in winner.review_reasons:
             winner.review_reasons.append(_AMBIGUOUS_OVERLAP_MERGE_REASON)
         return winner
 

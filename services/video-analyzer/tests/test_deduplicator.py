@@ -479,8 +479,8 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
     )
     assert len(events_compatible) == 1
     assert events_compatible[0].confidence == 0.91
-    assert events_compatible[0].needs_review is False
-    assert events_compatible[0].review_reasons == []
+    assert events_compatible[0].needs_review is True
+    assert "AMBIGUOUS_OVERLAP_MERGE" in events_compatible[0].review_reasons
 
 
 def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
@@ -572,6 +572,74 @@ def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
 
     outcome = LineupMatcher().resolve(
         events_one_sided[0],
+        CapResolutionResult(
+            resolved_cap_number=7,
+            confidence=0.95,
+            candidate_scores={7: 0.95},
+            reasoning="Sharp cap #7",
+        ),
+        sample_snapshot,
+        min_cap_confidence=0.80,
+    )
+    assert outcome.needs_review is True
+    assert "AMBIGUOUS_OVERLAP_MERGE" in outcome.review_reasons
+
+
+def test_deduplicator_flags_cross_chunk_shots_with_matching_hints_for_review(
+    sample_snapshot: MatchSnapshot,
+    tmp_path: Path,
+) -> None:
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
+    chunk1 = VideoChunk(index=1, start_sec=105.0, end_sec=225.0, path=tmp_path / "c1.mp4")
+
+    # Two distinct rapid shots (e.g. shot + rebound) at 112s and 114s sharing identical hints
+    events, _, warnings = EventDeduplicator(merge_window_sec=2.5).process(
+        chunk_results=[
+            (
+                chunk0,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=112.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            cap_color_hint="white",
+                            pool_zone_hint="center_5m",
+                            actor_bbox_normalized=[0.42, 0.35, 0.52, 0.60],
+                            confidence=0.88,
+                        )
+                    ]
+                ),
+            ),
+            (
+                chunk1,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=9.0,  # abs = 114.0s
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            cap_color_hint="white",
+                            pool_zone_hint="center_5m",
+                            actor_bbox_normalized=[0.43, 0.36, 0.53, 0.61],
+                            confidence=0.93,
+                        )
+                    ]
+                ),
+            ),
+        ],
+        event_definitions=sample_snapshot.event_definitions,
+        total_duration_sec=240.0,
+        min_confidence=0.65,
+    )
+
+    assert warnings == []
+    assert len(events) == 1
+    assert events[0].needs_review is True
+    assert "AMBIGUOUS_OVERLAP_MERGE" in events[0].review_reasons
+
+    outcome = LineupMatcher().resolve(
+        events[0],
         CapResolutionResult(
             resolved_cap_number=7,
             confidence=0.95,
