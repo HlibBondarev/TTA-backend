@@ -44,13 +44,14 @@ class LineupMatcher:
             by_number[entry.number].append(entry)
 
         missing_spatial_hint = (not has_spatial_hint) or (candidate.actor_bbox_normalized is None)
-        review_reasons: list[str] = []
-        if candidate.confidence < 0.80:
+        review_reasons: list[str] = list(dict.fromkeys(candidate.review_reasons))
+        if candidate.confidence < 0.80 and "LOW_EVENT_CONFIDENCE" not in review_reasons:
             review_reasons.append("LOW_EVENT_CONFIDENCE")
 
         if cap_result is None:
-            review_reasons.append("NO_PLAYER_TRACKLET_MATCHED")
-            if missing_spatial_hint:
+            if "NO_PLAYER_TRACKLET_MATCHED" not in review_reasons:
+                review_reasons.append("NO_PLAYER_TRACKLET_MATCHED")
+            if missing_spatial_hint and "MISSING_ACTOR_SPATIAL_HINT" not in review_reasons:
                 review_reasons.append("MISSING_ACTOR_SPATIAL_HINT")
             return LineupMatchOutcome(
                 match_lineup_id=None,
@@ -71,7 +72,7 @@ class LineupMatcher:
             max_candidates=max_candidates,
         )
 
-        if missing_spatial_hint:
+        if missing_spatial_hint and "MISSING_ACTOR_SPATIAL_HINT" not in review_reasons:
             review_reasons.append("MISSING_ACTOR_SPATIAL_HINT")
 
         resolved_num = cap_result.resolved_cap_number
@@ -79,7 +80,8 @@ class LineupMatcher:
 
         # Collision guard: never pick arbitrarily if two lineup entries share the same cap number
         if len(matching_entries) > 1:
-            review_reasons.append("DUPLICATE_CAP_NUMBER_IN_LINEUP")
+            if "DUPLICATE_CAP_NUMBER_IN_LINEUP" not in review_reasons:
+                review_reasons.append("DUPLICATE_CAP_NUMBER_IN_LINEUP")
             return LineupMatchOutcome(
                 match_lineup_id=None,
                 resolved_cap_number=None,
@@ -95,7 +97,8 @@ class LineupMatcher:
             or len(matching_entries) == 0
             or cap_result.confidence < min_cap_confidence
         ):
-            review_reasons.append("LOW_CAP_CONFIDENCE")
+            if "LOW_CAP_CONFIDENCE" not in review_reasons:
+                review_reasons.append("LOW_CAP_CONFIDENCE")
             return LineupMatchOutcome(
                 match_lineup_id=None,
                 resolved_cap_number=None,
@@ -122,7 +125,7 @@ class LineupMatcher:
             resolved_cap_number=chosen.number,
             cap_confidence=round(cap_result.confidence, 4),
             candidate_lineup_ids=ranked_candidates,
-            needs_review=len(review_reasons) > 0,
+            needs_review=candidate.needs_review or len(review_reasons) > 0,
             review_reasons=review_reasons,
         )
 

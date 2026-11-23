@@ -8,6 +8,8 @@ from uuid import UUID
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.deduplicator import EventDeduplicator
 from video_analyzer.pass1.models import Pass1ChunkResult, Pass1RawEvent
+from video_analyzer.pass2.cap_resolver import CapResolutionResult
+from video_analyzer.pass2.lineup_matcher import LineupMatcher
 from video_analyzer.schemas.request import MatchSnapshot
 
 
@@ -477,3 +479,107 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
     )
     assert len(events_compatible) == 1
     assert events_compatible[0].confidence == 0.91
+    assert events_compatible[0].needs_review is False
+    assert events_compatible[0].review_reasons == []
+
+
+def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
+    sample_snapshot: MatchSnapshot,
+    tmp_path: Path,
+) -> None:
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
+    chunk1 = VideoChunk(index=1, start_sec=105.0, end_sec=225.0, path=tmp_path / "c1.mp4")
+
+    # Case A: Both overlapping shots at 112s and 114s lack optional hints
+    events_no_hints, _, warnings = EventDeduplicator(merge_window_sec=2.5).process(
+        chunk_results=[
+            (
+                chunk0,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=112.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            confidence=0.86,
+                        )
+                    ]
+                ),
+            ),
+            (
+                chunk1,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=9.0,  # abs = 114.0s
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            confidence=0.92,
+                        )
+                    ]
+                ),
+            ),
+        ],
+        event_definitions=sample_snapshot.event_definitions,
+        total_duration_sec=240.0,
+        min_confidence=0.65,
+    )
+    assert warnings == []
+    assert len(events_no_hints) == 1
+    assert events_no_hints[0].needs_review is True
+    assert "AMBIGUOUS_OVERLAP_MERGE" in events_no_hints[0].review_reasons
+
+    # Case B: One shot has hints and the other lacks all hints -> still flagged ambiguous
+    events_one_sided, _, _ = EventDeduplicator(merge_window_sec=2.5).process(
+        chunk_results=[
+            (
+                chunk0,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=112.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            confidence=0.84,
+                        )
+                    ]
+                ),
+            ),
+            (
+                chunk1,
+                Pass1ChunkResult(
+                    period_events=[
+                        Pass1RawEvent(
+                            time_sec=9.0,
+                            prompt_code="EVT_02_ST_POS",
+                            period_number=1,
+                            actor_bbox_normalized=[0.4, 0.3, 0.5, 0.6],
+                            cap_color_hint="white",
+                            pool_zone_hint="center_5m",
+                            confidence=0.92,
+                        )
+                    ]
+                ),
+            ),
+        ],
+        event_definitions=sample_snapshot.event_definitions,
+        total_duration_sec=240.0,
+        min_confidence=0.65,
+    )
+    assert len(events_one_sided) == 1
+    assert events_one_sided[0].needs_review is True
+    assert "AMBIGUOUS_OVERLAP_MERGE" in events_one_sided[0].review_reasons
+
+    outcome = LineupMatcher().resolve(
+        events_one_sided[0],
+        CapResolutionResult(
+            resolved_cap_number=7,
+            confidence=0.95,
+            candidate_scores={7: 0.95},
+            reasoning="Sharp cap #7",
+        ),
+        sample_snapshot,
+        min_cap_confidence=0.80,
+    )
+    assert outcome.needs_review is True
+    assert "AMBIGUOUS_OVERLAP_MERGE" in outcome.review_reasons

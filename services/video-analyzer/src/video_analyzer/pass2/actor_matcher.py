@@ -50,7 +50,6 @@ class ActorMatcher:
             )
 
         best: MatchedTracklet | None = None
-        best_has_overlap = False
         diag = hypot(frame_width, frame_height)
         is_gk_event = candidate.definition.name.lower() in {"save", "goalkeeper error"}
         cap_hint = (
@@ -63,7 +62,7 @@ class ActorMatcher:
             if obs is None:
                 continue
 
-            scored = self._score_candidate(
+            score = self._score_candidate(
                 obs=obs,
                 tracklet=tracklet,
                 target_bbox_px=target_bbox_px,
@@ -73,26 +72,16 @@ class ActorMatcher:
                 event_time_sec=candidate.video_time_sec,
                 min_spatial_score=self._min_spatial_score,
             )
-            if scored is None:
+            if score is None:
                 continue
-            score, has_overlap = scored
             if best is None or score > best.match_score:
                 best = MatchedTracklet(
                     tracklet=tracklet,
-                    match_score=round(score, 4),
+                    match_score=score,
                     nearest_observation=obs,
                     has_spatial_hint=has_spatial_hint,
                 )
-                best_has_overlap = has_overlap
 
-        if best is None:
-            return None
-        if has_spatial_hint:
-            if best_has_overlap:
-                if best.match_score <= 0.0:
-                    return None
-            elif best.match_score < self._min_spatial_score:
-                return None
         return best
 
     @staticmethod
@@ -105,7 +94,7 @@ class ActorMatcher:
         is_gk_event: bool,
         event_time_sec: float,
         min_spatial_score: float = MIN_SPATIAL_SCORE,
-    ) -> tuple[float, bool] | None:
+    ) -> float | None:
         time_penalty = min(0.25, abs(obs.video_time_sec - event_time_sec) * 0.05)
         raw_label = obs.raw_class_name.strip().lower()
 
@@ -122,7 +111,7 @@ class ActorMatcher:
                 0.0,
                 tracklet.mean_confidence * 0.4 + stability + team_bonus - time_penalty,
             )
-            return unhinted_score, False
+            return round(unhinted_score, 4)
 
         iou = _bbox_iou(target_bbox_px, obs.bbox_xyxy)
         tcx, tcy = _bbox_center(target_bbox_px)
@@ -134,8 +123,13 @@ class ActorMatcher:
         if not has_overlap and spatial_score < min_spatial_score:
             return None
 
-        total_score = max(
-            0.0,
-            min(1.0, spatial_score + team_bonus - time_penalty),
+        total_score = round(
+            max(0.0, min(1.0, spatial_score + team_bonus - time_penalty)),
+            4,
         )
-        return total_score, has_overlap
+        if has_overlap:
+            if total_score <= 0.0:
+                return None
+        elif total_score < min_spatial_score:
+            return None
+        return total_score

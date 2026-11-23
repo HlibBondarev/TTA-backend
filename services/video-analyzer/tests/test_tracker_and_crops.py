@@ -424,3 +424,60 @@ def test_actor_matcher_preserves_low_iou_overlapping_tracklet_without_label_bonu
     assert matched.tracklet.track_id == 1
     assert matched.has_spatial_hint is True
     assert matched.match_score == pytest.approx(0.1269, abs=1e-3)
+
+
+def test_actor_matcher_filters_ineligible_non_overlapping_track_before_ranking(
+    sample_snapshot: MatchSnapshot,
+) -> None:
+    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    cand = Pass1EventCandidate(
+        video_time_sec=20.0,
+        definition=defn,
+        period_number=1,
+        is_lead_to_goal=True,
+        actor_bbox_normalized=[0.0, 0.0, 100.0 / 400.0, 100.0 / 300.0],
+        pool_zone_hint="center",
+        cap_color_hint="white",
+        confidence=0.92,
+    )
+    overlapping_track = Tracklet(
+        track_id=1,
+        observations=[
+            TrackletObservation(
+                frame_index=0,
+                video_time_sec=20.0,
+                bbox_xyxy=(90.0, 0.0, 190.0, 100.0),
+                confidence=0.90,
+                raw_class_name="Blue team",
+            )
+        ],
+    )
+    # Non-overlapping track at 19s: spatial_score ~= 0.1932, time_penalty = 0.05 -> 0.1432 < 0.15
+    ineligible_non_overlapping_track = Tracklet(
+        track_id=2,
+        observations=[
+            TrackletObservation(
+                frame_index=0,
+                video_time_sec=19.0,
+                bbox_xyxy=(101.0, 40.0, 111.0, 60.0),
+                confidence=0.90,
+                raw_class_name="Blue team",
+            )
+        ],
+    )
+
+    for ordered in (
+        [overlapping_track, ineligible_non_overlapping_track],
+        [ineligible_non_overlapping_track, overlapping_track],
+    ):
+        matched = ActorMatcher().match(
+            cand,
+            ordered,
+            sample_snapshot,
+            frame_width=400,
+            frame_height=300,
+        )
+        assert matched is not None
+        assert matched.tracklet.track_id == 1
+        assert matched.has_spatial_hint is True
+        assert matched.match_score == pytest.approx(0.1269, abs=1e-3)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
@@ -87,6 +87,8 @@ class Pass1EventCandidate:
     cap_color_hint: str | None
     confidence: float
     evidence: str | None = None
+    needs_review: bool = False
+    review_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
