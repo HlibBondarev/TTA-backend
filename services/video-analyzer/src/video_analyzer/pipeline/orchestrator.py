@@ -291,9 +291,10 @@ class VideoAnalysisOrchestrator:
             self._report(progress_callback, "pass2_tracking", pct)
 
             cap_result: CapResolutionResult | None = None
+            has_spatial_hint = cand.actor_bbox_normalized is not None
             if not opts.skip_pass2:
                 windows_processed += 1
-                cap_result, t_trk, t_cap = self._inspect_event_window(
+                cap_result, t_trk, t_cap, has_spatial_hint = self._inspect_event_window(
                     event_index=idx + 1,
                     candidate=cand,
                     video_path=video_path,
@@ -313,6 +314,7 @@ class VideoAnalysisOrchestrator:
                 cap_result=cap_result,
                 snapshot=request.match_snapshot,
                 min_cap_confidence=opts.min_cap_confidence,
+                has_spatial_hint=has_spatial_hint,
             )
             if outcome.match_lineup_id is not None:
                 resolved_count += 1
@@ -366,8 +368,9 @@ class VideoAnalysisOrchestrator:
         work_dir: Path,
         debug_dir: Path | None,
         warnings: list[str],
-    ) -> tuple[CapResolutionResult | None, float, float]:
+    ) -> tuple[CapResolutionResult | None, float, float, bool]:
         opts = request.analysis_options
+        has_spatial_hint = candidate.actor_bbox_normalized is not None
         t_trk_start = time.monotonic()
         win_dir = work_dir / f"pass2_win_{event_index:04d}"
         frames = self._ffmpeg.extract_window_frames(
@@ -383,7 +386,7 @@ class VideoAnalysisOrchestrator:
                 f"Event #{event_index} ({candidate.definition.short_name} at "
                 f"{candidate.video_time_sec}s): no frames extracted in Pass 2 window."
             )
-            return None, round(time.monotonic() - t_trk_start, 3), 0.0
+            return None, round(time.monotonic() - t_trk_start, 3), 0.0, has_spatial_hint
 
         tracklets = self._tracker.track_window(frames, self._detector)
         frame_h, frame_w = frames[0].image_bgr.shape[:2]
@@ -395,7 +398,7 @@ class VideoAnalysisOrchestrator:
             frame_height=frame_h,
         )
         if matched is None:
-            return None, round(time.monotonic() - t_trk_start, 3), 0.0
+            return None, round(time.monotonic() - t_trk_start, 3), 0.0, has_spatial_hint
 
         selected_crops = self._crop_selector.select_and_build_sheet(
             tracklet=matched.tracklet,
@@ -405,7 +408,7 @@ class VideoAnalysisOrchestrator:
         t_trk_elapsed = time.monotonic() - t_trk_start
 
         if selected_crops is None:
-            return None, t_trk_elapsed, 0.0
+            return None, t_trk_elapsed, 0.0, matched.has_spatial_hint
 
         if debug_dir is not None:
             self._crop_selector.save_debug_artifacts(
@@ -429,7 +432,7 @@ class VideoAnalysisOrchestrator:
             cap_result = None
         t_cap_elapsed = time.monotonic() - t_cap_start
 
-        return cap_result, t_trk_elapsed, t_cap_elapsed
+        return cap_result, t_trk_elapsed, t_cap_elapsed, matched.has_spatial_hint
 
     @staticmethod
     def _check_cancelled(cancel_event: threading.Event | None) -> None:

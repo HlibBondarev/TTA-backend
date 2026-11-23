@@ -114,18 +114,34 @@ class OnnxDetector(BaseObjectDetector):
             xywh_for_nms.append([x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)])
             xyxy_unscaled.append((x1, y1, x2, y2))
 
-        indices = cv2.dnn.NMSBoxes(
-            xywh_for_nms,
-            filtered_confs.tolist(),
-            self._confidence,
-            self._iou,
-        )
-        if len(indices) == 0:
+        by_class: dict[int, list[int]] = {}
+        for idx, box in enumerate(xywh_for_nms):
+            if box[2] <= 0.0 or box[3] <= 0.0:
+                continue
+            cls_id = int(filtered_cls[idx])
+            by_class.setdefault(cls_id, []).append(idx)
+
+        kept_indices: list[int] = []
+        for class_indices in by_class.values():
+            class_boxes = [xywh_for_nms[i] for i in class_indices]
+            class_confs = [float(filtered_confs[i]) for i in class_indices]
+            indices = cv2.dnn.NMSBoxes(
+                class_boxes,
+                class_confs,
+                self._confidence,
+                self._iou,
+            )
+            if len(indices) == 0:
+                continue
+            for local_idx in np.asarray(indices).reshape(-1).tolist():
+                kept_indices.append(class_indices[int(local_idx)])
+
+        if not kept_indices:
             return []
 
-        flat_indices = np.asarray(indices).reshape(-1).tolist()
+        kept_indices.sort(key=lambda idx: (-float(filtered_confs[idx]), idx))
         detections: list[Detection] = []
-        for idx in flat_indices:
+        for idx in kept_indices:
             cls_id = int(filtered_cls[idx])
             raw_name = self._class_names.get(cls_id, str(cls_id))
             role = self._class_map.map_class(raw_name, fallback_id=cls_id)

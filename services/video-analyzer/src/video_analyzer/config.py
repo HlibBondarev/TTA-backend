@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+INSECURE_PLACEHOLDER_API_KEYS: frozenset[str] = frozenset({"change-me-local-dev-key"})
 
 DEFAULT_CLASS_MAP: dict[str, str] = {
     "White team": "player",
@@ -30,9 +33,11 @@ class Settings(BaseSettings):
     )
 
     # Service & security
-    service_host: str = Field(default="0.0.0.0")
+    service_host: str = Field(default="127.0.0.1")
     service_port: int = Field(default=8000, ge=1, le=65535)
-    internal_api_key: str = Field(default="change-me-local-dev-key")
+    internal_api_key: str = Field(default="")
+    callback_api_key: str = Field(default="")
+    callback_allowed_origins: list[str] | str = Field(default_factory=list)
     log_level: str = Field(default="INFO")
 
     # Gemini API
@@ -106,9 +111,96 @@ class Settings(BaseSettings):
             return {str(k): str(v) for k, v in loaded.items()}
         raise ValueError("Unsupported type for DETECTOR_CLASS_MAP.")
 
+    @field_validator("callback_allowed_origins", mode="before")
+    @classmethod
+    def _parse_callback_allowed_origins(cls, value: Any) -> list[str]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("["):
+                loaded = json.loads(stripped)
+                if not isinstance(loaded, list):
+                    raise ValueError(
+                        "CALLBACK_ALLOWED_ORIGINS JSON value must be a list of origin strings."
+                    )
+                items = [str(item).strip() for item in loaded if str(item).strip()]
+            else:
+                items = [part.strip() for part in stripped.split(",") if part.strip()]
+        elif isinstance(value, (list, tuple, set)):
+            items = [str(item).strip() for item in value if str(item).strip()]
+        else:
+            raise ValueError("Unsupported type for CALLBACK_ALLOWED_ORIGINS.")
+
+        normalized: list[str] = []
+        for item in items:
+            origin = normalize_origin(item)
+            if origin not in normalized:
+                normalized.append(origin)
+        return normalized
+
     @property
     def resolved_class_map(self) -> dict[str, str]:
         """Return the normalized class map dictionary."""
         if isinstance(self.detector_class_map, dict):
             return self.detector_class_map
         return self._parse_class_map(self.detector_class_map)
+
+    @property
+    def resolved_callback_allowed_origins(self) -> tuple[str, ...]:
+        """Return the normalized callback origin allowlist."""
+        if isinstance(self.callback_allowed_origins, list):
+            return tuple(self.callback_allowed_origins)
+        return tuple(self._parse_callback_allowed_origins(self.callback_allowed_origins))
+
+    def require_internal_api_key(self) -> str:
+        """Validate and return the configured internal API key for server startup."""
+        key = self.internal_api_key.strip()
+        if not key or key.lower() in INSECURE_PLACEHOLDER_API_KEYS:
+            raise ValueError(
+                "INTERNAL_API_KEY must be set to a unique non-placeholder secret before "
+                "starting the API server."
+            )
+        return key
+
+
+def normalize_origin(raw_origin: str) -> str:
+    """Validate and canonicalize an HTTP(S) origin string (scheme://host:port)."""
+    return _parse_origin(raw_origin, allow_path_and_query=False)
+
+
+def extract_origin(url: str) -> str:
+    """Validate an HTTP(S) callback URL and return its canonical origin (scheme://host:port)."""
+    return _parse_origin(url, allow_path_and_query=True)
+
+
+def _parse_origin(raw_url: str, *, allow_path_and_query: bool) -> str:
+    stripped = raw_url.strip()
+    if not stripped:
+        raise ValueError("Origin/URL cannot be empty.")
+
+    parsed = urlsplit(stripped)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise ValueError(f"Unsupported URL scheme '{parsed.scheme}'; expected http or https.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URLs containing embedded userinfo credentials are not allowed.")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"URL '{raw_url}' is missing a valid host.")
+
+    if not allow_path_and_query and (
+        parsed.path not in ("", "/") or parsed.query or parsed.fragment
+    ):
+        raise ValueError(
+            f"Allowed callback origin '{raw_url}' must contain only scheme, host, and port."
+        )
+    if allow_path_and_query and parsed.fragment:
+        raise ValueError("Callback URLs must not contain URL fragments.")
+
+    port = parsed.port if parsed.port is not None else (80 if scheme == "http" else 443)
+    formatted_host = f"[{hostname}]" if ":" in hostname else hostname
+    return f"{scheme}://{formatted_host}:{port}"

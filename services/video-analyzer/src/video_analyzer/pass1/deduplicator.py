@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.models import Pass1ChunkResult, Pass1EventCandidate
 from video_analyzer.schemas.request import EventDefinitionSnapshot
+
+
+@dataclass(slots=True)
+class _MergedEntry:
+    candidate: Pass1EventCandidate
+    source_chunks: set[int] = field(default_factory=set)
 
 
 class EventDeduplicator:
@@ -25,10 +32,11 @@ class EventDeduplicator:
         """Map promptCodes to EventDefinitionSnapshot and deduplicate overlap-zone events."""
         by_prompt_code = {item.prompt_code: item for item in event_definitions}
         warnings: list[str] = []
-        raw_candidates: list[Pass1EventCandidate] = []
+        raw_candidates: list[tuple[int, Pass1EventCandidate]] = []
         raw_count = 0
 
         for chunk, result in chunk_results:
+            chunk_duration = max(0.0, chunk.end_sec - chunk.start_sec)
             for raw in result.period_events:
                 raw_count += 1
                 definition = by_prompt_code.get(raw.prompt_code)
@@ -39,22 +47,32 @@ class EventDeduplicator:
                     )
                     continue
 
+                if raw.time_sec < 0.0 or raw.time_sec > chunk_duration + 1e-6:
+                    warnings.append(
+                        f"Ignored out-of-range Pass 1 event offset {raw.time_sec:.3f}s "
+                        f"in chunk {chunk.index} (valid range: 0.000s..{chunk_duration:.3f}s)."
+                    )
+                    continue
+
                 if raw.confidence < min_confidence:
                     continue
 
                 abs_time = max(0.0, min(total_duration_sec, chunk.start_sec + raw.time_sec))
                 bbox = self._normalize_bbox(raw.actor_bbox_normalized)
                 raw_candidates.append(
-                    Pass1EventCandidate(
-                        video_time_sec=round(abs_time, 3),
-                        definition=definition,
-                        period_number=raw.period_number,
-                        is_lead_to_goal=raw.is_lead_to_goal,
-                        actor_bbox_normalized=bbox,
-                        pool_zone_hint=raw.pool_zone_hint,
-                        cap_color_hint=raw.cap_color_hint,
-                        confidence=raw.confidence,
-                        evidence=raw.evidence,
+                    (
+                        chunk.index,
+                        Pass1EventCandidate(
+                            video_time_sec=round(abs_time, 3),
+                            definition=definition,
+                            period_number=raw.period_number,
+                            is_lead_to_goal=raw.is_lead_to_goal,
+                            actor_bbox_normalized=bbox,
+                            pool_zone_hint=raw.pool_zone_hint,
+                            cap_color_hint=raw.cap_color_hint,
+                            confidence=raw.confidence,
+                            evidence=raw.evidence,
+                        ),
                     )
                 )
 
@@ -63,46 +81,87 @@ class EventDeduplicator:
 
     def _merge_nearby(
         self,
-        candidates: list[Pass1EventCandidate],
+        candidates: list[tuple[int, Pass1EventCandidate]],
     ) -> list[Pass1EventCandidate]:
-        ordered = sorted(candidates, key=lambda c: (c.video_time_sec, -c.confidence))
-        merged: list[Pass1EventCandidate] = []
+        ordered = sorted(
+            candidates,
+            key=lambda item: (item[1].video_time_sec, -item[1].confidence, item[0]),
+        )
+        merged: list[_MergedEntry] = []
 
-        for candidate in ordered:
-            match_idx = self._find_merge_target(merged, candidate)
+        for chunk_index, candidate in ordered:
+            match_idx = self._find_merge_target(merged, chunk_index, candidate)
             if match_idx is None:
-                merged.append(candidate)
+                merged.append(_MergedEntry(candidate=candidate, source_chunks={chunk_index}))
                 continue
 
-            existing = merged[match_idx]
+            entry = merged[match_idx]
+            entry.source_chunks.add(chunk_index)
+            existing = entry.candidate
             if candidate.confidence > existing.confidence:
-                if candidate.actor_bbox_normalized is None:
-                    candidate.actor_bbox_normalized = existing.actor_bbox_normalized
-                if candidate.pool_zone_hint is None:
-                    candidate.pool_zone_hint = existing.pool_zone_hint
-                candidate.is_lead_to_goal = candidate.is_lead_to_goal or existing.is_lead_to_goal
-                merged[match_idx] = candidate
+                entry.candidate = self._merge_candidates(winner=candidate, loser=existing)
+                self._reposition_entry(merged, match_idx)
             else:
-                if existing.actor_bbox_normalized is None:
-                    existing.actor_bbox_normalized = candidate.actor_bbox_normalized
-                existing.is_lead_to_goal = existing.is_lead_to_goal or candidate.is_lead_to_goal
+                entry.candidate = self._merge_candidates(winner=existing, loser=candidate)
 
-        return sorted(merged, key=lambda c: (c.period_number, c.video_time_sec))
+        return sorted(
+            (entry.candidate for entry in merged),
+            key=lambda c: (c.period_number, c.video_time_sec),
+        )
 
     def _find_merge_target(
         self,
-        merged: list[Pass1EventCandidate],
+        merged: list[_MergedEntry],
+        chunk_index: int,
         candidate: Pass1EventCandidate,
     ) -> int | None:
+        best_idx: int | None = None
+        best_delta: float | None = None
+
         for idx in range(len(merged) - 1, -1, -1):
-            prev = merged[idx]
-            if abs(candidate.video_time_sec - prev.video_time_sec) > self._merge_window_sec:
-                if candidate.video_time_sec - prev.video_time_sec > self._merge_window_sec:
-                    break
+            entry = merged[idx]
+            prev = entry.candidate
+            if candidate.video_time_sec - prev.video_time_sec > self._merge_window_sec:
+                break
+            delta = abs(candidate.video_time_sec - prev.video_time_sec)
+            if delta > self._merge_window_sec:
                 continue
-            if prev.definition.event_definition_id == candidate.definition.event_definition_id:
-                return idx
-        return None
+            if chunk_index in entry.source_chunks:
+                continue
+            if prev.definition.event_definition_id != candidate.definition.event_definition_id:
+                continue
+            if best_delta is None or delta < best_delta:
+                best_idx = idx
+                best_delta = delta
+
+        return best_idx
+
+    @staticmethod
+    def _merge_candidates(
+        winner: Pass1EventCandidate,
+        loser: Pass1EventCandidate,
+    ) -> Pass1EventCandidate:
+        if winner.video_time_sec == loser.video_time_sec and winner.actor_bbox_normalized is None:
+            winner.actor_bbox_normalized = loser.actor_bbox_normalized
+        if winner.pool_zone_hint is None:
+            winner.pool_zone_hint = loser.pool_zone_hint
+        if winner.cap_color_hint is None:
+            winner.cap_color_hint = loser.cap_color_hint
+        winner.is_lead_to_goal = winner.is_lead_to_goal or loser.is_lead_to_goal
+        return winner
+
+    @staticmethod
+    def _reposition_entry(merged: list[_MergedEntry], idx: int) -> None:
+        while idx + 1 < len(merged) and (
+            merged[idx].candidate.video_time_sec > merged[idx + 1].candidate.video_time_sec
+        ):
+            merged[idx], merged[idx + 1] = merged[idx + 1], merged[idx]
+            idx += 1
+        while idx > 0 and (
+            merged[idx - 1].candidate.video_time_sec > merged[idx].candidate.video_time_sec
+        ):
+            merged[idx - 1], merged[idx] = merged[idx], merged[idx - 1]
+            idx -= 1
 
     @staticmethod
     def _normalize_bbox(bbox: list[float] | None) -> list[float] | None:

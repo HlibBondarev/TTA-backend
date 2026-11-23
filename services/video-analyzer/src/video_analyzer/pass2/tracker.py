@@ -49,23 +49,27 @@ class _TrackState:
         self.track_id = track_id
         self.observations: list[TrackletObservation] = [obs]
         self.predicted_bbox: tuple[float, float, float, float] = obs.bbox_xyxy
+        self._warped_last_obs_bbox: tuple[float, float, float, float] = obs.bbox_xyxy
         self.velocity: tuple[float, float] = (0.0, 0.0)
         self.missed_frames: int = 0
 
     def predict(self, affine_warp: np.ndarray | None) -> None:
-        x1, y1, x2, y2 = self.observations[-1].bbox_xyxy
-        vx, vy = self.velocity
-        x1, y1, x2, y2 = x1 + vx * 0.5, y1 + vy * 0.5, x2 + vx * 0.5, y2 + vy * 0.5
+        box = self.predicted_bbox
         if affine_warp is not None:
-            x1, y1, x2, y2 = _warp_bbox((x1, y1, x2, y2), affine_warp)
-        self.predicted_bbox = (x1, y1, x2, y2)
+            box = _warp_bbox(box, affine_warp)
+            self._warped_last_obs_bbox = _warp_bbox(self._warped_last_obs_bbox, affine_warp)
+        vx, vy = self.velocity
+        dx, dy = vx * 0.5, vy * 0.5
+        self.predicted_bbox = (box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy)
 
     def update(self, obs: TrackletObservation) -> None:
-        prev_cx, prev_cy = _bbox_center(self.observations[-1].bbox_xyxy)
+        ref_cx, ref_cy = _bbox_center(self._warped_last_obs_bbox)
         curr_cx, curr_cy = _bbox_center(obs.bbox_xyxy)
-        self.velocity = (curr_cx - prev_cx, curr_cy - prev_cy)
+        steps = max(1, self.missed_frames + 1)
+        self.velocity = ((curr_cx - ref_cx) / steps, (curr_cy - ref_cy) / steps)
         self.observations.append(obs)
         self.predicted_bbox = obs.bbox_xyxy
+        self._warped_last_obs_bbox = obs.bbox_xyxy
         self.missed_frames = 0
 
 
@@ -305,11 +309,17 @@ def _warp_bbox(
     box: tuple[float, float, float, float],
     warp: np.ndarray,
 ) -> tuple[float, float, float, float]:
+    x1, y1, x2, y2 = box
     pts = np.array(
-        [[box[0], box[1], 1.0], [box[2], box[3], 1.0]],
+        [
+            [x1, y1, 1.0],
+            [x2, y1, 1.0],
+            [x2, y2, 1.0],
+            [x1, y2, 1.0],
+        ],
         dtype=np.float64,
     )
     transformed = pts @ warp.T
-    x1, y1 = float(transformed[0, 0]), float(transformed[0, 1])
-    x2, y2 = float(transformed[1, 0]), float(transformed[1, 1])
-    return (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+    xs = transformed[:, 0]
+    ys = transformed[:, 1]
+    return (float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max()))

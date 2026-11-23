@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 import httpx
 
+from video_analyzer.config import extract_origin, normalize_origin
 from video_analyzer.pipeline.orchestrator import JobCancelledError, VideoAnalysisOrchestrator
 from video_analyzer.schemas.draft import VideoAnalysisDraft
 from video_analyzer.schemas.request import AnalyzeJobRequest
@@ -19,6 +21,8 @@ from video_analyzer.schemas.request import AnalyzeJobRequest
 logger = logging.getLogger(__name__)
 
 JobStatus = Literal["queued", "processing", "completed", "failed", "cancelled"]
+TerminalJobStatus = Literal["completed", "failed", "cancelled"]
+_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "failed", "cancelled"})
 
 
 @dataclass(slots=True)
@@ -32,6 +36,9 @@ class JobRecord:
     progress_percent: int = 0
     error_message: str | None = None
     draft: VideoAnalysisDraft | None = None
+    callback_url: str | None = None
+    callback_dispatched: bool = False
+    finalized: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     cancel_event: threading.Event = field(default_factory=threading.Event)
@@ -43,32 +50,80 @@ class JobStore:
     def __init__(
         self,
         orchestrator: VideoAnalysisOrchestrator,
-        internal_api_key: str,
+        callback_allowed_origins: Iterable[str] = (),
+        callback_api_key: str = "",
         max_workers: int = 2,
+        max_retained_terminal_jobs: int = 500,
+        terminal_job_ttl_sec: float = 3600.0,
+        http_client: httpx.Client | None = None,
     ) -> None:
+        if max_retained_terminal_jobs < 0:
+            raise ValueError("max_retained_terminal_jobs must be non-negative.")
+        if terminal_job_ttl_sec < 0.0:
+            raise ValueError("terminal_job_ttl_sec must be non-negative.")
+
         self._orchestrator = orchestrator
-        self._internal_api_key = internal_api_key
+        self._allowed_callback_origins = frozenset(
+            normalize_origin(origin) for origin in callback_allowed_origins if origin.strip()
+        )
+        self._callback_api_key = callback_api_key.strip()
+        self._max_retained_terminal_jobs = max_retained_terminal_jobs
+        self._terminal_job_ttl_sec = terminal_job_ttl_sec
+        self._http_client = http_client
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="va-job")
         self._lock = threading.Lock()
         self._jobs: dict[UUID, JobRecord] = {}
 
+    def validate_callback_url(self, callback_url: str | None) -> str | None:
+        """Validate a callback URL against the configured trusted origin allowlist."""
+        if callback_url is None:
+            return None
+        stripped = callback_url.strip()
+        if not stripped:
+            raise ValueError("callbackUrl must not be blank when provided.")
+
+        origin = extract_origin(stripped)
+        if not self._allowed_callback_origins:
+            raise ValueError(
+                "callbackUrl cannot be used because CALLBACK_ALLOWED_ORIGINS is not configured."
+            )
+        if origin not in self._allowed_callback_origins:
+            raise ValueError(
+                f"callbackUrl origin '{origin}' is not in CALLBACK_ALLOWED_ORIGINS."
+            )
+        return stripped
+
     def submit(self, request: AnalyzeJobRequest) -> JobRecord:
-        """Enqueue a new job and immediately return its queued state."""
+        """Validate callback target, enqueue a job, and immediately return its queued state."""
+        validated_callback_url = self.validate_callback_url(request.callback_url)
+        now = datetime.now(UTC)
+
         with self._lock:
+            self._prune_terminal_jobs_locked(now)
             existing = self._jobs.get(request.job_id)
             if existing is not None and existing.status in ("queued", "processing"):
                 return existing
-            record = JobRecord(job_id=request.job_id, match_id=request.match_id)
+            record = JobRecord(
+                job_id=request.job_id,
+                match_id=request.match_id,
+                callback_url=validated_callback_url,
+                created_at=now,
+                updated_at=now,
+            )
             self._jobs[request.job_id] = record
 
         self._executor.submit(self._run_job, request, record)
         return record
 
     def get(self, job_id: UUID) -> JobRecord | None:
+        """Return an active or retained job record, pruning expired terminal records first."""
+        now = datetime.now(UTC)
         with self._lock:
+            self._prune_terminal_jobs_locked(now)
             return self._jobs.get(job_id)
 
     def cancel(self, job_id: UUID) -> bool:
+        """Request cooperative cancellation for a tracked job."""
         with self._lock:
             record = self._jobs.get(job_id)
             if record is None:
@@ -81,17 +136,28 @@ class JobStore:
             return True
 
     def shutdown(self) -> None:
+        """Stop accepting new jobs and cancel queued futures on server shutdown."""
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _run_job(self, request: AnalyzeJobRequest, record: JobRecord) -> None:
         if record.cancel_event.is_set():
+            callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
+            if callback_url is not None and payload is not None:
+                self._dispatch_callback(callback_url, payload, record.job_id)
             return
 
-        self._update(record, status="processing", stage="starting", progress=1)
+        if not self._update(record, status="processing", stage="starting", progress=1):
+            if record.cancel_event.is_set():
+                callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
+                if callback_url is not None and payload is not None:
+                    self._dispatch_callback(callback_url, payload, record.job_id)
+            return
 
         def on_progress(stage: str, pct: int) -> None:
             self._update(record, stage=stage, progress=pct)
 
+        callback_url: str | None = None
+        payload: dict[str, Any] | None = None
         try:
             draft = self._orchestrator.run(
                 request=request,
@@ -99,28 +165,28 @@ class JobStore:
                 progress_callback=on_progress,
             )
             if record.cancel_event.is_set():
-                self._update(record, status="cancelled", stage="cancelled")
-                return
-            self._update(
-                record,
-                status="completed",
-                stage="completed",
-                progress=100,
-                draft=draft,
-            )
-            self._dispatch_callback(request.callback_url, record)
+                callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
+            else:
+                callback_url, payload = self._finalize_and_prepare_callback(
+                    record,
+                    "completed",
+                    draft=draft,
+                )
         except JobCancelledError:
-            self._update(record, status="cancelled", stage="cancelled")
-            self._dispatch_callback(request.callback_url, record)
+            callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
         except Exception as exc:
             logger.exception("Analysis job %s failed.", request.job_id)
-            self._update(
-                record,
-                status="failed",
-                stage="failed",
-                error_message=str(exc),
-            )
-            self._dispatch_callback(request.callback_url, record)
+            if record.cancel_event.is_set():
+                callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
+            else:
+                callback_url, payload = self._finalize_and_prepare_callback(
+                    record,
+                    "failed",
+                    error_message=str(exc),
+                )
+
+        if callback_url is not None and payload is not None:
+            self._dispatch_callback(callback_url, payload, record.job_id)
 
     def _update(
         self,
@@ -128,48 +194,132 @@ class JobStore:
         status: JobStatus | None = None,
         stage: str | None = None,
         progress: int | None = None,
-        draft: VideoAnalysisDraft | None = None,
-        error_message: str | None = None,
-    ) -> None:
+    ) -> bool:
         with self._lock:
-            if record.status == "cancelled" and status not in (None, "cancelled"):
-                return
+            if self._jobs.get(record.job_id) is not record:
+                return False
+            if record.status in _TERMINAL_STATUSES or record.cancel_event.is_set():
+                return False
             if status is not None:
                 record.status = status
             if stage is not None:
                 record.stage = stage
             if progress is not None:
                 record.progress_percent = progress
-            if draft is not None:
-                record.draft = draft
-            if error_message is not None:
-                record.error_message = error_message
             record.updated_at = datetime.now(UTC)
+            return True
 
-    def _dispatch_callback(self, callback_url: str | None, record: JobRecord) -> None:
-        if not callback_url:
+    def _finalize_and_prepare_callback(
+        self,
+        record: JobRecord,
+        target_status: TerminalJobStatus,
+        draft: VideoAnalysisDraft | None = None,
+        error_message: str | None = None,
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        now = datetime.now(UTC)
+        with self._lock:
+            if self._jobs.get(record.job_id) is not record:
+                return None, None
+
+            if record.cancel_event.is_set() or record.status == "cancelled":
+                final_status: TerminalJobStatus = "cancelled"
+                final_draft = None
+                final_error = None
+            else:
+                final_status = target_status
+                final_draft = draft if final_status == "completed" else None
+                final_error = error_message if final_status == "failed" else None
+
+            record.status = final_status
+            record.stage = final_status
+            if final_status == "completed":
+                record.progress_percent = 100
+            record.draft = final_draft
+            record.error_message = final_error
+            record.finalized = True
+            record.updated_at = now
+
+            self._prune_terminal_jobs_locked(now, preserve_job_id=record.job_id)
+
+            if not record.callback_url or record.callback_dispatched:
+                return None, None
+
+            record.callback_dispatched = True
+            payload: dict[str, Any] = {
+                "jobId": str(record.job_id),
+                "matchId": str(record.match_id),
+                "status": record.status,
+                "stage": record.stage,
+                "progressPercent": record.progress_percent,
+                "errorMessage": record.error_message,
+                "draft": (
+                    record.draft.model_dump(mode="json", by_alias=True) if record.draft else None
+                ),
+            }
+            return record.callback_url, payload
+
+    def _prune_terminal_jobs_locked(
+        self,
+        now: datetime,
+        preserve_job_id: UUID | None = None,
+    ) -> None:
+        terminal_records: list[tuple[UUID, JobRecord]] = [
+            (jid, rec)
+            for jid, rec in self._jobs.items()
+            if rec.finalized and rec.status in _TERMINAL_STATUSES
+        ]
+        if not terminal_records:
             return
-        payload = {
-            "jobId": str(record.job_id),
-            "matchId": str(record.match_id),
-            "status": record.status,
-            "stage": record.stage,
-            "progressPercent": record.progress_percent,
-            "errorMessage": record.error_message,
-            "draft": record.draft.model_dump(mode="json", by_alias=True) if record.draft else None,
-        }
+
+        retained: list[tuple[UUID, JobRecord]] = []
+        for jid, rec in terminal_records:
+            age_sec = (now - rec.updated_at).total_seconds()
+            if jid != preserve_job_id and age_sec >= self._terminal_job_ttl_sec:
+                del self._jobs[jid]
+            else:
+                retained.append((jid, rec))
+
+        excess = len(retained) - self._max_retained_terminal_jobs
+        if excess > 0:
+            evictable = [(jid, rec) for jid, rec in retained if jid != preserve_job_id]
+            evictable.sort(key=lambda item: item[1].updated_at)
+            for jid, _ in evictable[:excess]:
+                del self._jobs[jid]
+
+    def _dispatch_callback(
+        self,
+        callback_url: str,
+        payload: dict[str, Any],
+        job_id: UUID,
+    ) -> None:
         try:
-            with httpx.Client(timeout=30.0) as client:
-                response = client.post(
-                    callback_url,
+            validated_url = self.validate_callback_url(callback_url)
+            if not validated_url:
+                return
+            headers: dict[str, str] = {}
+            if self._callback_api_key:
+                headers["X-Callback-Api-Key"] = self._callback_api_key
+
+            if self._http_client is not None:
+                response = self._http_client.post(
+                    validated_url,
                     json=payload,
-                    headers={"X-Internal-Api-Key": self._internal_api_key},
+                    headers=headers,
+                    follow_redirects=False,
                 )
                 response.raise_for_status()
+            else:
+                with httpx.Client(timeout=30.0, follow_redirects=False) as client:
+                    response = client.post(
+                        validated_url,
+                        json=payload,
+                        headers=headers,
+                    )
+                    response.raise_for_status()
         except Exception as exc:
             logger.warning(
                 "Failed posting callback for job %s to %s: %s",
-                record.job_id,
+                job_id,
                 callback_url,
                 exc,
             )

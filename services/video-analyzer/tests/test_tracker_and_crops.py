@@ -6,14 +6,21 @@ from types import SimpleNamespace
 
 import cv2
 import numpy as np
+import pytest
 
 from video_analyzer.detectors.base import BaseObjectDetector, CanonicalRole, Detection
 from video_analyzer.media.ffmpeg_client import ExtractedFrame
 from video_analyzer.pass1.models import Pass1EventCandidate
 from video_analyzer.pass2.actor_matcher import ActorMatcher
 from video_analyzer.pass2.cap_resolver import GeminiCropGridCapResolver, LocalOcrCapResolver
-from video_analyzer.pass2.crop_selector import CropSelector
-from video_analyzer.pass2.tracker import BoTSortTracker
+from video_analyzer.pass2.crop_selector import CropCandidate, CropSelector, SelectedCrops
+from video_analyzer.pass2.tracker import (
+    BoTSortTracker,
+    Tracklet,
+    TrackletObservation,
+    _TrackState,
+    _warp_bbox,
+)
 from video_analyzer.schemas.request import MatchSnapshot
 
 
@@ -158,3 +165,210 @@ def test_cap_resolvers_constrain_to_roster() -> None:
     ocr_res = ocr_resolver.resolve(selected, allowed_cap_numbers=[1, 7, 9])
     assert ocr_res.resolved_cap_number == 9
     assert ocr_res.confidence > 0.8
+
+
+def test_actor_matcher_rejects_spatially_incompatible_tracklet_despite_label_bonuses(
+    sample_snapshot: MatchSnapshot,
+) -> None:
+    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "ASV")
+    cand = Pass1EventCandidate(
+        video_time_sec=20.0,
+        definition=defn,
+        period_number=1,
+        is_lead_to_goal=False,
+        actor_bbox_normalized=[0.05, 0.05, 0.15, 0.20],
+        pool_zone_hint="away_goal",
+        cap_color_hint="white",
+        confidence=0.9,
+    )
+    far_tracklet = Tracklet(
+        track_id=1,
+        observations=[
+            TrackletObservation(
+                frame_index=0,
+                video_time_sec=20.0,
+                bbox_xyxy=(800.0, 750.0, 950.0, 950.0),
+                confidence=0.95,
+                raw_class_name="White Goalkeeper",
+            )
+        ],
+    )
+
+    matched = ActorMatcher().match(
+        cand, [far_tracklet], sample_snapshot, frame_width=1000, frame_height=1000
+    )
+    assert matched is None
+
+
+def test_actor_matcher_marks_unhinted_match_without_spatial_hint(
+    sample_snapshot: MatchSnapshot,
+) -> None:
+    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    cand = Pass1EventCandidate(
+        video_time_sec=20.0,
+        definition=defn,
+        period_number=1,
+        is_lead_to_goal=True,
+        actor_bbox_normalized=None,
+        pool_zone_hint=None,
+        cap_color_hint="white",
+        confidence=0.9,
+    )
+    tracklet = Tracklet(
+        track_id=1,
+        observations=[
+            TrackletObservation(
+                frame_index=0,
+                video_time_sec=20.0,
+                bbox_xyxy=(100.0, 100.0, 180.0, 220.0),
+                confidence=0.92,
+                raw_class_name="White team",
+            )
+        ],
+    )
+
+    matched = ActorMatcher().match(
+        cand, [tracklet], sample_snapshot, frame_width=400, frame_height=300
+    )
+    assert matched is not None
+    assert matched.has_spatial_hint is False
+
+
+def test_cap_resolvers_leave_tied_top_scores_unresolved_and_cap_votes_per_crop() -> None:
+    crop = np.zeros((64, 64, 3), dtype=np.uint8)
+    two_crops = SelectedCrops(
+        crops=[
+            CropCandidate(0, 10.0, crop, 100.0),
+            CropCandidate(1, 10.2, crop, 95.0),
+        ],
+        contact_sheet_jpeg=b"jpeg-bytes",
+        contact_sheet_bgr=crop,
+    )
+
+    class TiedOcrReader:
+        def __init__(self) -> None:
+            self._idx = 0
+
+        def readtext(self, img, allowlist=None):
+            idx = self._idx
+            self._idx += 1
+            return [([[0, 0], [10, 0], [10, 10], [0, 10]], "7" if idx == 0 else "9", 0.85)]
+
+    tied_ocr = LocalOcrCapResolver(reader=TiedOcrReader()).resolve(
+        two_crops, allowed_cap_numbers=[1, 7, 9]
+    )
+    assert tied_ocr.resolved_cap_number is None
+    assert tied_ocr.candidate_scores[7] == tied_ocr.candidate_scores[9]
+    assert "tied" in tied_ocr.reasoning.lower()
+
+    class TiedGeminiClient:
+        class models:
+            @staticmethod
+            def generate_content(**kwargs):
+                return SimpleNamespace(
+                    text='{"tile_readings":[],"consensus_cap_number":7,"confidence":0.85,'
+                    '"candidate_numbers":[{"cap_number":7,"score":0.85},'
+                    '{"cap_number":9,"score":0.85}],"reasoning":"Ambiguous 7 vs 9"}'
+                )
+
+    tied_gemini = GeminiCropGridCapResolver(api_key="test", client=TiedGeminiClient()).resolve(
+        two_crops, allowed_cap_numbers=[1, 7, 9]
+    )
+    assert tied_gemini.resolved_cap_number is None
+    assert tied_gemini.candidate_scores[7] == pytest.approx(0.85)
+    assert tied_gemini.candidate_scores[9] == pytest.approx(0.85)
+
+    three_crops = SelectedCrops(
+        crops=[
+            CropCandidate(0, 10.0, crop, 100.0),
+            CropCandidate(1, 10.2, crop, 95.0),
+            CropCandidate(2, 10.4, crop, 90.0),
+        ],
+        contact_sheet_jpeg=b"jpeg-bytes",
+        contact_sheet_bgr=crop,
+    )
+
+    class RepeatedSingleCropOcrReader:
+        def __init__(self) -> None:
+            self._idx = 0
+
+        def readtext(self, img, allowlist=None):
+            idx = self._idx
+            self._idx += 1
+            if idx == 0:
+                # Multiple detections of #7 within one crop must yield only 1 vote
+                return [
+                    ([[0, 0], [5, 0], [5, 5], [0, 5]], "7", 0.90),
+                    ([[5, 0], [10, 0], [10, 5], [5, 5]], "7", 0.88),
+                    ([[10, 0], [15, 0], [15, 5], [10, 5]], "7", 0.85),
+                ]
+            return [([[0, 0], [10, 0], [10, 10], [0, 10]], "9", 0.90)]
+
+    capped_res = LocalOcrCapResolver(reader=RepeatedSingleCropOcrReader()).resolve(
+        three_crops, allowed_cap_numbers=[1, 7, 9]
+    )
+    assert capped_res.resolved_cap_number == 9
+    assert capped_res.candidate_scores[9] > capped_res.candidate_scores[7]
+
+
+def test_tracker_accumulates_missed_frames_and_keeps_relative_velocity() -> None:
+    frames: list[ExtractedFrame] = []
+    frame_boxes: dict[int, list[Detection]] = {}
+
+    base_bg = np.zeros((360, 640, 3), dtype=np.uint8)
+    rng = np.random.default_rng(7)
+    for _ in range(90):
+        cx = int(rng.integers(20, 600))
+        cy = int(rng.integers(20, 340))
+        cv2.circle(base_bg, (cx, cy), 4, (200, 200, 200), -1)
+
+    for idx in range(6):
+        shift_x = idx * 35
+        mat = np.float32([[1, 0, -shift_x], [0, 1, 0]])
+        panned = cv2.warpAffine(base_bg, mat, (640, 360))
+        frames.append(ExtractedFrame(index=idx, video_time_sec=10.0 + idx * 0.2, image_bgr=panned))
+        if idx in (2, 3):
+            # Two consecutive missed detections mid-pan
+            frame_boxes[idx] = []
+        else:
+            x1 = 420.0 - shift_x
+            frame_boxes[idx] = [
+                Detection(
+                    bbox_xyxy=(x1, 100.0, x1 + 80.0, 220.0),
+                    confidence=0.9,
+                    role=CanonicalRole.PLAYER,
+                    raw_class_name="White team",
+                )
+            ]
+
+    tracker = BoTSortTracker(iou_threshold=0.20, max_lost_frames=4)
+    tracklets = tracker.track_window(frames, SyntheticDetector(frame_boxes))
+
+    assert len(tracklets) == 1
+    assert [obs.frame_index for obs in tracklets[0].observations] == [0, 1, 4, 5]
+
+    # Verify _TrackState excludes camera translation from object velocity
+    state = _TrackState(
+        track_id=1,
+        obs=TrackletObservation(0, 0.0, (400.0, 100.0, 480.0, 220.0), 0.9, "White team"),
+    )
+    pan_warp = np.array([[1.0, 0.0, -35.0], [0.0, 1.0, 0.0]], dtype=np.float64)
+    state.predict(pan_warp)
+    state.update(
+        TrackletObservation(1, 0.2, (365.0, 100.0, 445.0, 220.0), 0.9, "White team")
+    )
+    assert state.velocity == pytest.approx((0.0, 0.0), abs=1e-6)
+
+    state.predict(pan_warp)
+    state.update(
+        TrackletObservation(2, 0.4, (342.0, 100.0, 422.0, 220.0), 0.9, "White team")
+    )
+    assert state.velocity == pytest.approx((12.0, 0.0), abs=1e-6)
+
+
+def test_warp_bbox_transforms_all_four_corners_under_rotation() -> None:
+    rot_45 = cv2.getRotationMatrix2D((50.0, 50.0), 45.0, 1.0)
+    wx1, wy1, wx2, wy2 = _warp_bbox((0.0, 0.0, 100.0, 100.0), rot_45)
+    expected_span = 100.0 * float(np.sqrt(2.0))
+    assert (wx2 - wx1) == pytest.approx(expected_span, abs=1e-3)
+    assert (wy2 - wy1) == pytest.approx(expected_span, abs=1e-3)

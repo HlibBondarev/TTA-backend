@@ -9,6 +9,8 @@ from video_analyzer.pass1.models import Pass1EventCandidate
 from video_analyzer.pass2.tracker import Tracklet, TrackletObservation, _bbox_center, _bbox_iou
 from video_analyzer.schemas.request import MatchSnapshot
 
+MIN_SPATIAL_SCORE: float = 0.15
+
 
 @dataclass(frozen=True, slots=True)
 class MatchedTracklet:
@@ -17,10 +19,14 @@ class MatchedTracklet:
     tracklet: Tracklet
     match_score: float
     nearest_observation: TrackletObservation
+    has_spatial_hint: bool = True
 
 
 class ActorMatcher:
     """Ranks Pass 2 player tracklets against Pass 1 spatial and team/role cues."""
+
+    def __init__(self, min_spatial_score: float = MIN_SPATIAL_SCORE) -> None:
+        self._min_spatial_score = min_spatial_score
 
     def match(
         self,
@@ -49,6 +55,7 @@ class ActorMatcher:
         cap_hint = (
             candidate.cap_color_hint or snapshot.tracked_team.cap_color_hint or ""
         ).strip().lower()
+        has_spatial_hint = target_bbox_px is not None
 
         for tracklet in tracklets:
             obs = tracklet.observation_nearest_to(candidate.video_time_sec)
@@ -63,15 +70,19 @@ class ActorMatcher:
                 cap_hint=cap_hint,
                 is_gk_event=is_gk_event,
                 event_time_sec=candidate.video_time_sec,
+                min_spatial_score=self._min_spatial_score,
             )
+            if score is None:
+                continue
             if best is None or score > best.match_score:
                 best = MatchedTracklet(
                     tracklet=tracklet,
                     match_score=round(score, 4),
                     nearest_observation=obs,
+                    has_spatial_hint=has_spatial_hint,
                 )
 
-        if best is None or (target_bbox_px is not None and best.match_score < 0.15):
+        if best is None or (has_spatial_hint and best.match_score < self._min_spatial_score):
             return None
         return best
 
@@ -84,7 +95,8 @@ class ActorMatcher:
         cap_hint: str,
         is_gk_event: bool,
         event_time_sec: float,
-    ) -> float:
+        min_spatial_score: float = MIN_SPATIAL_SCORE,
+    ) -> float | None:
         time_penalty = min(0.25, abs(obs.video_time_sec - event_time_sec) * 0.05)
         raw_label = obs.raw_class_name.strip().lower()
 
@@ -95,7 +107,7 @@ class ActorMatcher:
             team_bonus += 0.20
 
         if target_bbox_px is None:
-            # Without a spatial hint from Pass 1, fall back to tracklet stability + role cues
+            # Without a spatial hint from Pass 1, rank by stability + role cues for review
             stability = min(0.4, len(tracklet.observations) * 0.03)
             return max(0.0, tracklet.mean_confidence * 0.4 + stability + team_bonus - time_penalty)
 
@@ -104,8 +116,11 @@ class ActorMatcher:
         ocx, ocy = _bbox_center(obs.bbox_xyxy)
         norm_dist = hypot(tcx - ocx, tcy - ocy) / max(1.0, diag)
         proximity = max(0.0, 1.0 - norm_dist * 4.0)
+        spatial_score = iou * 0.55 + proximity * 0.35
+        if spatial_score < min_spatial_score:
+            return None
 
         return max(
             0.0,
-            min(1.0, iou * 0.55 + proximity * 0.35 + team_bonus - time_penalty),
+            min(1.0, spatial_score + team_bonus - time_penalty),
         )

@@ -85,3 +85,29 @@ def test_anchor_reconciler_flags_inverted_period_bounds(tmp_path: Path) -> None:
     assert len(reconciled) == 2
     assert all(a.needs_review is True for a in reconciled)
     assert any("was not after PeriodStart" in w for w in warnings)
+
+
+def test_anchor_reconciler_ignores_out_of_range_chunk_offsets(tmp_path: Path) -> None:
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
+    res0 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=5.0, period_number=1, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=150.0,  # exceeds chunk duration 120.0s
+                period_number=1,
+                type=TimeAnchorType.PERIOD_END,
+                confidence=0.95,
+            ),
+        ]
+    )
+
+    reconciled, warnings = AnchorReconciler().reconcile(
+        chunk_results=[(chunk0, res0)],
+        total_duration_sec=240.0,
+    )
+
+    assert len(reconciled) == 1
+    assert reconciled[0].type == TimeAnchorType.PERIOD_START
+    assert any("out-of-range" in w for w in warnings)

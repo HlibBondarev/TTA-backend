@@ -97,8 +97,17 @@ class RoboflowDetector(BaseObjectDetector):
             if x2 <= x1 or y2 <= y1:
                 continue
 
-            raw_name = str(pred.get("class", "unknown"))
-            role = self._class_map.map_class(raw_name)
+            raw_class_id = pred.get("class_id")
+            fallback_id: int | None = None
+            if raw_class_id is not None and not isinstance(raw_class_id, bool):
+                try:
+                    fallback_id = int(raw_class_id)
+                except (TypeError, ValueError):
+                    fallback_id = None
+
+            raw_class_val = pred.get("class")
+            raw_name = str(raw_class_val) if raw_class_val is not None else "unknown"
+            role = self._class_map.map_class(raw_name, fallback_id=fallback_id)
             detections.append(
                 Detection(
                     bbox_xyxy=(x1, y1, x2, y2),

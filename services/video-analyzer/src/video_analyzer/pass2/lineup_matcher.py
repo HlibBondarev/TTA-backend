@@ -34,6 +34,7 @@ class LineupMatcher:
         snapshot: MatchSnapshot,
         min_cap_confidence: float,
         max_candidates: int = 5,
+        has_spatial_hint: bool = True,
     ) -> LineupMatchOutcome:
         team_lineup = [
             entry for entry in snapshot.lineup if entry.team_id == snapshot.tracked_team.id
@@ -42,12 +43,15 @@ class LineupMatcher:
         for entry in team_lineup:
             by_number[entry.number].append(entry)
 
+        missing_spatial_hint = (not has_spatial_hint) or (candidate.actor_bbox_normalized is None)
         review_reasons: list[str] = []
         if candidate.confidence < 0.80:
             review_reasons.append("LOW_EVENT_CONFIDENCE")
 
         if cap_result is None:
             review_reasons.append("NO_PLAYER_TRACKLET_MATCHED")
+            if missing_spatial_hint:
+                review_reasons.append("MISSING_ACTOR_SPATIAL_HINT")
             return LineupMatchOutcome(
                 match_lineup_id=None,
                 resolved_cap_number=None,
@@ -66,6 +70,9 @@ class LineupMatcher:
             candidate=candidate,
             max_candidates=max_candidates,
         )
+
+        if missing_spatial_hint:
+            review_reasons.append("MISSING_ACTOR_SPATIAL_HINT")
 
         resolved_num = cap_result.resolved_cap_number
         matching_entries = by_number.get(resolved_num, []) if resolved_num is not None else []
@@ -93,6 +100,17 @@ class LineupMatcher:
                 match_lineup_id=None,
                 resolved_cap_number=None,
                 cap_confidence=cap_result.confidence,
+                candidate_lineup_ids=ranked_candidates,
+                needs_review=True,
+                review_reasons=review_reasons,
+            )
+
+        # Unhinted matches must never auto-confirm a lineup assignment
+        if missing_spatial_hint:
+            return LineupMatchOutcome(
+                match_lineup_id=None,
+                resolved_cap_number=None,
+                cap_confidence=round(cap_result.confidence, 4),
                 candidate_lineup_ids=ranked_candidates,
                 needs_review=True,
                 review_reasons=review_reasons,

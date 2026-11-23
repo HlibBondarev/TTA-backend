@@ -65,7 +65,11 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
             parsed = getattr(response, "parsed", None)
             if isinstance(parsed, Pass1ChunkResult):
                 return parsed
-            raw_text = getattr(response, "text", None) or "{}"
+            raw_text = getattr(response, "text", None)
+            if not isinstance(raw_text, str) or not raw_text.strip():
+                raise RuntimeError(
+                    f"Gemini Pass 1 returned an empty response for chunk {chunk.index}."
+                )
             return Pass1ChunkResult.model_validate_json(raw_text)
         finally:
             self._safe_delete_file(client, uploaded_file)

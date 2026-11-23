@@ -109,3 +109,79 @@ def test_draft_player_presence_rejects_zero_or_negative_duration() -> None:
             time_out=t0,
             confidence=0.8,
         )
+
+
+def test_synthesize_closed_presences_skips_intervals_collapsing_after_rounding() -> None:
+    t0 = datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)
+    lineup_id = uuid4()
+    anchors = [
+        DraftTimeAnchor(
+            id=uuid4(),
+            period_number=1,
+            type=TimeAnchorType.PERIOD_START,
+            video_time_sec=10.0001,
+            timestamp=to_utc_timestamp(t0, 10.0001),
+            confidence=0.95,
+        ),
+        DraftTimeAnchor(
+            id=uuid4(),
+            period_number=1,
+            type=TimeAnchorType.PERIOD_END,
+            video_time_sec=10.0004,
+            timestamp=to_utc_timestamp(t0, 10.0004),
+            confidence=0.95,
+        ),
+        DraftTimeAnchor(
+            id=uuid4(),
+            period_number=2,
+            type=TimeAnchorType.PERIOD_START,
+            video_time_sec=0.0,
+            timestamp=to_utc_timestamp(t0, 0.0),
+            confidence=0.95,
+        ),
+        DraftTimeAnchor(
+            id=uuid4(),
+            period_number=2,
+            type=TimeAnchorType.PERIOD_END,
+            video_time_sec=0.0004,
+            timestamp=to_utc_timestamp(t0, 0.0004),
+            confidence=0.95,
+        ),
+    ]
+    events = [
+        DraftEvent(
+            id=uuid4(),
+            event_definition_id=uuid4(),
+            prompt_code="EVT_01_G_POS",
+            event_name="Goal",
+            is_positive=True,
+            is_shot=True,
+            period_number=1,
+            video_time_sec=10.0002,
+            event_timestamp=to_utc_timestamp(t0, 10.0002),
+            match_lineup_id=lineup_id,
+            resolved_cap_number=7,
+            event_confidence=0.9,
+            cap_confidence=0.9,
+            needs_review=False,
+        ),
+        DraftEvent(
+            id=uuid4(),
+            event_definition_id=uuid4(),
+            prompt_code="EVT_01_G_POS",
+            event_name="Goal",
+            is_positive=True,
+            is_shot=True,
+            period_number=2,
+            video_time_sec=0.0002,
+            event_timestamp=to_utc_timestamp(t0, 0.0002),
+            match_lineup_id=lineup_id,
+            resolved_cap_number=7,
+            event_confidence=0.9,
+            cap_confidence=0.9,
+            needs_review=False,
+        ),
+    ]
+
+    presences = synthesize_closed_presences(events, anchors, t0, enabled=True)
+    assert presences == []

@@ -99,8 +99,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.command == "serve":
+        from video_analyzer.api.app import create_app
+
+        application = create_app(settings=settings)
         uvicorn.run(
-            "video_analyzer.api.app:app",
+            application,
             host=args.host or settings.service_host,
             port=args.port or settings.service_port,
         )

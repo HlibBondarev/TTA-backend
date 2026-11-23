@@ -208,3 +208,56 @@ def test_local_yolo_detector_parses_mock_ultralytics_output() -> None:
     assert dets[0].role == CanonicalRole.PLAYER
     assert dets[0].raw_class_name == "person"
     assert dets[0].confidence == pytest.approx(0.92, abs=1e-4)
+
+
+def test_onnx_nms_runs_per_original_class_and_keeps_overlapping_distinct_classes() -> None:
+    detector = OnnxDetector(
+        model_path="dummy.onnx",
+        confidence=0.3,
+        iou=0.45,
+        class_map=ClassMapAdapter({"0": "player", "1": "player"}),
+        input_size=640,
+    )
+    # Standard YOLO export shape [1, 4 + 2, 20]:
+    # two overlapping boxes from class 0 (duplicate), one overlapping box from class 1 (distinct)
+    raw_yolo = np.zeros((1, 6, 20), dtype=np.float32)
+    raw_yolo[0, :, 0] = [320.0, 320.0, 100.0, 140.0, 0.90, 0.05]
+    raw_yolo[0, :, 1] = [322.0, 322.0, 100.0, 140.0, 0.70, 0.05]  # same class 0 -> suppressed
+    raw_yolo[0, :, 2] = [320.0, 320.0, 100.0, 140.0, 0.05, 0.85]  # class 1 -> kept
+
+    dets = detector.decode_outputs(
+        raw_yolo, orig_width=640, orig_height=640, scale=1.0, pad_x=0.0, pad_y=0.0
+    )
+    assert len(dets) == 2
+    assert {d.raw_class_name for d in dets} == {"0", "1"}
+
+
+def test_roboflow_detector_falls_back_to_numeric_class_id() -> None:
+    detector = RoboflowDetector(
+        model_id="waterpolo-salvasc/5",
+        api_key="test-key",
+        api_url="https://detect.roboflow.com",
+        confidence=0.25,
+        iou=0.45,
+        class_map=ClassMapAdapter({"0": "player", "1": "ball"}),
+    )
+    dets = detector.parse_predictions(
+        payload={
+            "predictions": [
+                {
+                    "x": 320.0,
+                    "y": 240.0,
+                    "width": 80.0,
+                    "height": 120.0,
+                    "confidence": 0.9,
+                    "class": "unmapped_custom_label",
+                    "class_id": 0,
+                }
+            ]
+        },
+        frame_width=640,
+        frame_height=480,
+    )
+    assert len(dets) == 1
+    assert dets[0].role == CanonicalRole.PLAYER
+    assert dets[0].raw_class_name == "unmapped_custom_label"

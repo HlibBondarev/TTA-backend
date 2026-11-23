@@ -85,11 +85,13 @@ def synthesize_closed_presences(
         if bounds is None:
             continue
         start_sec, end_sec = bounds
-        if end_sec <= start_sec:
+        rounded_start = round(max(0.0, start_sec), 3)
+        rounded_end = round(max(0.0, end_sec), 3)
+        if rounded_end <= rounded_start or rounded_end <= 0.0:
             continue
 
-        time_in_dt = to_utc_timestamp(video_start_utc, start_sec)
-        time_out_dt = to_utc_timestamp(video_start_utc, end_sec)
+        time_in_dt = to_utc_timestamp(video_start_utc, rounded_start)
+        time_out_dt = to_utc_timestamp(video_start_utc, rounded_end)
         if time_out_dt <= time_in_dt:
             continue
 
@@ -99,8 +101,8 @@ def synthesize_closed_presences(
                     id=uuid4(),
                     match_lineup_id=lineup_id,
                     period_number=period_num,
-                    time_in_video_sec=round(start_sec, 3),
-                    time_out_video_sec=round(end_sec, 3),
+                    time_in_video_sec=rounded_start,
+                    time_out_video_sec=rounded_end,
                     time_in=time_in_dt,
                     time_out=time_out_dt,
                     confidence=0.70,

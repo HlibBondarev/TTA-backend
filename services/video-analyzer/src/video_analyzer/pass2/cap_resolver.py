@@ -115,7 +115,9 @@ class GeminiCropGridCapResolver(BaseCapResolver):
 
         parsed = getattr(response, "parsed", None)
         if not isinstance(parsed, _GeminiCapGridResponse):
-            raw_text = getattr(response, "text", None) or "{}"
+            raw_text = getattr(response, "text", None)
+            if not isinstance(raw_text, str) or not raw_text.strip():
+                raise RuntimeError("Gemini Pass 2 cap resolver returned an empty response.")
             parsed = _GeminiCapGridResponse.model_validate_json(raw_text)
 
         return self._to_result(parsed, set(allowed_cap_numbers))
@@ -150,6 +152,10 @@ class GeminiCropGridCapResolver(BaseCapResolver):
         )
         if resolved is not None:
             scores[resolved] = max(scores.get(resolved, 0.0), parsed.confidence)
+            top_score = max(scores.values(), default=0.0)
+            tied_top = [num for num, score in scores.items() if score == top_score]
+            if len(tied_top) > 1:
+                resolved = None
 
         resolved_conf = (
             parsed.confidence if resolved is not None else max(scores.values(), default=0.0)
@@ -181,13 +187,17 @@ class LocalOcrCapResolver(BaseCapResolver):
 
         for crop in selected_crops.crops:
             results = reader.readtext(crop.crop_bgr, allowlist="0123456789")
+            crop_best: dict[int, float] = {}
             for _, text, conf in results:
                 digits = re.sub(r"\D", "", str(text))
                 if not digits:
                     continue
                 number = int(digits)
                 if number in allowed_set:
-                    votes[number].append(float(conf))
+                    bounded_conf = max(0.0, min(1.0, float(conf)))
+                    crop_best[number] = max(crop_best.get(number, 0.0), bounded_conf)
+            for number, best_conf in crop_best.items():
+                votes[number].append(best_conf)
 
         if not votes:
             return CapResolutionResult(
@@ -204,7 +214,23 @@ class LocalOcrCapResolver(BaseCapResolver):
             vote_ratio = min(1.0, len(confs) / total_crops)
             candidate_scores[num] = round(min(1.0, mean_conf * 0.7 + vote_ratio * 0.3), 4)
 
-        best_num, best_score = max(candidate_scores.items(), key=lambda kv: kv[1])
+        best_score = max(candidate_scores.values())
+        top_candidates = sorted(
+            num for num, score in candidate_scores.items() if score == best_score
+        )
+        if len(top_candidates) > 1:
+            tied_labels = ", ".join(f"#{num}" for num in top_candidates)
+            return CapResolutionResult(
+                resolved_cap_number=None,
+                confidence=best_score,
+                candidate_scores=candidate_scores,
+                reasoning=(
+                    f"Local OCR tied at {best_score:.4f} across caps [{tied_labels}]; "
+                    "leaving unresolved for review."
+                ),
+            )
+
+        best_num = top_candidates[0]
         return CapResolutionResult(
             resolved_cap_number=best_num,
             confidence=best_score,

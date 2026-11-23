@@ -24,10 +24,12 @@ def create_app(
 ) -> FastAPI:
     """Create the FastAPI application with internal API key security."""
     active_settings = settings or Settings()
+    internal_api_key = active_settings.require_internal_api_key()
     active_orchestrator = orchestrator or build_default_orchestrator(active_settings)
     job_store = JobStore(
         orchestrator=active_orchestrator,
-        internal_api_key=active_settings.internal_api_key,
+        callback_allowed_origins=active_settings.resolved_callback_allowed_origins,
+        callback_api_key=active_settings.callback_api_key,
     )
 
     @asynccontextmanager
@@ -51,9 +53,8 @@ def create_app(
     def verify_internal_api_key(
         x_internal_api_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
     ) -> None:
-        expected = active_settings.internal_api_key
-        if not expected or not x_internal_api_key or not hmac.compare_digest(
-            x_internal_api_key, expected
+        if not x_internal_api_key or not hmac.compare_digest(
+            x_internal_api_key, internal_api_key
         ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -78,7 +79,13 @@ def create_app(
         dependencies=[Depends(verify_internal_api_key)],
     )
     def submit_job(request: AnalyzeJobRequest) -> dict[str, Any]:
-        record = job_store.submit(request)
+        try:
+            record = job_store.submit(request)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
         return {
             "jobId": str(record.job_id),
             "matchId": str(record.match_id),
@@ -130,4 +137,7 @@ def _serialize_job(record: JobRecord) -> dict[str, Any]:
     }
 
 
-app = create_app()
+def __getattr__(name: str) -> Any:
+    if name == "app":
+        return create_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -27,7 +27,14 @@ class AnchorReconciler:
         raw_candidates: list[Pass1AnchorCandidate] = []
 
         for chunk, result in chunk_results:
+            chunk_duration = max(0.0, chunk.end_sec - chunk.start_sec)
             for raw in result.time_anchors:
+                if raw.time_sec < 0.0 or raw.time_sec > chunk_duration + 1e-6:
+                    warnings.append(
+                        f"Ignored out-of-range Pass 1 anchor offset {raw.time_sec:.3f}s "
+                        f"in chunk {chunk.index} (valid range: 0.000s..{chunk_duration:.3f}s)."
+                    )
+                    continue
                 if raw.confidence < min_confidence:
                     continue
                 abs_time = max(0.0, min(total_duration_sec, chunk.start_sec + raw.time_sec))

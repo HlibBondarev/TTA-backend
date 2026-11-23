@@ -46,7 +46,8 @@ pip install -e ".[dev]"
 
 ```powershell
 Copy-Item .env.example .env
-# Edit .env and set GEMINI_API_KEY and ROBOFLOW_API_KEY
+# Edit .env and set a unique INTERNAL_API_KEY (required for API server mode),
+# GEMINI_API_KEY, and ROBOFLOW_API_KEY
 ```
 
 ### Run CLI Analysis on a Local 4K Match Video
@@ -66,9 +67,13 @@ Useful optional flags:
 
 ### Start the Internal FastAPI Server
 
+Configure a unique, non-placeholder `INTERNAL_API_KEY` in `.env` (or environment variables) before starting the server. Local runs bind strictly to `127.0.0.1` by default:
+
 ```powershell
-tta-video-analyzer serve --host 0.0.0.0 --port 8000
+tta-video-analyzer serve --host 127.0.0.1 --port 8000
 ```
+
+If remote access is needed over a trusted private network, configure a strong unique `INTERNAL_API_KEY` first (plus `CALLBACK_ALLOWED_ORIGINS` and `CALLBACK_API_KEY` when using webhook callbacks) before binding `--host 0.0.0.0`.
 
 Verify health:
 
