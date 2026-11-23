@@ -1,0 +1,111 @@
+"""Associates a Pass 1 event candidate's spatial hint to a Pass 2 BoT-SORT tracklet."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import hypot
+
+from video_analyzer.pass1.models import Pass1EventCandidate
+from video_analyzer.pass2.tracker import Tracklet, TrackletObservation, _bbox_center, _bbox_iou
+from video_analyzer.schemas.request import MatchSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class MatchedTracklet:
+    """Winning tracklet and association confidence for a Pass 1 event."""
+
+    tracklet: Tracklet
+    match_score: float
+    nearest_observation: TrackletObservation
+
+
+class ActorMatcher:
+    """Ranks Pass 2 player tracklets against Pass 1 spatial and team/role cues."""
+
+    def match(
+        self,
+        candidate: Pass1EventCandidate,
+        tracklets: list[Tracklet],
+        snapshot: MatchSnapshot,
+        frame_width: int,
+        frame_height: int,
+    ) -> MatchedTracklet | None:
+        if not tracklets or frame_width <= 0 or frame_height <= 0:
+            return None
+
+        target_bbox_px: tuple[float, float, float, float] | None = None
+        if candidate.actor_bbox_normalized is not None:
+            nx1, ny1, nx2, ny2 = candidate.actor_bbox_normalized
+            target_bbox_px = (
+                nx1 * frame_width,
+                ny1 * frame_height,
+                nx2 * frame_width,
+                ny2 * frame_height,
+            )
+
+        best: MatchedTracklet | None = None
+        diag = hypot(frame_width, frame_height)
+        is_gk_event = candidate.definition.name.lower() in {"save", "goalkeeper error"}
+        cap_hint = (
+            candidate.cap_color_hint or snapshot.tracked_team.cap_color_hint or ""
+        ).strip().lower()
+
+        for tracklet in tracklets:
+            obs = tracklet.observation_nearest_to(candidate.video_time_sec)
+            if obs is None:
+                continue
+
+            score = self._score_candidate(
+                obs=obs,
+                tracklet=tracklet,
+                target_bbox_px=target_bbox_px,
+                diag=diag,
+                cap_hint=cap_hint,
+                is_gk_event=is_gk_event,
+                event_time_sec=candidate.video_time_sec,
+            )
+            if best is None or score > best.match_score:
+                best = MatchedTracklet(
+                    tracklet=tracklet,
+                    match_score=round(score, 4),
+                    nearest_observation=obs,
+                )
+
+        if best is None or (target_bbox_px is not None and best.match_score < 0.15):
+            return None
+        return best
+
+    @staticmethod
+    def _score_candidate(
+        obs: TrackletObservation,
+        tracklet: Tracklet,
+        target_bbox_px: tuple[float, float, float, float] | None,
+        diag: float,
+        cap_hint: str,
+        is_gk_event: bool,
+        event_time_sec: float,
+    ) -> float:
+        time_penalty = min(0.25, abs(obs.video_time_sec - event_time_sec) * 0.05)
+        raw_label = obs.raw_class_name.strip().lower()
+
+        team_bonus = 0.0
+        if cap_hint and cap_hint in raw_label:
+            team_bonus += 0.15
+        if is_gk_event and "goalkeeper" in raw_label:
+            team_bonus += 0.20
+
+        if target_bbox_px is None:
+            # Without a spatial hint from Pass 1, fall back to tracklet stability + role cues
+            stability = min(0.4, len(tracklet.observations) * 0.03)
+            return max(0.0, tracklet.mean_confidence * 0.4 + stability + team_bonus - time_penalty)
+
+        iou = _bbox_iou(target_bbox_px, obs.bbox_xyxy)
+        tcx, tcy = _bbox_center(target_bbox_px)
+        ocx, ocy = _bbox_center(obs.bbox_xyxy)
+        norm_dist = hypot(tcx - ocx, tcy - ocy) / max(1.0, diag)
+        proximity = max(0.0, 1.0 - norm_dist * 4.0)
+
+        return max(
+            0.0,
+            min(1.0, iou * 0.55 + proximity * 0.35 + team_bonus - time_penalty),
+        )

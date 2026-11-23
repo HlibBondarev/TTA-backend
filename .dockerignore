@@ -1,0 +1,13 @@
+.git
+.github
+.vs
+.vscode
+.agents
+**/bin
+**/obj
+TestResults
+*.user
+*.suo
+.env
+secrets.json
+services/video-analyzer

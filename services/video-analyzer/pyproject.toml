@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tta-video-analyzer"
+version = "0.1.0"
+description = "Hybrid two-pass post-match video analysis microservice for TTA Water Polo."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "httpx>=0.27.0",
+    "google-genai>=1.0.0",
+    "opencv-python-headless>=4.10.0",
+    "numpy>=1.26.0",
+    "Pillow>=10.4.0",
+]
+
+[project.optional-dependencies]
+yolo = [
+    "ultralytics>=8.3.0",
+]
+onnx = [
+    "onnxruntime>=1.19.0",
+]
+ocr = [
+    "easyocr>=1.7.2",
+]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.7.0",
+]
+
+[project.scripts]
+tta-video-analyzer = "video_analyzer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]

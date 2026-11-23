@@ -44,3 +44,19 @@ TestResults/
 [Bb]in/
 [Oo]bj/
 .env
+
+# Python / Video Analyzer Microservice
+.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+services/video-analyzer/.env
+services/video-analyzer/*.pt
+services/video-analyzer/*.onnx
+services/video-analyzer/models/
+services/video-analyzer/debug/
+services/video-analyzer/output/
