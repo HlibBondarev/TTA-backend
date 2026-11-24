@@ -25,6 +25,18 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'services/video-analyzer/pyproject.toml'
+
+      - name: Install Python video-analyzer dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "./services/video-analyzer[dev]"
+
       - name: Install SonarScanner
         run: dotnet tool install --global dotnet-sonarscanner --version 9.2.1
 
@@ -37,9 +49,11 @@ jobs:
           /d:sonar.token="$SONAR_TOKEN" \
           /d:sonar.host.url="https://sonarcloud.io" \
           /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
-          /d:sonar.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**,**/*.sql,**/services/video-analyzer/**" \
-          /d:sonar.coverage.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**,**/*.sql,**/services/video-analyzer/**" \
-          /d:sonar.cpd.exclusions="**/Controllers/MatchesController.cs" \
+          /d:sonar.python.coverage.reportPaths="services/video-analyzer/coverage.xml" \
+          /d:sonar.python.version="3.12" \
+          /d:sonar.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**,**/*.sql,**/services/video-analyzer/.venv/**,**/services/video-analyzer/**/__pycache__/**,**/services/video-analyzer/**/*.egg-info/**,**/services/video-analyzer/build/**,**/services/video-analyzer/dist/**" \
+          /d:sonar.coverage.exclusions="**/Program.cs,**/Startup.cs,**/TTA.DataAccess/Models/**,**/*.sql,**/services/video-analyzer/tests/**" \
+          /d:sonar.cpd.exclusions="**/Controllers/MatchesController.cs,**/services/video-analyzer/tests/**" \
           /d:sonar.lang.patterns.plsql="**/*.not_exists" \
           /d:sonar.lang.patterns.tsql="**/*.sql"
 
@@ -59,6 +73,18 @@ jobs:
           dotnet test TTA-backend.sln --no-build --verbosity normal \
           --collect:"XPlat Code Coverage" \
           -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+      - name: Lint Python video-analyzer (Ruff)
+        run: ruff check services/video-analyzer
+
+      - name: Run Python video-analyzer tests with coverage
+        env:
+          GEMINI_API_KEY: ""
+        run: |
+          pytest services/video-analyzer \
+            -c services/video-analyzer/pyproject.toml \
+            --cov=services/video-analyzer/src/video_analyzer \
+            --cov-report=xml:services/video-analyzer/coverage.xml
 
       - name: End Sonar Analysis
         env:

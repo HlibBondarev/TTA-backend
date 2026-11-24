@@ -54,6 +54,9 @@ venv/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
 services/video-analyzer/.env
 services/video-analyzer/*.pt
 services/video-analyzer/*.onnx
