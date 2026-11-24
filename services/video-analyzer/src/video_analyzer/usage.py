@@ -64,7 +64,9 @@ def extract_usage_metadata(response: Any) -> GeminiTokenUsage | None:
 
 
 def _has_unaccounted_non_thought_tokens(item: GeminiTokenUsage) -> bool:
-    """Return True when total_tokens exceeds prompt + candidates while thoughts_tokens is absent."""
+    """Return True when unaccounted tokens exist while thoughts_tokens is absent."""
+    if item.has_unaccounted_tokens:
+        return True
     if item.thoughts_tokens is not None:
         return False
     if item.prompt_tokens is None or item.candidates_tokens is None or item.total_tokens is None:
@@ -86,26 +88,24 @@ def _sum_optional_counter(items: list[GeminiTokenUsage], attr: str) -> int | Non
     return sum(values) if values else None
 
 
-def _sum_thoughts_counter(items: list[GeminiTokenUsage]) -> int | None:
-    """Sum thoughts_tokens, preserving None when absent or when unaccounted tokens exist."""
-    if any(_has_unaccounted_non_thought_tokens(item) for item in items):
-        return None
-    return _sum_optional_counter(items, "thoughts_tokens")
-
-
 def aggregate_token_usage(usages: Iterable[GeminiTokenUsage | None]) -> GeminiTokenUsage:
     """Sum token counters across multiple Gemini API calls, ignoring None and zero-call entries."""
     active = [item for item in usages if item is not None and item.call_count > 0]
     if not active:
         return GeminiTokenUsage()
 
+    has_unaccounted = any(_has_unaccounted_non_thought_tokens(item) for item in active)
+    thoughts_tokens = (
+        None if has_unaccounted else _sum_optional_counter(active, "thoughts_tokens")
+    )
     return GeminiTokenUsage(
         call_count=sum(item.call_count for item in active),
         prompt_tokens=_sum_strict_counter(active, "prompt_tokens"),
         candidates_tokens=_sum_strict_counter(active, "candidates_tokens"),
-        thoughts_tokens=_sum_thoughts_counter(active),
+        thoughts_tokens=thoughts_tokens,
         cached_content_tokens=_sum_optional_counter(active, "cached_content_tokens"),
         total_tokens=_sum_strict_counter(active, "total_tokens"),
+        has_unaccounted_tokens=has_unaccounted,
     )
 
 

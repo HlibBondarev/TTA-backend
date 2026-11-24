@@ -390,3 +390,52 @@ def test_estimate_stage_cost_handles_nullable_counters_and_non_thinking_models()
     assert non_thinking_exact_total.thoughts_tokens is None
     assert cost_nt2.pricing_configured is True
     assert cost_nt2.total_cost_usd == pytest.approx(0.80)
+
+
+def test_aggregate_preserves_unavailable_cost_across_mixed_partial_calls() -> None:
+    call_with_unaccounted = GeminiTokenUsage(
+        call_count=1,
+        prompt_tokens=1_000_000,
+        candidates_tokens=100_000,
+        thoughts_tokens=None,
+        total_tokens=1_250_000,
+    )
+    call_without_total = GeminiTokenUsage(
+        call_count=1,
+        prompt_tokens=500_000,
+        candidates_tokens=50_000,
+        thoughts_tokens=20_000,
+        total_tokens=None,
+    )
+
+    aggregated = aggregate_token_usage([call_with_unaccounted, call_without_total])
+    assert aggregated.call_count == 2
+    assert aggregated.prompt_tokens == 1_500_000
+    assert aggregated.candidates_tokens == 150_000
+    assert aggregated.thoughts_tokens is None
+    assert aggregated.total_tokens is None
+    assert "hasUnaccountedTokens" not in aggregated.model_dump(by_alias=True)
+
+    stage_cost = estimate_stage_cost(
+        "gemini-4-hydrogen",
+        aggregated,
+        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+    )
+    assert stage_cost.pricing_configured is True
+    assert stage_cost.input_cost_usd is None
+    assert stage_cost.output_cost_usd is None
+    assert stage_cost.total_cost_usd is None
+    assert "thoughts_token_count" in (stage_cost.note or "")
+
+    diag = build_gemini_usage_diagnostics(
+        pass1_model="gemini-4-hydrogen",
+        pass1_usages=[call_with_unaccounted, call_without_total],
+        pass2_model="gemini-4-hydrogen",
+        pass2_usages=[],
+        pricing_table=DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+    )
+    assert diag.pass1.estimated_cost is not None
+    assert diag.pass1.estimated_cost.total_cost_usd is None
+    assert diag.estimated_cost is not None
+    assert diag.estimated_cost.pricing_configured is True
+    assert diag.estimated_cost.total_cost_usd is None

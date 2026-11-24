@@ -142,6 +142,7 @@ class GeminiTokenUsage(CamelCaseModel):
     thoughts_tokens: int | None = Field(default=None, ge=0)
     cached_content_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
+    has_unaccounted_tokens: bool = Field(default=False, exclude=True)
 
 
 class GeminiCostEstimate(CamelCaseModel):
