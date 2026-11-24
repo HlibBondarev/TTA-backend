@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -15,13 +16,19 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import video_analyzer.api.app as app_module
-from tests.test_orchestrator_and_api import _build_mock_orchestrator
+from tests.test_orchestrator_and_api import (
+    MockCapResolver,
+    MockDetector,
+    MockPass1Analyzer,
+    _build_mock_orchestrator,
+)
 from video_analyzer.api.app import create_app
 from video_analyzer.api.job_store import JobStore
 from video_analyzer.cli import main as cli_main
 from video_analyzer.config import Settings
-from video_analyzer.pipeline.orchestrator import JobCancelledError
-from video_analyzer.schemas.request import AnalyzeJobRequest
+from video_analyzer.media.ffmpeg_client import FFmpegClient
+from video_analyzer.pipeline.orchestrator import JobCancelledError, VideoAnalysisOrchestrator
+from video_analyzer.schemas.request import AnalyzeJobRequest, VideoSource
 
 
 def test_create_app_rejects_unset_or_placeholder_internal_api_key(
@@ -701,3 +708,180 @@ def test_cli_fails_on_missing_explicit_env_file_and_keeps_default_env_fallback(
     )
     assert cli_main(["serve"]) == 0
     assert isinstance(served["app"], FastAPI)
+
+
+def test_job_store_sanitizes_presigned_download_http_failure_and_supports_mid_download_cancel(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    signed_url = (
+        "https://cdn.tta.example/videos/match.mp4?X-Amz-Signature=secret-sig-999&token=tok-888"
+    )
+    downloaded_urls: list[str] = []
+    callbacks: list[dict[str, object]] = []
+
+    def fail_download_handler(request: httpx.Request) -> httpx.Response:
+        downloaded_urls.append(str(request.url))
+        return httpx.Response(403, request=request, text="AccessDenied")
+
+    def callback_handler(request: httpx.Request) -> httpx.Response:
+        callbacks.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200)
+
+    dl_client = httpx.Client(transport=httpx.MockTransport(fail_download_handler))
+    cb_client = httpx.Client(transport=httpx.MockTransport(callback_handler))
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    orchestrator = VideoAnalysisOrchestrator(
+        settings=Settings(_env_file=None, internal_api_key="test-key", work_dir=str(work_dir)),
+        ffmpeg_client=FFmpegClient(http_client=dl_client),
+        pass1_analyzer=MockPass1Analyzer(),
+        detector=MockDetector(),
+        cap_resolver=MockCapResolver(),
+    )
+    store = JobStore(
+        orchestrator=orchestrator,
+        callback_allowed_origins=["https://backend.tta.local"],
+        http_client=cb_client,
+    )
+    try:
+        req = sample_job_request.model_copy(
+            update={
+                "job_id": uuid4(),
+                "video_source": VideoSource(kind="presigned_url", uri=signed_url),
+                "callback_url": "https://backend.tta.local/api/cb",
+            }
+        )
+        with caplog.at_level(logging.ERROR, logger="video_analyzer.api.job_store"):
+            store.submit(req)
+            for _ in range(50):
+                rec = store.get(req.job_id)
+                if rec is not None and rec.finalized:
+                    break
+                time.sleep(0.05)
+
+        snap = store.get_snapshot(req.job_id)
+        assert snap is not None
+        assert snap.status == "failed"
+        assert snap.error_message is not None
+        assert downloaded_urls == [signed_url]
+        assert len(callbacks) == 1
+        cb_error = str(callbacks[0]["errorMessage"])
+        assert "HTTP 403" in snap.error_message
+        assert "HTTP 403" in cb_error
+        for secret in ("secret-sig-999", "tok-888", "cdn.tta.example"):
+            assert secret not in caplog.text
+            assert secret not in snap.error_message
+            assert secret not in cb_error
+
+        # Defense-in-depth: raw httpx.HTTPStatusError escaping orchestrator is also sanitized
+        caplog.clear()
+        callbacks.clear()
+
+        class RawHttpErrorOrchestrator:
+            def run(self, request, cancel_event=None, progress_callback=None):
+                req_obj = httpx.Request("GET", signed_url)
+                resp_obj = httpx.Response(401, request=req_obj)
+                raise httpx.HTTPStatusError(
+                    f"Client error '401 Unauthorized' for url '{signed_url}'",
+                    request=req_obj,
+                    response=resp_obj,
+                )
+
+        raw_store = JobStore(
+            orchestrator=RawHttpErrorOrchestrator(),  # type: ignore[arg-type]
+            callback_allowed_origins=["https://backend.tta.local"],
+            http_client=cb_client,
+        )
+        try:
+            raw_req = req.model_copy(update={"job_id": uuid4()})
+            with caplog.at_level(logging.ERROR, logger="video_analyzer.api.job_store"):
+                raw_store.submit(raw_req)
+                for _ in range(50):
+                    rec = raw_store.get(raw_req.job_id)
+                    if rec is not None and rec.finalized:
+                        break
+                    time.sleep(0.05)
+            raw_snap = raw_store.get_snapshot(raw_req.job_id)
+            assert raw_snap is not None
+            assert raw_snap.status == "failed"
+            assert raw_snap.error_message is not None
+            assert "HTTP 401" in raw_snap.error_message
+            assert len(callbacks) == 1
+            raw_cb_error = str(callbacks[0]["errorMessage"])
+            assert "HTTP 401" in raw_cb_error
+            for secret in ("secret-sig-999", "tok-888", "cdn.tta.example"):
+                assert secret not in caplog.text
+                assert secret not in raw_snap.error_message
+                assert secret not in raw_cb_error
+        finally:
+            raw_store.shutdown()
+
+        # Active cancellation mid-download transitions to cancelled and deletes partial file
+        callbacks.clear()
+        chunk_started = threading.Event()
+        release_second_chunk = threading.Event()
+
+        class GatedDownloadStream(httpx.SyncByteStream):
+            def __init__(self) -> None:
+                self.closed = False
+
+            def __iter__(self):
+                yield b"chunk-1"
+                chunk_started.set()
+                release_second_chunk.wait(timeout=5.0)
+                yield b"chunk-2"
+
+            def close(self) -> None:
+                self.closed = True
+
+        gated_stream = GatedDownloadStream()
+        cancel_dl_client = httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, stream=gated_stream, request=request)
+            )
+        )
+        cancel_work_dir = tmp_path / "cancel_work"
+        cancel_work_dir.mkdir()
+        cancel_orch = VideoAnalysisOrchestrator(
+            settings=Settings(
+                _env_file=None, internal_api_key="test-key", work_dir=str(cancel_work_dir)
+            ),
+            ffmpeg_client=FFmpegClient(http_client=cancel_dl_client),
+            pass1_analyzer=MockPass1Analyzer(),
+            detector=MockDetector(),
+            cap_resolver=MockCapResolver(),
+        )
+        cancel_store = JobStore(
+            orchestrator=cancel_orch,
+            callback_allowed_origins=["https://backend.tta.local"],
+            http_client=cb_client,
+        )
+        try:
+            cancel_req = req.model_copy(update={"job_id": uuid4()})
+            cancel_store.submit(cancel_req)
+            assert chunk_started.wait(timeout=3.0)
+            assert cancel_store.cancel(cancel_req.job_id) is True
+            release_second_chunk.set()
+            for _ in range(50):
+                rec = cancel_store.get(cancel_req.job_id)
+                if rec is not None and rec.finalized:
+                    break
+                time.sleep(0.05)
+
+            final_rec = cancel_store.get(cancel_req.job_id)
+            assert final_rec is not None
+            assert final_rec.status == "cancelled"
+            assert gated_stream.closed is True
+            assert len(callbacks) == 1
+            assert callbacks[0]["status"] == "cancelled"
+            assert list(cancel_work_dir.rglob("source_video.mp4")) == []
+        finally:
+            release_second_chunk.set()
+            cancel_store.shutdown()
+            cancel_dl_client.close()
+    finally:
+        store.shutdown()
+        dl_client.close()
+        cb_client.close()

@@ -115,7 +115,11 @@ class VideoAnalysisOrchestrator:
                 self._check_cancelled(cancel_event)
 
                 t_probe = time.monotonic()
-                video_path = self._ffmpeg.resolve_source_path(request.video_source, work_dir)
+                video_path = self._ffmpeg.resolve_source_path(
+                    request.video_source,
+                    work_dir,
+                    cancel_event=cancel_event,
+                )
                 probe = self._ffmpeg.probe(video_path, cancel_event=cancel_event)
                 timings["probe"] = round(time.monotonic() - t_probe, 3)
 

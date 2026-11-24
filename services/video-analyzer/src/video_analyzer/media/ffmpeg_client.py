@@ -22,10 +22,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_FFPROBE_TIMEOUT_SEC: float = 60.0
 DEFAULT_FFMPEG_TIMEOUT_SEC: float = 600.0
+DEFAULT_DOWNLOAD_READ_TIMEOUT_SEC: float = 10.0
+DEFAULT_DOWNLOAD_TOTAL_TIMEOUT_SEC: float = 300.0
 
 
 class FFmpegCancelledError(RuntimeError):
-    """Raised when an FFmpeg or FFprobe subprocess is cancelled cooperatively."""
+    """Raised when a media download or FFmpeg/FFprobe subprocess is cancelled cooperatively."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,18 +70,34 @@ class FFmpegClient:
         ffprobe_bin: str = "ffprobe",
         ffprobe_timeout_sec: float = DEFAULT_FFPROBE_TIMEOUT_SEC,
         ffmpeg_timeout_sec: float = DEFAULT_FFMPEG_TIMEOUT_SEC,
+        download_read_timeout_sec: float = DEFAULT_DOWNLOAD_READ_TIMEOUT_SEC,
+        download_total_timeout_sec: float = DEFAULT_DOWNLOAD_TOTAL_TIMEOUT_SEC,
+        http_client: httpx.Client | None = None,
     ) -> None:
         if ffprobe_timeout_sec <= 0:
             raise ValueError("ffprobe_timeout_sec must be positive.")
         if ffmpeg_timeout_sec <= 0:
             raise ValueError("ffmpeg_timeout_sec must be positive.")
+        if download_read_timeout_sec <= 0:
+            raise ValueError("download_read_timeout_sec must be positive.")
+        if download_total_timeout_sec <= 0:
+            raise ValueError("download_total_timeout_sec must be positive.")
         self._ffmpeg_bin = ffmpeg_bin
         self._ffprobe_bin = ffprobe_bin
         self._ffprobe_timeout_sec = ffprobe_timeout_sec
         self._ffmpeg_timeout_sec = ffmpeg_timeout_sec
+        self._download_read_timeout_sec = download_read_timeout_sec
+        self._download_total_timeout_sec = download_total_timeout_sec
+        self._http_client = http_client
 
-    def resolve_source_path(self, source: VideoSource, work_dir: Path) -> Path:
+    def resolve_source_path(
+        self,
+        source: VideoSource,
+        work_dir: Path,
+        cancel_event: threading.Event | None = None,
+    ) -> Path:
         """Resolve a local path or download a presigned URL once into the working directory."""
+        self._check_download_cancelled(cancel_event)
         if source.kind == "local_path":
             assert source.local_path is not None
             path = Path(source.local_path)
@@ -89,13 +107,79 @@ class FFmpegClient:
 
         assert source.uri is not None
         dest_path = work_dir / "source_video.mp4"
+        return self._download_source_video(source.uri, dest_path, cancel_event)
+
+    def _download_source_video(
+        self,
+        uri: str,
+        dest_path: Path,
+        cancel_event: threading.Event | None,
+    ) -> Path:
+        per_op_timeout = min(self._download_read_timeout_sec, self._download_total_timeout_sec)
+        connect_timeout = min(per_op_timeout, 10.0)
+        timeout = httpx.Timeout(
+            connect=connect_timeout,
+            read=per_op_timeout,
+            write=connect_timeout,
+            pool=connect_timeout,
+        )
+        deadline = time.monotonic() + self._download_total_timeout_sec
         logger.info("Downloading source video from presigned URI to %s.", dest_path)
-        with httpx.stream("GET", source.uri, follow_redirects=True, timeout=300.0) as response:
-            response.raise_for_status()
-            with dest_path.open("wb") as handle:
-                for chunk in response.iter_bytes(chunk_size=1024 * 1024):
-                    handle.write(chunk)
+
+        stream_cm = (
+            self._http_client.stream(
+                "GET",
+                uri,
+                follow_redirects=True,
+                timeout=timeout,
+            )
+            if self._http_client is not None
+            else httpx.stream(
+                "GET",
+                uri,
+                follow_redirects=True,
+                timeout=timeout,
+            )
+        )
+
+        try:
+            with stream_cm as response:
+                self._check_download_cancelled(cancel_event)
+                response.raise_for_status()
+                with dest_path.open("wb") as handle:
+                    for chunk in response.iter_bytes():
+                        self._check_download_cancelled(cancel_event)
+                        if time.monotonic() > deadline:
+                            raise TimeoutError(
+                                "Source video download exceeded total timeout "
+                                f"of {self._download_total_timeout_sec:.1f}s."
+                            )
+                        handle.write(chunk)
+                        self._check_download_cancelled(cancel_event)
+                self._check_download_cancelled(cancel_event)
+        except httpx.HTTPStatusError as exc:
+            dest_path.unlink(missing_ok=True)
+            status_code = exc.response.status_code
+            raise RuntimeError(f"Failed to download source video (HTTP {status_code}).") from None
+        except httpx.TimeoutException:
+            dest_path.unlink(missing_ok=True)
+            if cancel_event is not None and cancel_event.is_set():
+                raise FFmpegCancelledError("Source video download cancelled.") from None
+            raise TimeoutError("Source video download timed out while reading response.") from None
+        except httpx.HTTPError as exc:
+            dest_path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Failed to download source video ({type(exc).__name__})."
+            ) from None
+        except BaseException:
+            dest_path.unlink(missing_ok=True)
+            raise
         return dest_path
+
+    @staticmethod
+    def _check_download_cancelled(cancel_event: threading.Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise FFmpegCancelledError("Source video download cancelled.")
 
     def probe(
         self,

@@ -247,6 +247,17 @@ class JobStore:
                 )
         except JobCancelledError:
             callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
+        except httpx.HTTPError as exc:
+            safe_error = _summarize_job_http_error(exc)
+            logger.error("Analysis job %s failed: %s", request.job_id, safe_error)
+            if record.cancel_event.is_set():
+                callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
+            else:
+                callback_url, payload = self._finalize_and_prepare_callback(
+                    record,
+                    "failed",
+                    error_message=safe_error,
+                )
         except Exception as exc:
             logger.exception("Analysis job %s failed.", request.job_id)
             if record.cancel_event.is_set():
@@ -444,3 +455,10 @@ def _summarize_callback_error(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return f"HTTPStatusError (HTTP {exc.response.status_code})"
     return type(exc).__name__
+
+
+def _summarize_job_http_error(exc: httpx.HTTPError) -> str:
+    """Summarize an unexpected HTTP failure without exposing signed URLs or credentials."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"Remote HTTP request failed (HTTP {exc.response.status_code})."
+    return f"Remote HTTP request failed ({type(exc).__name__})."

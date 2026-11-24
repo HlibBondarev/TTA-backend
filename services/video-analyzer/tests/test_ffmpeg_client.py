@@ -6,8 +6,10 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
+import httpx
 import pytest
 
 from video_analyzer.media.ffmpeg_client import (
@@ -15,6 +17,7 @@ from video_analyzer.media.ffmpeg_client import (
     FFmpegClient,
     VideoProbeResult,
 )
+from video_analyzer.schemas.request import VideoSource
 
 
 def test_create_pass1_chunks_normalizes_odd_target_height_and_preserves_even(
@@ -117,3 +120,162 @@ def test_run_command_enforces_timeout_and_active_cancellation() -> None:
             [sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(3)"],
             "failing cmd",
         )
+
+
+def test_resolve_source_path_cancels_streaming_download_closes_response_and_cleans_partial_file(
+    tmp_path: Path,
+) -> None:
+    cancel_event = threading.Event()
+    recorded_timeouts: list[object] = []
+
+    class CancellingStream(httpx.SyncByteStream):
+        def __init__(self) -> None:
+            self.chunks_yielded = 0
+            self.closed = False
+
+        def __iter__(self):
+            self.chunks_yielded += 1
+            yield b"partial-chunk-1"
+            cancel_event.set()
+            self.chunks_yielded += 1
+            yield b"chunk-2-should-not-complete"
+            self.chunks_yielded += 1
+            yield b"chunk-3-should-never-be-pulled"
+
+        def close(self) -> None:
+            self.closed = True
+
+    active_stream = CancellingStream()
+
+    def stream_handler(request: httpx.Request) -> httpx.Response:
+        recorded_timeouts.append(request.extensions.get("timeout"))
+        return httpx.Response(200, stream=active_stream, request=request)
+
+    http_client = httpx.Client(transport=httpx.MockTransport(stream_handler))
+    try:
+        client = FFmpegClient(
+            download_read_timeout_sec=5.0,
+            download_total_timeout_sec=30.0,
+            http_client=http_client,
+        )
+        source = VideoSource(kind="presigned_url", uri="https://cdn.tta.example/v.mp4?sig=abc")
+        work_dir = tmp_path / "dl_cancel"
+        work_dir.mkdir()
+
+        with pytest.raises(FFmpegCancelledError, match="cancelled"):
+            client.resolve_source_path(source, work_dir, cancel_event=cancel_event)
+
+        assert active_stream.closed is True
+        assert active_stream.chunks_yielded == 2
+        assert not (work_dir / "source_video.mp4").exists()
+        assert len(recorded_timeouts) == 1
+        timeout_ext = recorded_timeouts[0]
+        assert isinstance(timeout_ext, dict)
+        assert timeout_ext["read"] == pytest.approx(5.0)
+        assert timeout_ext["connect"] == pytest.approx(5.0)
+    finally:
+        http_client.close()
+
+    # Blocked read timing out after cancellation also maps to FFmpegCancelledError cleanly
+    blocked_cancel = threading.Event()
+
+    class BlockedReadStream(httpx.SyncByteStream):
+        def __init__(self, request: httpx.Request) -> None:
+            self._request = request
+            self.closed = False
+
+        def __iter__(self):
+            yield b"partial-before-timeout"
+            blocked_cancel.set()
+            raise httpx.ReadTimeout(
+                f"read timed out for {self._request.url}",
+                request=self._request,
+            )
+
+        def close(self) -> None:
+            self.closed = True
+
+    blocked_streams: list[BlockedReadStream] = []
+
+    def blocked_handler(request: httpx.Request) -> httpx.Response:
+        stream = BlockedReadStream(request)
+        blocked_streams.append(stream)
+        return httpx.Response(200, stream=stream, request=request)
+
+    blocked_http = httpx.Client(transport=httpx.MockTransport(blocked_handler))
+    try:
+        client = FFmpegClient(download_read_timeout_sec=1.0, http_client=blocked_http)
+        work_dir = tmp_path / "dl_timeout_cancel"
+        work_dir.mkdir()
+        signed_url = "https://cdn.tta.example/v.mp4?X-Amz-Signature=secret-read-sig"
+        with pytest.raises(FFmpegCancelledError) as exc_info:
+            client.resolve_source_path(
+                VideoSource(kind="presigned_url", uri=signed_url),
+                work_dir,
+                cancel_event=blocked_cancel,
+            )
+        tb_text = "".join(traceback.format_exception(exc_info.value))
+        assert "secret-read-sig" not in tb_text
+        assert blocked_streams[0].closed is True
+        assert not (work_dir / "source_video.mp4").exists()
+    finally:
+        blocked_http.close()
+
+    # Pre-cancelled event aborts before issuing an HTTP request
+    requests_sent = 0
+
+    def never_called_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests_sent
+        requests_sent += 1
+        return httpx.Response(200, request=request)
+
+    pre_http = httpx.Client(transport=httpx.MockTransport(never_called_handler))
+    try:
+        pre_cancel = threading.Event()
+        pre_cancel.set()
+        client = FFmpegClient(http_client=pre_http)
+        with pytest.raises(FFmpegCancelledError):
+            client.resolve_source_path(
+                VideoSource(kind="presigned_url", uri="https://cdn.tta.example/v.mp4?sig=xyz"),
+                tmp_path,
+                cancel_event=pre_cancel,
+            )
+        assert requests_sent == 0
+    finally:
+        pre_http.close()
+
+
+def test_resolve_source_path_sanitizes_http_errors_without_altering_signed_url(
+    tmp_path: Path,
+) -> None:
+    signed_url = (
+        "https://cdn.tta.example/match.mp4?X-Amz-Signature=super-secret-sig&token=secret-tok"
+    )
+    received_urls: list[str] = []
+
+    def forbidden_handler(request: httpx.Request) -> httpx.Response:
+        received_urls.append(str(request.url))
+        return httpx.Response(403, request=request, text="Forbidden")
+
+    http_client = httpx.Client(transport=httpx.MockTransport(forbidden_handler))
+    try:
+        client = FFmpegClient(http_client=http_client)
+        work_dir = tmp_path / "dl_403"
+        work_dir.mkdir()
+        with pytest.raises(RuntimeError) as exc_info:
+            client.resolve_source_path(
+                VideoSource(kind="presigned_url", uri=signed_url),
+                work_dir,
+            )
+
+        assert received_urls == [signed_url]
+        assert "HTTP 403" in str(exc_info.value)
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__suppress_context__ is True
+        tb_text = "".join(traceback.format_exception(exc_info.value))
+        assert "super-secret-sig" not in tb_text
+        assert "secret-tok" not in tb_text
+        assert "cdn.tta.example" not in tb_text
+        assert not (work_dir / "source_video.mp4").exists()
+    finally:
+        http_client.close()

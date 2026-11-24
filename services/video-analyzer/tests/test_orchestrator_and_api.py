@@ -33,7 +33,7 @@ from video_analyzer.schemas.request import AnalyzeJobRequest, MatchSnapshot
 
 
 class MockFFmpegClient:
-    def resolve_source_path(self, source, work_dir: Path) -> Path:
+    def resolve_source_path(self, source, work_dir: Path, cancel_event=None) -> Path:
         return Path(source.local_path or "dummy.mp4")
 
     def probe(self, video_path: Path, cancel_event=None) -> VideoProbeResult:
