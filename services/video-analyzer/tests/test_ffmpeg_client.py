@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
 import subprocess
 import sys
@@ -130,12 +131,12 @@ def test_resolve_source_path_cancels_streaming_download_closes_response_and_clea
     cancel_event = threading.Event()
     recorded_timeouts: list[object] = []
 
-    class CancellingStream(httpx.SyncByteStream):
+    class CancellingStream(httpx.AsyncByteStream):
         def __init__(self) -> None:
             self.chunks_yielded = 0
             self.closed = False
 
-        def __iter__(self):
+        async def __aiter__(self):
             self.chunks_yielded += 1
             yield b"partial-chunk-1"
             cancel_event.set()
@@ -144,7 +145,7 @@ def test_resolve_source_path_cancels_streaming_download_closes_response_and_clea
             self.chunks_yielded += 1
             yield b"chunk-3-should-never-be-pulled"
 
-        def close(self) -> None:
+        async def aclose(self) -> None:
             self.closed = True
 
     active_stream = CancellingStream()
@@ -153,7 +154,7 @@ def test_resolve_source_path_cancels_streaming_download_closes_response_and_clea
         recorded_timeouts.append(request.extensions.get("timeout"))
         return httpx.Response(200, stream=active_stream, request=request)
 
-    http_client = httpx.Client(transport=httpx.MockTransport(stream_handler))
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(stream_handler))
     try:
         client = FFmpegClient(
             download_read_timeout_sec=5.0,
@@ -176,17 +177,17 @@ def test_resolve_source_path_cancels_streaming_download_closes_response_and_clea
         assert timeout_ext["read"] == pytest.approx(5.0)
         assert timeout_ext["connect"] == pytest.approx(5.0)
     finally:
-        http_client.close()
+        asyncio.run(http_client.aclose())
 
     # Blocked read timing out after cancellation also maps to FFmpegCancelledError cleanly
     blocked_cancel = threading.Event()
 
-    class BlockedReadStream(httpx.SyncByteStream):
+    class BlockedReadStream(httpx.AsyncByteStream):
         def __init__(self, request: httpx.Request) -> None:
             self._request = request
             self.closed = False
 
-        def __iter__(self):
+        async def __aiter__(self):
             yield b"partial-before-timeout"
             blocked_cancel.set()
             raise httpx.ReadTimeout(
@@ -194,7 +195,7 @@ def test_resolve_source_path_cancels_streaming_download_closes_response_and_clea
                 request=self._request,
             )
 
-        def close(self) -> None:
+        async def aclose(self) -> None:
             self.closed = True
 
     blocked_streams: list[BlockedReadStream] = []
@@ -204,7 +205,7 @@ def test_resolve_source_path_cancels_streaming_download_closes_response_and_clea
         blocked_streams.append(stream)
         return httpx.Response(200, stream=stream, request=request)
 
-    blocked_http = httpx.Client(transport=httpx.MockTransport(blocked_handler))
+    blocked_http = httpx.AsyncClient(transport=httpx.MockTransport(blocked_handler))
     try:
         client = FFmpegClient(download_read_timeout_sec=1.0, http_client=blocked_http)
         work_dir = tmp_path / "dl_timeout_cancel"
@@ -221,7 +222,7 @@ def test_resolve_source_path_cancels_streaming_download_closes_response_and_clea
         assert blocked_streams[0].closed is True
         assert not (work_dir / "source_video.mp4").exists()
     finally:
-        blocked_http.close()
+        asyncio.run(blocked_http.aclose())
 
     # Pre-cancelled event aborts before issuing an HTTP request
     requests_sent = 0
@@ -231,7 +232,7 @@ def test_resolve_source_path_cancels_streaming_download_closes_response_and_clea
         requests_sent += 1
         return httpx.Response(200, request=request)
 
-    pre_http = httpx.Client(transport=httpx.MockTransport(never_called_handler))
+    pre_http = httpx.AsyncClient(transport=httpx.MockTransport(never_called_handler))
     try:
         pre_cancel = threading.Event()
         pre_cancel.set()
@@ -244,7 +245,7 @@ def test_resolve_source_path_cancels_streaming_download_closes_response_and_clea
             )
         assert requests_sent == 0
     finally:
-        pre_http.close()
+        asyncio.run(pre_http.aclose())
 
 
 def test_resolve_source_path_sanitizes_http_errors_without_altering_signed_url(
@@ -259,7 +260,7 @@ def test_resolve_source_path_sanitizes_http_errors_without_altering_signed_url(
         received_urls.append(str(request.url))
         return httpx.Response(403, request=request, text="Forbidden")
 
-    http_client = httpx.Client(transport=httpx.MockTransport(forbidden_handler))
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(forbidden_handler))
     try:
         client = FFmpegClient(http_client=http_client)
         work_dir = tmp_path / "dl_403"
@@ -280,7 +281,7 @@ def test_resolve_source_path_sanitizes_http_errors_without_altering_signed_url(
         assert "cdn.tta.example" not in tb_text
         assert not (work_dir / "source_video.mp4").exists()
     finally:
-        http_client.close()
+        asyncio.run(http_client.aclose())
 
 
 @contextmanager
@@ -379,3 +380,50 @@ def test_resolve_source_path_interrupts_slow_headers_on_cancel_and_total_deadlin
         assert time.monotonic() - started < 2.0
         assert peer_closed.wait(timeout=2.0) is True
         assert not (work_dir / "source_video.mp4").exists()
+
+
+def test_ffmpeg_client_rejects_sync_http_client_and_interrupts_injected_async_slow_headers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+
+    with httpx.Client() as sync_client:
+        with pytest.raises(TypeError, match="AsyncClient"):
+            FFmpegClient(http_client=sync_client)  # type: ignore[arg-type]
+
+    injected_cancel = threading.Event()
+    injected_client = httpx.AsyncClient(trust_env=False)
+    try:
+        with _slow_header_http_server() as (port, headers_started, peer_closed):
+            timer = threading.Timer(
+                0.15,
+                lambda: headers_started.wait(2.0) and injected_cancel.set(),
+            )
+            timer.start()
+            try:
+                client = FFmpegClient(
+                    download_read_timeout_sec=10.0,
+                    download_total_timeout_sec=300.0,
+                    http_client=injected_client,
+                )
+                work_dir = tmp_path / "injected_async_slow_hdr"
+                work_dir.mkdir()
+                started = time.monotonic()
+                with pytest.raises(FFmpegCancelledError):
+                    client.resolve_source_path(
+                        VideoSource(
+                            kind="presigned_url",
+                            uri=f"http://127.0.0.1:{port}/video.mp4?sig=slow-async-secret",
+                        ),
+                        work_dir,
+                        cancel_event=injected_cancel,
+                    )
+                assert time.monotonic() - started < 2.0
+                assert peer_closed.wait(timeout=2.0) is True
+                assert not (work_dir / "source_video.mp4").exists()
+            finally:
+                timer.cancel()
+    finally:
+        asyncio.run(injected_client.aclose())

@@ -75,7 +75,7 @@ class FFmpegClient:
         ffmpeg_timeout_sec: float = DEFAULT_FFMPEG_TIMEOUT_SEC,
         download_read_timeout_sec: float = DEFAULT_DOWNLOAD_READ_TIMEOUT_SEC,
         download_total_timeout_sec: float = DEFAULT_DOWNLOAD_TOTAL_TIMEOUT_SEC,
-        http_client: httpx.Client | httpx.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         if ffprobe_timeout_sec <= 0:
             raise ValueError("ffprobe_timeout_sec must be positive.")
@@ -85,6 +85,11 @@ class FFmpegClient:
             raise ValueError("download_read_timeout_sec must be positive.")
         if download_total_timeout_sec <= 0:
             raise ValueError("download_total_timeout_sec must be positive.")
+        if http_client is not None and not isinstance(http_client, httpx.AsyncClient):
+            raise TypeError(
+                "http_client must be an httpx.AsyncClient or None; "
+                "synchronous clients cannot interrupt slow response headers."
+            )
         self._ffmpeg_bin = ffmpeg_bin
         self._ffprobe_bin = ffprobe_bin
         self._ffprobe_timeout_sec = ffprobe_timeout_sec
@@ -130,25 +135,15 @@ class FFmpegClient:
         logger.info("Downloading source video from presigned URI to %s.", dest_path)
 
         try:
-            if isinstance(self._http_client, httpx.Client):
-                self._download_source_video_sync(
-                    self._http_client,
+            self._run_coro(
+                self._download_source_video_async(
                     uri,
                     dest_path,
                     timeout,
                     deadline,
                     cancel_event,
                 )
-            else:
-                self._run_coro(
-                    self._download_source_video_async(
-                        uri,
-                        dest_path,
-                        timeout,
-                        deadline,
-                        cancel_event,
-                    )
-                )
+            )
         except httpx.HTTPStatusError as exc:
             dest_path.unlink(missing_ok=True)
             status_code = exc.response.status_code
@@ -167,35 +162,6 @@ class FFmpegClient:
             dest_path.unlink(missing_ok=True)
             raise
         return dest_path
-
-    def _download_source_video_sync(
-        self,
-        client: httpx.Client,
-        uri: str,
-        dest_path: Path,
-        timeout: httpx.Timeout,
-        deadline: float,
-        cancel_event: threading.Event | None,
-    ) -> None:
-        with client.stream(
-            "GET",
-            uri,
-            follow_redirects=True,
-            timeout=timeout,
-        ) as response:
-            self._check_download_cancelled(cancel_event)
-            response.raise_for_status()
-            with dest_path.open("wb") as handle:
-                for chunk in response.iter_bytes():
-                    self._check_download_cancelled(cancel_event)
-                    if time.monotonic() > deadline:
-                        raise TimeoutError(
-                            "Source video download exceeded total timeout "
-                            f"of {self._download_total_timeout_sec:.1f}s."
-                        )
-                    handle.write(chunk)
-                    self._check_download_cancelled(cancel_event)
-            self._check_download_cancelled(cancel_event)
 
     async def _download_source_video_async(
         self,

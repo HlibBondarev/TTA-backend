@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import socket
@@ -732,7 +733,7 @@ def test_job_store_sanitizes_presigned_download_http_failure_and_supports_mid_do
         callbacks.append(json.loads(request.content.decode("utf-8")))
         return httpx.Response(200)
 
-    dl_client = httpx.Client(transport=httpx.MockTransport(fail_download_handler))
+    dl_client = httpx.AsyncClient(transport=httpx.MockTransport(fail_download_handler))
     cb_client = httpx.Client(transport=httpx.MockTransport(callback_handler))
     work_dir = tmp_path / "work"
     work_dir.mkdir()
@@ -826,21 +827,22 @@ def test_job_store_sanitizes_presigned_download_http_failure_and_supports_mid_do
         chunk_started = threading.Event()
         release_second_chunk = threading.Event()
 
-        class GatedDownloadStream(httpx.SyncByteStream):
+        class GatedDownloadStream(httpx.AsyncByteStream):
             def __init__(self) -> None:
                 self.closed = False
 
-            def __iter__(self):
+            async def __aiter__(self):
                 yield b"chunk-1"
                 chunk_started.set()
-                release_second_chunk.wait(timeout=5.0)
+                while not release_second_chunk.is_set():
+                    await asyncio.sleep(0.02)
                 yield b"chunk-2"
 
-            def close(self) -> None:
+            async def aclose(self) -> None:
                 self.closed = True
 
         gated_stream = GatedDownloadStream()
-        cancel_dl_client = httpx.Client(
+        cancel_dl_client = httpx.AsyncClient(
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(200, stream=gated_stream, request=request)
             )
@@ -883,10 +885,10 @@ def test_job_store_sanitizes_presigned_download_http_failure_and_supports_mid_do
         finally:
             release_second_chunk.set()
             cancel_store.shutdown()
-            cancel_dl_client.close()
+            asyncio.run(cancel_dl_client.aclose())
     finally:
         store.shutdown()
-        dl_client.close()
+        asyncio.run(dl_client.aclose())
         cb_client.close()
 
 
