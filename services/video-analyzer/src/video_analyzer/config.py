@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -344,9 +345,10 @@ def _validate_model_rate_entry(model_key: str, raw_rates: Any) -> dict[str, floa
                 f"Pricing entry for model '{model_key}' must include numeric '{rate_key}' rate."
             )
         rate = float(raw_val)
-        if rate < 0.0:
+        if not math.isfinite(rate) or rate < 0.0:
             raise ValueError(
-                f"Pricing '{rate_key}' rate for model '{model_key}' cannot be negative."
+                f"Pricing '{rate_key}' rate for model '{model_key}' "
+                "must be a finite non-negative number."
             )
         validated[rate_key] = rate
     return validated

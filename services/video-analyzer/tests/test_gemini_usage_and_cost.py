@@ -97,9 +97,25 @@ def test_extract_usage_metadata_handles_full_partial_and_missing_values() -> Non
     assert partial.call_count == 1
     assert partial.prompt_tokens == 500
     assert partial.candidates_tokens == 100
-    assert partial.thoughts_tokens == 0
-    assert partial.cached_content_tokens == 0
-    assert partial.total_tokens == 600
+    assert partial.thoughts_tokens is None
+    assert partial.cached_content_tokens is None
+    assert partial.total_tokens is None
+
+    prompt_only = extract_usage_metadata(
+        SimpleNamespace(
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=400,
+                candidates_token_count=None,
+                thoughts_token_count=None,
+                cached_content_token_count=None,
+                total_token_count=None,
+            )
+        )
+    )
+    assert prompt_only is not None
+    assert prompt_only.prompt_tokens == 400
+    assert prompt_only.candidates_tokens is None
+    assert prompt_only.thoughts_tokens is None
 
     assert extract_usage_metadata(SimpleNamespace(text="ok")) is None
     assert extract_usage_metadata(SimpleNamespace(usage_metadata=None)) is None
@@ -273,3 +289,104 @@ def test_mixed_pass1_and_pass2_models_pricing_and_unconfigured_fallback() -> Non
     assert diag_inactive_p2.estimated_cost is not None
     assert diag_inactive_p2.estimated_cost.pricing_configured is True
     assert diag_inactive_p2.estimated_cost.total_cost_usd == pytest.approx(1.10)
+
+
+def test_pricing_validation_rejects_non_finite_and_negative_rates_but_allows_zero() -> None:
+    zero_settings = Settings(
+        _env_file=None,
+        gemini_model_pricing_usd_per_1m={"gemini-4-hydrogen": {"input": 0.0, "output": 0}},
+    )
+    assert zero_settings.resolved_gemini_model_pricing["gemini-4-hydrogen"] == {
+        "input": 0.0,
+        "output": 0.0,
+    }
+
+    for bad_rate in (float("nan"), float("inf"), float("-inf"), -0.01):
+        with pytest.raises(ValueError, match="finite non-negative"):
+            Settings(
+                _env_file=None,
+                gemini_model_pricing_usd_per_1m={
+                    "gemini-4-hydrogen": {"input": bad_rate, "output": 1.0}
+                },
+            )
+        with pytest.raises(ValueError, match="finite non-negative"):
+            Settings(
+                _env_file=None,
+                gemini_model_pricing_usd_per_1m={
+                    "gemini-4-hydrogen": {"input": 1.0, "output": bad_rate}
+                },
+            )
+
+
+def test_estimate_stage_cost_handles_nullable_counters_and_non_thinking_models() -> None:
+    # 1. Missing prompt_tokens or candidates_tokens -> unavailable cost with note
+    missing_candidates = GeminiTokenUsage(
+        call_count=1,
+        prompt_tokens=1_000_000,
+        candidates_tokens=None,
+        thoughts_tokens=None,
+        total_tokens=1_000_000,
+    )
+    cost_missing = estimate_stage_cost(
+        "gemini-4-hydrogen",
+        missing_candidates,
+        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+    )
+    assert cost_missing.pricing_configured is True
+    assert cost_missing.input_cost_usd is None
+    assert cost_missing.output_cost_usd is None
+    assert cost_missing.total_cost_usd is None
+    assert cost_missing.note is not None
+
+    # 2. thoughts_tokens is None AND total_tokens > prompt + candidates -> unaccounted tokens
+    unaccounted = GeminiTokenUsage(
+        call_count=1,
+        prompt_tokens=1_000_000,
+        candidates_tokens=100_000,
+        thoughts_tokens=None,
+        total_tokens=1_250_000,
+    )
+    cost_unaccounted = estimate_stage_cost(
+        "gemini-4-hydrogen",
+        unaccounted,
+        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+    )
+    assert cost_unaccounted.pricing_configured is True
+    assert cost_unaccounted.total_cost_usd is None
+    assert "thoughts_token_count" in (cost_unaccounted.note or "")
+
+    # 3. Non-thinking model: thoughts_tokens is None, total_tokens absent -> billable cleanly
+    non_thinking_no_total = GeminiTokenUsage(
+        call_count=1,
+        prompt_tokens=1_000_000,
+        candidates_tokens=100_000,
+        thoughts_tokens=None,
+        total_tokens=None,
+    )
+    cost_nt1 = estimate_stage_cost(
+        "gemini-4-hydrogen",
+        non_thinking_no_total,
+        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+    )
+    assert non_thinking_no_total.thoughts_tokens is None
+    assert cost_nt1.pricing_configured is True
+    assert cost_nt1.input_cost_usd == pytest.approx(0.50)
+    assert cost_nt1.output_cost_usd == pytest.approx(0.30)
+    assert cost_nt1.total_cost_usd == pytest.approx(0.80)
+
+    # 4. Non-thinking model: thoughts_tokens is None, total_tokens matches sum -> billable
+    non_thinking_exact_total = GeminiTokenUsage(
+        call_count=1,
+        prompt_tokens=1_000_000,
+        candidates_tokens=100_000,
+        thoughts_tokens=None,
+        total_tokens=1_100_000,
+    )
+    cost_nt2 = estimate_stage_cost(
+        "gemini-4-hydrogen",
+        non_thinking_exact_total,
+        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+    )
+    assert non_thinking_exact_total.thoughts_tokens is None
+    assert cost_nt2.pricing_configured is True
+    assert cost_nt2.total_cost_usd == pytest.approx(0.80)

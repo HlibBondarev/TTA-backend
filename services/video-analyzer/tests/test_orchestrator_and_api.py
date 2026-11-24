@@ -24,6 +24,7 @@ from video_analyzer.pass1.gemini_client import BasePass1Analyzer
 from video_analyzer.pass1.models import Pass1ChunkResult, Pass1RawAnchor, Pass1RawEvent
 from video_analyzer.pass2.cap_resolver import (
     BaseCapResolver,
+    CapResolutionError,
     CapResolutionResult,
     LocalOcrCapResolver,
 )
@@ -631,3 +632,72 @@ def test_orchestrator_aggregates_gemini_usage_and_cost_in_diagnostics_and_cli(
     stdout = capsys.readouterr().out
     assert "Gemini usage: calls=3" in stdout
     assert "~$0.213000 USD" in stdout
+
+
+def test_orchestrator_records_pass2_usage_once_on_recovered_parse_failure(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    class FailingParseCapResolver(BaseCapResolver):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise CapResolutionError(
+                    "Invalid JSON payload",
+                    token_usage=GeminiTokenUsage(
+                        call_count=1,
+                        prompt_tokens=50_000,
+                        candidates_tokens=2_000,
+                        thoughts_tokens=None,
+                        total_tokens=52_000,
+                    ),
+                )
+            return CapResolutionResult(
+                resolved_cap_number=7,
+                confidence=0.95,
+                candidate_scores={7: 0.95},
+                reasoning="Clear cap #7",
+                token_usage=GeminiTokenUsage(
+                    call_count=1,
+                    prompt_tokens=60_000,
+                    candidates_tokens=3_000,
+                    thoughts_tokens=None,
+                    total_tokens=63_000,
+                ),
+            )
+
+    settings = Settings(
+        _env_file=None,
+        internal_api_key="test-key",
+        work_dir=str(tmp_path),
+        gemini_pass1_model="gemini-4-hydrogen",
+        gemini_pass2_model="gemini-4-hydrogen",
+    )
+    orchestrator = VideoAnalysisOrchestrator(
+        settings=settings,
+        ffmpeg_client=MockFFmpegClient(),  # type: ignore[arg-type]
+        pass1_analyzer=MockPass1Analyzer(),
+        detector=MockDetector(),
+        cap_resolver=FailingParseCapResolver(),
+    )
+
+    draft = orchestrator.run(sample_job_request)
+    # First event failed cap parse -> unresolved; second succeeded -> resolved
+    assert draft.events[0].match_lineup_id is None
+    assert draft.events[0].needs_review is True
+    assert draft.events[1].match_lineup_id is not None
+    assert any("cap resolution failed" in w for w in draft.diagnostics.warnings)
+
+    # Both Pass 2 calls' token usage are recorded exactly once
+    p2_usage = draft.diagnostics.gemini_usage.pass2.usage
+    assert p2_usage.call_count == 2
+    assert p2_usage.prompt_tokens == 110_000
+    assert p2_usage.candidates_tokens == 5_000
+    assert p2_usage.thoughts_tokens is None
+    assert p2_usage.total_tokens == 115_000
+    assert draft.diagnostics.gemini_usage.total.call_count == 2
+    assert draft.diagnostics.gemini_usage.estimated_cost is not None
+    assert draft.diagnostics.gemini_usage.estimated_cost.total_cost_usd == pytest.approx(0.07)

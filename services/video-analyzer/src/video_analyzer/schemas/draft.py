@@ -137,11 +137,11 @@ class GeminiTokenUsage(CamelCaseModel):
     """Aggregated Gemini API token counters across one or more generate_content calls."""
 
     call_count: int = Field(default=0, ge=0)
-    prompt_tokens: int = Field(default=0, ge=0)
-    candidates_tokens: int = Field(default=0, ge=0)
-    thoughts_tokens: int = Field(default=0, ge=0)
-    cached_content_tokens: int = Field(default=0, ge=0)
-    total_tokens: int = Field(default=0, ge=0)
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    candidates_tokens: int | None = Field(default=None, ge=0)
+    thoughts_tokens: int | None = Field(default=None, ge=0)
+    cached_content_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
 
 
 class GeminiCostEstimate(CamelCaseModel):

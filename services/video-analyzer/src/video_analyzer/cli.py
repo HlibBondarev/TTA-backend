@@ -202,12 +202,18 @@ def _format_gemini_usage_summary(gemini_usage: GeminiUsageDiagnostics) -> str | 
     cost = gemini_usage.estimated_cost
     if cost is not None and cost.total_cost_usd is not None:
         cost_text = f"~${cost.total_cost_usd:.6f} USD"
-    else:
+    elif cost is not None and not cost.pricing_configured:
         cost_text = "unconfigured"
+    else:
+        cost_text = "unavailable"
+    prompt_text = str(total.prompt_tokens) if total.prompt_tokens is not None else "n/a"
+    output_text = str(total.candidates_tokens) if total.candidates_tokens is not None else "n/a"
+    thoughts_text = str(total.thoughts_tokens) if total.thoughts_tokens is not None else "n/a"
+    total_text = str(total.total_tokens) if total.total_tokens is not None else "n/a"
     return (
         f"Gemini usage: calls={total.call_count}, "
-        f"prompt={total.prompt_tokens}, output={total.candidates_tokens}, "
-        f"thoughts={total.thoughts_tokens}, total={total.total_tokens} tokens, "
+        f"prompt={prompt_text}, output={output_text}, "
+        f"thoughts={thoughts_text}, total={total_text} tokens, "
         f"est_cost={cost_text}."
     )
 

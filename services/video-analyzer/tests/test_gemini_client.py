@@ -12,7 +12,7 @@ from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.gemini_client import GeminiPass1Analyzer
 from video_analyzer.pass1.models import Pass1ChunkResult
 from video_analyzer.pass1.prompt_builder import Pass1PromptBuilder
-from video_analyzer.pass2.cap_resolver import GeminiCropGridCapResolver
+from video_analyzer.pass2.cap_resolver import CapResolutionError, GeminiCropGridCapResolver
 from video_analyzer.pass2.crop_selector import CropCandidate, SelectedCrops
 from video_analyzer.schemas.request import MatchSnapshot
 
@@ -303,3 +303,99 @@ def test_gemini_clients_extract_usage_metadata_from_responses(
     assert cap_res.token_usage.candidates_tokens == 90
     assert cap_res.token_usage.thoughts_tokens == 30
     assert cap_res.token_usage.total_tokens == 920
+
+
+def test_gemini_pass1_accumulates_usage_across_retries_without_double_counting(
+    monkeypatch: pytest.MonkeyPatch,
+    sample_snapshot: MatchSnapshot,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("video_analyzer.pass1.gemini_client.time.sleep", lambda _: None)
+    chunk = VideoChunk(index=0, start_sec=0.0, end_sec=60.0, path=tmp_path / "c0.mp4")
+
+    responses = [
+        SimpleNamespace(
+            parsed=None,
+            text="{bad json",
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=1000,
+                candidates_token_count=50,
+                thoughts_token_count=10,
+                cached_content_token_count=None,
+                total_token_count=1060,
+            ),
+        ),
+        SimpleNamespace(
+            parsed=None,
+            text='{"period_events": [], "time_anchors": []}',
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=1200,
+                candidates_token_count=80,
+                thoughts_token_count=20,
+                cached_content_token_count=None,
+                total_token_count=1300,
+            ),
+        ),
+    ]
+    call_idx = 0
+
+    class FakeClient:
+        files = SimpleNamespace(
+            upload=lambda file: SimpleNamespace(
+                name="files/chunk-0",
+                state=SimpleNamespace(name="ACTIVE"),
+            ),
+            delete=lambda name: None,
+        )
+
+        @staticmethod
+        def _generate_content(**kwargs):
+            nonlocal call_idx
+            resp = responses[call_idx]
+            call_idx += 1
+            return resp
+
+        models = SimpleNamespace(generate_content=_generate_content)
+
+    analyzer = GeminiPass1Analyzer(api_key="test-key", client=FakeClient())
+    res = analyzer.analyze_chunk(sample_snapshot, chunk)
+    assert res.token_usage is not None
+    assert res.token_usage.call_count == 2
+    assert res.token_usage.prompt_tokens == 2200
+    assert res.token_usage.candidates_tokens == 130
+    assert res.token_usage.thoughts_tokens == 30
+    assert res.token_usage.total_tokens == 2360
+
+
+def test_gemini_pass2_cap_resolver_attaches_usage_to_parse_failure_error() -> None:
+    fake_client = SimpleNamespace(
+        models=SimpleNamespace(
+            generate_content=lambda **kwargs: SimpleNamespace(
+                parsed=None,
+                text="{invalid json",
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=600,
+                    candidates_token_count=40,
+                    thoughts_token_count=None,
+                    cached_content_token_count=None,
+                    total_token_count=640,
+                ),
+            )
+        )
+    )
+    resolver = GeminiCropGridCapResolver(api_key="test-key", client=fake_client)
+    crop = np.zeros((32, 32, 3), dtype=np.uint8)
+    selected = SelectedCrops(
+        crops=[CropCandidate(0, 5.0, crop, 100.0)],
+        contact_sheet_jpeg=b"jpeg",
+        contact_sheet_bgr=crop,
+    )
+    with pytest.raises(CapResolutionError) as exc_info:
+        resolver.resolve(selected, allowed_cap_numbers=[7, 9])
+
+    assert exc_info.value.token_usage is not None
+    assert exc_info.value.token_usage.call_count == 1
+    assert exc_info.value.token_usage.prompt_tokens == 600
+    assert exc_info.value.token_usage.candidates_tokens == 40
+    assert exc_info.value.token_usage.thoughts_tokens is None
+    assert exc_info.value.token_usage.total_tokens == 640

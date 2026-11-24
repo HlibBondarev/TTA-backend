@@ -67,6 +67,19 @@ def _build_cap_grid_response_schema(types_module: Any) -> Any:
     )
 
 
+class CapResolutionError(RuntimeError):
+    """Raised when Pass 2 cap resolution fails after receiving a Gemini response."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        token_usage: GeminiTokenUsage | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.token_usage = token_usage
+
+
 class CapResolutionResult(BaseModel):
     """Consensus cap-number reading returned by a CapResolver."""
 
@@ -166,21 +179,25 @@ class GeminiCropGridCapResolver(BaseCapResolver):
                 temperature=0.0,
             ),
         )
+        usage = extract_usage_metadata(response)
+        try:
+            parsed = self._parse_cap_grid_response(response)
+            result = self._to_result(parsed, set(allowed_cap_numbers))
+        except Exception as exc:
+            raise CapResolutionError(str(exc), token_usage=usage) from exc
+        return result.model_copy(update={"token_usage": usage})
 
+    @staticmethod
+    def _parse_cap_grid_response(response: Any) -> _GeminiCapGridResponse:
         parsed = getattr(response, "parsed", None)
         if isinstance(parsed, _GeminiCapGridResponse):
-            pass
-        elif isinstance(parsed, dict):
-            parsed = _GeminiCapGridResponse.model_validate(parsed)
-        else:
-            raw_text = getattr(response, "text", None)
-            if not isinstance(raw_text, str) or not raw_text.strip():
-                raise RuntimeError("Gemini Pass 2 cap resolver returned an empty response.")
-            parsed = _GeminiCapGridResponse.model_validate_json(raw_text)
-
-        usage = extract_usage_metadata(response)
-        result = self._to_result(parsed, set(allowed_cap_numbers))
-        return result.model_copy(update={"token_usage": usage})
+            return parsed
+        if isinstance(parsed, dict):
+            return _GeminiCapGridResponse.model_validate(parsed)
+        raw_text = getattr(response, "text", None)
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            raise RuntimeError("Gemini Pass 2 cap resolver returned an empty response.")
+        return _GeminiCapGridResponse.model_validate_json(raw_text)
 
     def _get_client(self) -> Any:
         if self._client is None:

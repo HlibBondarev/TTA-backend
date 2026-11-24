@@ -63,6 +63,7 @@ class _Pass2WindowOutcome:
     has_spatial_hint: bool
     actor_match_tied: bool
     cap_ambiguous: bool
+    token_usage: GeminiTokenUsage | None = None
 
 
 class VideoAnalysisOrchestrator:
@@ -362,8 +363,8 @@ class VideoAnalysisOrchestrator:
                     warnings=warnings,
                 )
                 cap_result = win_outcome.cap_result
-                if cap_result is not None and cap_result.token_usage is not None:
-                    pass2_usages.append(cap_result.token_usage)
+                if win_outcome.token_usage is not None:
+                    pass2_usages.append(win_outcome.token_usage)
                 track_elapsed += win_outcome.track_elapsed_sec
                 cap_elapsed += win_outcome.cap_elapsed_sec
                 has_spatial_hint = win_outcome.has_spatial_hint
@@ -519,16 +520,21 @@ class VideoAnalysisOrchestrator:
                 )
 
             t_cap_start = time.monotonic()
+            cap_token_usage: GeminiTokenUsage | None = None
             try:
                 cap_result = self._cap_resolver.resolve(
                     selected_crops=selected_crops,
                     allowed_cap_numbers=allowed_caps,
                     cap_color_hint=cap_color_hint or candidate.cap_color_hint,
                 )
+                cap_token_usage = cap_result.token_usage
             except Exception as exc:
                 logger.warning("Cap resolution failed for event #%d: %s", event_index, exc)
                 warnings.append(f"Event #{event_index} cap resolution failed: {exc}")
                 cap_result = None
+                exc_usage = getattr(exc, "token_usage", None)
+                if isinstance(exc_usage, GeminiTokenUsage):
+                    cap_token_usage = exc_usage
             t_cap_elapsed = time.monotonic() - t_cap_start
 
             return _Pass2WindowOutcome(
@@ -538,6 +544,7 @@ class VideoAnalysisOrchestrator:
                 has_spatial_hint=matched.has_spatial_hint,
                 actor_match_tied=matched.is_tied,
                 cap_ambiguous=selected_crops.has_ambiguous_cap,
+                token_usage=cap_token_usage,
             )
         finally:
             shutil.rmtree(win_dir, ignore_errors=True)

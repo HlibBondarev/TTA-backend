@@ -14,9 +14,9 @@ from video_analyzer.config import DEFAULT_GEMINI_MODEL
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.models import Pass1ChunkResult
 from video_analyzer.pass1.prompt_builder import Pass1PromptBuilder
-from video_analyzer.schemas.draft import TimeAnchorType
+from video_analyzer.schemas.draft import GeminiTokenUsage, TimeAnchorType
 from video_analyzer.schemas.request import MatchSnapshot
-from video_analyzer.usage import extract_usage_metadata
+from video_analyzer.usage import aggregate_token_usage, extract_usage_metadata
 
 logger = logging.getLogger(__name__)
 _REQUIRED_PASS1_KEYS: frozenset[str] = frozenset({"period_events", "time_anchors"})
@@ -177,6 +177,7 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
         max_attempts: int = 3,
     ) -> Pass1ChunkResult:
         last_exc: Exception | None = None
+        attempt_usages: list[GeminiTokenUsage] = []
         for attempt in range(1, max_attempts + 1):
             try:
                 response = client.models.generate_content(
@@ -184,7 +185,12 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
                     contents=[uploaded_file, prompt],
                     config=config,
                 )
-                return self._parse_response(response, chunk_index)
+                usage = extract_usage_metadata(response)
+                if usage is not None:
+                    attempt_usages.append(usage)
+                result = self._parse_response(response, chunk_index)
+                total_usage = aggregate_token_usage(attempt_usages) if attempt_usages else None
+                return result.model_copy(update={"token_usage": total_usage})
             except Exception as exc:
                 last_exc = exc
                 if attempt == max_attempts:
@@ -208,14 +214,11 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
 
     @classmethod
     def _parse_response(cls, response: Any, chunk_index: int) -> Pass1ChunkResult:
-        usage = extract_usage_metadata(response)
         parsed = getattr(response, "parsed", None)
         if isinstance(parsed, Pass1ChunkResult):
-            return parsed.model_copy(update={"token_usage": usage})
+            return parsed
         if isinstance(parsed, dict):
-            return cls._validate_payload_dict(parsed, chunk_index).model_copy(
-                update={"token_usage": usage}
-            )
+            return cls._validate_payload_dict(parsed, chunk_index)
 
         raw_text = getattr(response, "text", None)
         if not isinstance(raw_text, str) or not raw_text.strip():
@@ -232,9 +235,7 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
             raise RuntimeError(
                 f"Gemini Pass 1 returned a non-object JSON payload for chunk {chunk_index}."
             )
-        return cls._validate_payload_dict(payload, chunk_index).model_copy(
-            update={"token_usage": usage}
-        )
+        return cls._validate_payload_dict(payload, chunk_index)
 
     @staticmethod
     def _validate_payload_dict(payload: dict[str, Any], chunk_index: int) -> Pass1ChunkResult:
