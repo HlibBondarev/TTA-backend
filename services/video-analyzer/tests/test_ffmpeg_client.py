@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import socket
 import subprocess
 import sys
 import threading
 import time
 import traceback
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
@@ -279,3 +281,101 @@ def test_resolve_source_path_sanitizes_http_errors_without_altering_signed_url(
         assert not (work_dir / "source_video.mp4").exists()
     finally:
         http_client.close()
+
+
+@contextmanager
+def _slow_header_http_server():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    srv.settimeout(3.0)
+    port = srv.getsockname()[1]
+    headers_started = threading.Event()
+    peer_closed = threading.Event()
+    stop_event = threading.Event()
+
+    def serve() -> None:
+        conn: socket.socket | None = None
+        try:
+            conn, _ = srv.accept()
+            conn.settimeout(1.0)
+            conn.recv(4096)
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\n")
+            headers_started.set()
+            while not stop_event.is_set():
+                time.sleep(0.05)
+                try:
+                    conn.sendall(b"X-Slow-Header: 1\r\n")
+                except OSError:
+                    peer_closed.set()
+                    break
+        except TimeoutError:
+            pass
+        finally:
+            if conn is not None:
+                conn.close()
+            srv.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield port, headers_started, peer_closed
+    finally:
+        stop_event.set()
+        thread.join(timeout=2.0)
+
+
+def test_resolve_source_path_interrupts_slow_headers_on_cancel_and_total_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+
+    # Case A: Cooperative cancel aborts slow-header wait far before read/total timeouts
+    cancel_event = threading.Event()
+    with _slow_header_http_server() as (port, headers_started, peer_closed):
+        timer = threading.Timer(0.15, lambda: headers_started.wait(2.0) and cancel_event.set())
+        timer.start()
+        try:
+            client = FFmpegClient(
+                download_read_timeout_sec=10.0,
+                download_total_timeout_sec=300.0,
+            )
+            work_dir = tmp_path / "slow_hdr_cancel"
+            work_dir.mkdir()
+            signed_url = f"http://127.0.0.1:{port}/video.mp4?X-Amz-Signature=slow-hdr-secret"
+            started = time.monotonic()
+            with pytest.raises(FFmpegCancelledError) as exc_info:
+                client.resolve_source_path(
+                    VideoSource(kind="presigned_url", uri=signed_url),
+                    work_dir,
+                    cancel_event=cancel_event,
+                )
+            elapsed = time.monotonic() - started
+            assert elapsed < 2.0
+            assert peer_closed.wait(timeout=2.0) is True
+            assert not (work_dir / "source_video.mp4").exists()
+            tb_text = "".join(traceback.format_exception(exc_info.value))
+            assert "slow-hdr-secret" not in tb_text
+        finally:
+            timer.cancel()
+
+    # Case B: Total deadline stops trickling headers that defeat per-read inactivity timeouts
+    with _slow_header_http_server() as (port, headers_started, peer_closed):
+        client = FFmpegClient(
+            download_read_timeout_sec=5.0,
+            download_total_timeout_sec=0.35,
+        )
+        work_dir = tmp_path / "slow_hdr_deadline"
+        work_dir.mkdir()
+        started = time.monotonic()
+        with pytest.raises(TimeoutError, match="exceeded total timeout"):
+            client.resolve_source_path(
+                VideoSource(kind="presigned_url", uri=f"http://127.0.0.1:{port}/video.mp4"),
+                work_dir,
+            )
+        assert headers_started.is_set()
+        assert time.monotonic() - started < 2.0
+        assert peer_closed.wait(timeout=2.0) is True
+        assert not (work_dir / "source_video.mp4").exists()

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import threading
 import time
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -19,6 +21,7 @@ import video_analyzer.api.app as app_module
 from tests.test_orchestrator_and_api import (
     MockCapResolver,
     MockDetector,
+    MockFFmpegClient,
     MockPass1Analyzer,
     _build_mock_orchestrator,
 )
@@ -884,4 +887,151 @@ def test_job_store_sanitizes_presigned_download_http_failure_and_supports_mid_do
     finally:
         store.shutdown()
         dl_client.close()
+        cb_client.close()
+
+
+@contextmanager
+def _slow_header_http_server():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    srv.settimeout(3.0)
+    port = srv.getsockname()[1]
+    headers_started = threading.Event()
+    peer_closed = threading.Event()
+    stop_event = threading.Event()
+
+    def serve() -> None:
+        conn: socket.socket | None = None
+        try:
+            conn, _ = srv.accept()
+            conn.settimeout(1.0)
+            conn.recv(4096)
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\n")
+            headers_started.set()
+            while not stop_event.is_set():
+                time.sleep(0.05)
+                try:
+                    conn.sendall(b"X-Slow-Header: 1\r\n")
+                except OSError:
+                    peer_closed.set()
+                    break
+        except TimeoutError:
+            pass
+        finally:
+            if conn is not None:
+                conn.close()
+            srv.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield port, headers_started, peer_closed
+    finally:
+        stop_event.set()
+        thread.join(timeout=2.0)
+
+
+def test_job_store_cancels_slow_header_download_releases_worker_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch,
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
+
+    mock_ffmpeg = MockFFmpegClient()
+
+    class RealDownloadMockPipelineFFmpeg(FFmpegClient):
+        def probe(self, video_path: Path, cancel_event=None):
+            return mock_ffmpeg.probe(video_path, cancel_event=cancel_event)
+
+        def create_pass1_chunks(self, video_path, probe, output_dir, **kwargs):
+            return mock_ffmpeg.create_pass1_chunks(video_path, probe, output_dir, **kwargs)
+
+        def extract_window_frames(self, video_path, center_sec, **kwargs):
+            return mock_ffmpeg.extract_window_frames(video_path, center_sec, **kwargs)
+
+    callbacks: list[dict[str, object]] = []
+    cb_client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: (
+                callbacks.append(json.loads(request.content.decode("utf-8"))),
+                httpx.Response(200),
+            )[1]
+        )
+    )
+    work_dir = tmp_path / "slow_hdr_work"
+    work_dir.mkdir()
+    orchestrator = VideoAnalysisOrchestrator(
+        settings=Settings(_env_file=None, internal_api_key="test-key", work_dir=str(work_dir)),
+        ffmpeg_client=RealDownloadMockPipelineFFmpeg(
+            download_read_timeout_sec=10.0,
+            download_total_timeout_sec=300.0,
+        ),
+        pass1_analyzer=MockPass1Analyzer(),
+        detector=MockDetector(),
+        cap_resolver=MockCapResolver(),
+    )
+    store = JobStore(
+        orchestrator=orchestrator,
+        callback_allowed_origins=["https://backend.tta.local"],
+        max_workers=1,
+        http_client=cb_client,
+    )
+    try:
+        with _slow_header_http_server() as (port, headers_started, peer_closed):
+            job1 = sample_job_request.model_copy(
+                update={
+                    "job_id": uuid4(),
+                    "video_source": VideoSource(
+                        kind="presigned_url",
+                        uri=f"http://127.0.0.1:{port}/match.mp4?sig=slow-hdr-secret",
+                    ),
+                    "callback_url": "https://backend.tta.local/api/cb1",
+                }
+            )
+            store.submit(job1)
+            assert headers_started.wait(timeout=3.0)
+
+            cancel_started = time.monotonic()
+            assert store.cancel(job1.job_id) is True
+            for _ in range(40):
+                rec1 = store.get(job1.job_id)
+                if rec1 is not None and rec1.finalized:
+                    break
+                time.sleep(0.05)
+
+            assert time.monotonic() - cancel_started < 2.0
+            rec1 = store.get(job1.job_id)
+            assert rec1 is not None
+            assert rec1.status == "cancelled"
+            assert peer_closed.wait(timeout=2.0) is True
+            assert list(work_dir.iterdir()) == []
+
+        # Single worker thread was released and promptly completes a subsequent job
+        job2 = sample_job_request.model_copy(
+            update={
+                "job_id": uuid4(),
+                "callback_url": "https://backend.tta.local/api/cb2",
+            }
+        )
+        store.submit(job2)
+        for _ in range(60):
+            rec2 = store.get(job2.job_id)
+            if rec2 is not None and rec2.finalized:
+                break
+            time.sleep(0.05)
+
+        rec2 = store.get(job2.job_id)
+        assert rec2 is not None
+        assert rec2.status == "completed"
+        assert rec2.draft is not None
+        assert len(callbacks) == 2
+        assert callbacks[0]["jobId"] == str(job1.job_id)
+        assert callbacks[0]["status"] == "cancelled"
+        assert callbacks[1]["jobId"] == str(job2.job_id)
+        assert callbacks[1]["status"] == "completed"
+    finally:
+        store.shutdown()
         cb_client.close()

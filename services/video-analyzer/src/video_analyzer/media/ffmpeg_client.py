@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import subprocess
 import threading
 import time
+from collections.abc import Coroutine
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -72,7 +75,7 @@ class FFmpegClient:
         ffmpeg_timeout_sec: float = DEFAULT_FFMPEG_TIMEOUT_SEC,
         download_read_timeout_sec: float = DEFAULT_DOWNLOAD_READ_TIMEOUT_SEC,
         download_total_timeout_sec: float = DEFAULT_DOWNLOAD_TOTAL_TIMEOUT_SEC,
-        http_client: httpx.Client | None = None,
+        http_client: httpx.Client | httpx.AsyncClient | None = None,
     ) -> None:
         if ffprobe_timeout_sec <= 0:
             raise ValueError("ffprobe_timeout_sec must be positive.")
@@ -126,37 +129,26 @@ class FFmpegClient:
         deadline = time.monotonic() + self._download_total_timeout_sec
         logger.info("Downloading source video from presigned URI to %s.", dest_path)
 
-        stream_cm = (
-            self._http_client.stream(
-                "GET",
-                uri,
-                follow_redirects=True,
-                timeout=timeout,
-            )
-            if self._http_client is not None
-            else httpx.stream(
-                "GET",
-                uri,
-                follow_redirects=True,
-                timeout=timeout,
-            )
-        )
-
         try:
-            with stream_cm as response:
-                self._check_download_cancelled(cancel_event)
-                response.raise_for_status()
-                with dest_path.open("wb") as handle:
-                    for chunk in response.iter_bytes():
-                        self._check_download_cancelled(cancel_event)
-                        if time.monotonic() > deadline:
-                            raise TimeoutError(
-                                "Source video download exceeded total timeout "
-                                f"of {self._download_total_timeout_sec:.1f}s."
-                            )
-                        handle.write(chunk)
-                        self._check_download_cancelled(cancel_event)
-                self._check_download_cancelled(cancel_event)
+            if isinstance(self._http_client, httpx.Client):
+                self._download_source_video_sync(
+                    self._http_client,
+                    uri,
+                    dest_path,
+                    timeout,
+                    deadline,
+                    cancel_event,
+                )
+            else:
+                self._run_coro(
+                    self._download_source_video_async(
+                        uri,
+                        dest_path,
+                        timeout,
+                        deadline,
+                        cancel_event,
+                    )
+                )
         except httpx.HTTPStatusError as exc:
             dest_path.unlink(missing_ok=True)
             status_code = exc.response.status_code
@@ -175,6 +167,120 @@ class FFmpegClient:
             dest_path.unlink(missing_ok=True)
             raise
         return dest_path
+
+    def _download_source_video_sync(
+        self,
+        client: httpx.Client,
+        uri: str,
+        dest_path: Path,
+        timeout: httpx.Timeout,
+        deadline: float,
+        cancel_event: threading.Event | None,
+    ) -> None:
+        with client.stream(
+            "GET",
+            uri,
+            follow_redirects=True,
+            timeout=timeout,
+        ) as response:
+            self._check_download_cancelled(cancel_event)
+            response.raise_for_status()
+            with dest_path.open("wb") as handle:
+                for chunk in response.iter_bytes():
+                    self._check_download_cancelled(cancel_event)
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(
+                            "Source video download exceeded total timeout "
+                            f"of {self._download_total_timeout_sec:.1f}s."
+                        )
+                    handle.write(chunk)
+                    self._check_download_cancelled(cancel_event)
+            self._check_download_cancelled(cancel_event)
+
+    async def _download_source_video_async(
+        self,
+        uri: str,
+        dest_path: Path,
+        timeout: httpx.Timeout,
+        deadline: float,
+        cancel_event: threading.Event | None,
+        poll_interval_sec: float = 0.05,
+    ) -> None:
+        async def _stream_download() -> None:
+            if isinstance(self._http_client, httpx.AsyncClient):
+                async with self._http_client.stream(
+                    "GET",
+                    uri,
+                    follow_redirects=True,
+                    timeout=timeout,
+                ) as response:
+                    await self._consume_async_response(response, dest_path, deadline, cancel_event)
+                return
+
+            async with (
+                httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client,
+                client.stream("GET", uri) as response,
+            ):
+                await self._consume_async_response(response, dest_path, deadline, cancel_event)
+
+        download_task = asyncio.create_task(_stream_download())
+        try:
+            while not download_task.done():
+                if cancel_event is not None and cancel_event.is_set():
+                    download_task.cancel()
+                    await asyncio.gather(download_task, return_exceptions=True)
+                    raise FFmpegCancelledError("Source video download cancelled.")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    download_task.cancel()
+                    await asyncio.gather(download_task, return_exceptions=True)
+                    raise TimeoutError(
+                        "Source video download exceeded total timeout "
+                        f"of {self._download_total_timeout_sec:.1f}s."
+                    )
+                wait_slice = (
+                    min(remaining, poll_interval_sec) if cancel_event is not None else remaining
+                )
+                done, _ = await asyncio.wait({download_task}, timeout=wait_slice)
+                if done:
+                    break
+            await download_task
+        except BaseException:
+            if not download_task.done():
+                download_task.cancel()
+                await asyncio.gather(download_task, return_exceptions=True)
+            raise
+
+    async def _consume_async_response(
+        self,
+        response: httpx.Response,
+        dest_path: Path,
+        deadline: float,
+        cancel_event: threading.Event | None,
+    ) -> None:
+        self._check_download_cancelled(cancel_event)
+        response.raise_for_status()
+        with dest_path.open("wb") as handle:
+            async for chunk in response.aiter_bytes():
+                self._check_download_cancelled(cancel_event)
+                if time.monotonic() > deadline:
+                    raise TimeoutError(
+                        "Source video download exceeded total timeout "
+                        f"of {self._download_total_timeout_sec:.1f}s."
+                    )
+                handle.write(chunk)
+                self._check_download_cancelled(cancel_event)
+        self._check_download_cancelled(cancel_event)
+
+    @staticmethod
+    def _run_coro(coro: Coroutine[Any, Any, None]) -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(coro)
+            return
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(asyncio.run, coro).result()
 
     @staticmethod
     def _check_download_cancelled(cancel_event: threading.Event | None) -> None:
