@@ -37,7 +37,7 @@ jobs:
           python -m pip install --only-binary :all: -e "./services/video-analyzer[dev]"
 
       - name: Install SonarScanner
-        run: dotnet tool install --global dotnet-sonarscanner --version 9.2.1
+        run: dotnet tool install --global dotnet-sonarscanner --version 12.1.0
 
       - name: Begin Sonar Analysis
         env:
