@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
-from typing import Any
+from typing import Any, Literal
 
 import cv2
 import numpy as np
@@ -23,6 +23,7 @@ class OnnxDetector(BaseObjectDetector):
         iou: float,
         class_map: ClassMapAdapter,
         input_size: int = 640,
+        output_layout: Literal["auto", "channels_first", "channels_last"] = "auto",
         session: Any = None,
     ) -> None:
         self._model_path = model_path
@@ -30,8 +31,10 @@ class OnnxDetector(BaseObjectDetector):
         self._iou = iou
         self._class_map = class_map
         self._input_size = input_size
+        self._output_layout = output_layout
         self._session = session
         self._input_name: str | None = None
+        self._output_shape: tuple[Any, ...] | None = None
         self._class_names: dict[int, str] = {}
 
     def provider_info(self) -> dict[str, str]:
@@ -77,11 +80,11 @@ class OnnxDetector(BaseObjectDetector):
             return []
 
         # End-to-end ONNX export with built-in NMS: [N, 6] => x1, y1, x2, y2, conf, cls
-        if tensor.shape[1] == 6:
+        if self._is_nms_output(tensor):
             return self._decode_nms_rows(tensor, orig_width, orig_height, scale, pad_x, pad_y)
 
-        # Standard Ultralytics YOLO export: [4 + C, N] -> transpose to [N, 4 + C]
-        if tensor.shape[0] < tensor.shape[1]:
+        # Normalize Ultralytics raw YOLO exports to [N, 4 + C]
+        if self._should_transpose_yolo_tensor(tensor):
             tensor = tensor.T
 
         if tensor.shape[1] <= 4:
@@ -155,6 +158,68 @@ class OnnxDetector(BaseObjectDetector):
             )
         return detections
 
+    def _is_nms_output(self, tensor: np.ndarray) -> bool:
+        if self._output_layout == "channels_first" or tensor.shape[1] != 6:
+            return False
+        if tensor.shape[0] != 6:
+            return True
+        if self._output_layout == "channels_last":
+            return True
+        # Disambiguate equal-axis (6, 6): NMS rows have conf in [0, 1], integer cls, and x2 >= x1
+        confs = tensor[:, 4]
+        clss = tensor[:, 5]
+        return bool(
+            np.all(confs >= 0.0)
+            and np.all(confs <= 1.0)
+            and np.all(clss >= 0.0)
+            and np.all(np.isclose(clss, np.round(clss)))
+            and np.all(tensor[:, 2] >= tensor[:, 0])
+            and np.all(tensor[:, 3] >= tensor[:, 1])
+        )
+
+    def _should_transpose_yolo_tensor(self, tensor: np.ndarray) -> bool:
+        if self._output_layout == "channels_first":
+            return True
+        if self._output_layout == "channels_last":
+            return False
+
+        if self._class_names:
+            expected_channels = 4 + len(self._class_names)
+            matches_axis0 = tensor.shape[0] == expected_channels
+            matches_axis1 = tensor.shape[1] == expected_channels
+            if matches_axis0 and not matches_axis1:
+                return True
+            if matches_axis1 and not matches_axis0:
+                return False
+
+        if self._output_shape is not None and len(self._output_shape) >= 2:
+            s0, s1 = self._output_shape[-2], self._output_shape[-1]
+            if isinstance(s0, int) and not isinstance(s1, int):
+                return True
+            if isinstance(s1, int) and not isinstance(s0, int):
+                return False
+
+        if tensor.shape[0] > 4 and tensor.shape[1] > 4:
+            cf_scores = tensor[4:, :]
+            cl_scores = tensor[:, 4:]
+            cf_valid = _is_probability_slice(cf_scores)
+            cl_valid = _is_probability_slice(cl_scores)
+            if cf_valid and not cl_valid:
+                return True
+            if cl_valid and not cf_valid:
+                return False
+            if cf_valid and cl_valid:
+                cf_has_det = bool(np.any(cf_scores >= self._confidence))
+                cl_has_det = bool(np.any(cl_scores >= self._confidence))
+                if cf_has_det and not cl_has_det:
+                    return True
+                if cl_has_det and not cf_has_det:
+                    return False
+
+        if tensor.shape[0] != tensor.shape[1]:
+            return tensor.shape[0] < tensor.shape[1]
+        return True
+
     def _decode_nms_rows(
         self,
         rows: np.ndarray,
@@ -223,6 +288,11 @@ class OnnxDetector(BaseObjectDetector):
             )
         if self._input_name is None:
             self._input_name = self._session.get_inputs()[0].name
+            outputs = self._session.get_outputs()
+            if outputs:
+                raw_shape = getattr(outputs[0], "shape", None)
+                if raw_shape is not None:
+                    self._output_shape = tuple(raw_shape)
             self._class_names = self._extract_metadata_names(self._session)
         return self._session
 
@@ -242,3 +312,11 @@ class OnnxDetector(BaseObjectDetector):
         except Exception:
             return {}
         return {}
+
+
+def _is_probability_slice(values: np.ndarray) -> bool:
+    return bool(
+        np.all(np.isfinite(values))
+        and np.all(values >= -1e-3)
+        and np.all(values <= 1.0 + 1e-3)
+    )

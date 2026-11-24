@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import tempfile
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -42,6 +44,16 @@ logger = logging.getLogger(__name__)
 
 class JobCancelledError(RuntimeError):
     """Raised when an in-flight video analysis job is cancelled cooperatively."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Pass2WindowOutcome:
+    cap_result: CapResolutionResult | None
+    track_elapsed_sec: float
+    cap_elapsed_sec: float
+    has_spatial_hint: bool
+    actor_match_tied: bool
+    cap_ambiguous: bool
 
 
 class VideoAnalysisOrchestrator:
@@ -292,9 +304,11 @@ class VideoAnalysisOrchestrator:
 
             cap_result: CapResolutionResult | None = None
             has_spatial_hint = cand.actor_bbox_normalized is not None
+            actor_match_tied = False
+            cap_ambiguous = False
             if not opts.skip_pass2:
                 windows_processed += 1
-                cap_result, t_trk, t_cap, has_spatial_hint = self._inspect_event_window(
+                win_outcome = self._inspect_event_window(
                     event_index=idx + 1,
                     candidate=cand,
                     video_path=video_path,
@@ -306,8 +320,12 @@ class VideoAnalysisOrchestrator:
                     debug_dir=debug_dir,
                     warnings=warnings,
                 )
-                track_elapsed += t_trk
-                cap_elapsed += t_cap
+                cap_result = win_outcome.cap_result
+                track_elapsed += win_outcome.track_elapsed_sec
+                cap_elapsed += win_outcome.cap_elapsed_sec
+                has_spatial_hint = win_outcome.has_spatial_hint
+                actor_match_tied = win_outcome.actor_match_tied
+                cap_ambiguous = win_outcome.cap_ambiguous
 
             outcome = self._lineup_matcher.resolve(
                 candidate=cand,
@@ -315,6 +333,8 @@ class VideoAnalysisOrchestrator:
                 snapshot=request.match_snapshot,
                 min_cap_confidence=opts.min_cap_confidence,
                 has_spatial_hint=has_spatial_hint,
+                actor_match_tied=actor_match_tied,
+                cap_ambiguous=cap_ambiguous,
             )
             if outcome.match_lineup_id is not None:
                 resolved_count += 1
@@ -368,71 +388,102 @@ class VideoAnalysisOrchestrator:
         work_dir: Path,
         debug_dir: Path | None,
         warnings: list[str],
-    ) -> tuple[CapResolutionResult | None, float, float, bool]:
+    ) -> _Pass2WindowOutcome:
         opts = request.analysis_options
         has_spatial_hint = candidate.actor_bbox_normalized is not None
         t_trk_start = time.monotonic()
         win_dir = work_dir / f"pass2_win_{event_index:04d}"
-        frames = self._ffmpeg.extract_window_frames(
-            video_path=video_path,
-            center_sec=candidate.video_time_sec,
-            half_window_sec=opts.pass2_window_half_sec,
-            total_duration_sec=probe.duration_sec,
-            sample_fps=opts.pass2_sample_fps,
-            work_dir=win_dir,
-        )
-        if not frames:
-            warnings.append(
-                f"Event #{event_index} ({candidate.definition.short_name} at "
-                f"{candidate.video_time_sec}s): no frames extracted in Pass 2 window."
-            )
-            return None, round(time.monotonic() - t_trk_start, 3), 0.0, has_spatial_hint
-
-        tracklets = self._tracker.track_window(frames, self._detector)
-        frame_h, frame_w = frames[0].image_bgr.shape[:2]
-        matched = self._actor_matcher.match(
-            candidate=candidate,
-            tracklets=tracklets,
-            snapshot=request.match_snapshot,
-            frame_width=frame_w,
-            frame_height=frame_h,
-        )
-        if matched is None:
-            return None, round(time.monotonic() - t_trk_start, 3), 0.0, has_spatial_hint
-
-        selected_crops = self._crop_selector.select_and_build_sheet(
-            tracklet=matched.tracklet,
-            frames=frames,
-            max_crops=opts.pass2_max_crops_per_track,
-        )
-        t_trk_elapsed = time.monotonic() - t_trk_start
-
-        if selected_crops is None:
-            return None, t_trk_elapsed, 0.0, matched.has_spatial_hint
-
-        if debug_dir is not None:
-            self._crop_selector.save_debug_artifacts(
-                debug_dir=debug_dir,
-                event_idx=event_index,
-                selected=selected_crops,
-                frames=frames,
-                obs=matched.nearest_observation,
-            )
-
-        t_cap_start = time.monotonic()
         try:
-            cap_result = self._cap_resolver.resolve(
-                selected_crops=selected_crops,
-                allowed_cap_numbers=allowed_caps,
-                cap_color_hint=candidate.cap_color_hint or cap_color_hint,
+            frames = self._ffmpeg.extract_window_frames(
+                video_path=video_path,
+                center_sec=candidate.video_time_sec,
+                half_window_sec=opts.pass2_window_half_sec,
+                total_duration_sec=probe.duration_sec,
+                sample_fps=opts.pass2_sample_fps,
+                work_dir=win_dir,
             )
-        except Exception as exc:
-            logger.warning("Cap resolution failed for event #%d: %s", event_index, exc)
-            warnings.append(f"Event #{event_index} cap resolution failed: {exc}")
-            cap_result = None
-        t_cap_elapsed = time.monotonic() - t_cap_start
+            if not frames:
+                warnings.append(
+                    f"Event #{event_index} ({candidate.definition.short_name} at "
+                    f"{candidate.video_time_sec}s): no frames extracted in Pass 2 window."
+                )
+                return _Pass2WindowOutcome(
+                    cap_result=None,
+                    track_elapsed_sec=round(time.monotonic() - t_trk_start, 3),
+                    cap_elapsed_sec=0.0,
+                    has_spatial_hint=has_spatial_hint,
+                    actor_match_tied=False,
+                    cap_ambiguous=False,
+                )
 
-        return cap_result, t_trk_elapsed, t_cap_elapsed, matched.has_spatial_hint
+            tracklets = self._tracker.track_window(frames, self._detector)
+            frame_h, frame_w = frames[0].image_bgr.shape[:2]
+            matched = self._actor_matcher.match(
+                candidate=candidate,
+                tracklets=tracklets,
+                snapshot=request.match_snapshot,
+                frame_width=frame_w,
+                frame_height=frame_h,
+            )
+            if matched is None:
+                return _Pass2WindowOutcome(
+                    cap_result=None,
+                    track_elapsed_sec=round(time.monotonic() - t_trk_start, 3),
+                    cap_elapsed_sec=0.0,
+                    has_spatial_hint=has_spatial_hint,
+                    actor_match_tied=False,
+                    cap_ambiguous=False,
+                )
+
+            selected_crops = self._crop_selector.select_and_build_sheet(
+                tracklet=matched.tracklet,
+                frames=frames,
+                max_crops=opts.pass2_max_crops_per_track,
+            )
+            t_trk_elapsed = time.monotonic() - t_trk_start
+
+            if selected_crops is None:
+                return _Pass2WindowOutcome(
+                    cap_result=None,
+                    track_elapsed_sec=t_trk_elapsed,
+                    cap_elapsed_sec=0.0,
+                    has_spatial_hint=matched.has_spatial_hint,
+                    actor_match_tied=matched.is_tied,
+                    cap_ambiguous=False,
+                )
+
+            if debug_dir is not None:
+                self._crop_selector.save_debug_artifacts(
+                    debug_dir=debug_dir,
+                    event_idx=event_index,
+                    selected=selected_crops,
+                    frames=frames,
+                    obs=matched.nearest_observation,
+                )
+
+            t_cap_start = time.monotonic()
+            try:
+                cap_result = self._cap_resolver.resolve(
+                    selected_crops=selected_crops,
+                    allowed_cap_numbers=allowed_caps,
+                    cap_color_hint=candidate.cap_color_hint or cap_color_hint,
+                )
+            except Exception as exc:
+                logger.warning("Cap resolution failed for event #%d: %s", event_index, exc)
+                warnings.append(f"Event #{event_index} cap resolution failed: {exc}")
+                cap_result = None
+            t_cap_elapsed = time.monotonic() - t_cap_start
+
+            return _Pass2WindowOutcome(
+                cap_result=cap_result,
+                track_elapsed_sec=t_trk_elapsed,
+                cap_elapsed_sec=t_cap_elapsed,
+                has_spatial_hint=matched.has_spatial_hint,
+                actor_match_tied=matched.is_tied,
+                cap_ambiguous=selected_crops.has_ambiguous_cap,
+            )
+        finally:
+            shutil.rmtree(win_dir, ignore_errors=True)
 
     @staticmethod
     def _check_cancelled(cancel_event: threading.Event | None) -> None:

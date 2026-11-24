@@ -46,6 +46,22 @@ class JobRecord:
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
+@dataclass(frozen=True, slots=True)
+class JobSnapshot:
+    """Immutable point-in-time snapshot of a job record captured under lock."""
+
+    job_id: UUID
+    execution_id: UUID
+    match_id: UUID
+    status: JobStatus
+    stage: str
+    progress_percent: int
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+    draft: VideoAnalysisDraft | None
+
+
 class JobStore:
     """Executes video analysis jobs in background worker threads and posts optional callbacks."""
 
@@ -99,6 +115,15 @@ class JobStore:
 
     def submit(self, request: AnalyzeJobRequest) -> JobRecord:
         """Validate callback target, enqueue a job, and immediately return its queued state."""
+        record, _ = self._submit_internal(request)
+        return record
+
+    def submit_and_snapshot(self, request: AnalyzeJobRequest) -> JobSnapshot:
+        """Validate callback target, enqueue a job, and return an atomic initial snapshot."""
+        _, snapshot = self._submit_internal(request)
+        return snapshot
+
+    def _submit_internal(self, request: AnalyzeJobRequest) -> tuple[JobRecord, JobSnapshot]:
         validated_callback_url = self.validate_callback_url(request.callback_url)
 
         with self._condition:
@@ -115,7 +140,7 @@ class JobStore:
             self._prune_terminal_jobs_locked(now)
             existing = self._jobs.get(request.job_id)
             if existing is not None and existing.status in ("queued", "processing"):
-                return existing
+                return existing, self._to_snapshot(existing)
             record = JobRecord(
                 job_id=request.job_id,
                 match_id=request.match_id,
@@ -124,9 +149,10 @@ class JobStore:
                 updated_at=now,
             )
             self._jobs[request.job_id] = record
+            snapshot = self._to_snapshot(record)
 
         self._executor.submit(self._run_job, request, record)
-        return record
+        return record, snapshot
 
     def get(self, job_id: UUID) -> JobRecord | None:
         """Return an active or retained job record, pruning expired terminal records first."""
@@ -134,6 +160,29 @@ class JobStore:
         with self._condition:
             self._prune_terminal_jobs_locked(now)
             return self._jobs.get(job_id)
+
+    def get_snapshot(self, job_id: UUID) -> JobSnapshot | None:
+        """Return an atomic job snapshot under lock, pruning expired terminal records first."""
+        now = datetime.now(UTC)
+        with self._condition:
+            self._prune_terminal_jobs_locked(now)
+            record = self._jobs.get(job_id)
+            return self._to_snapshot(record) if record is not None else None
+
+    @staticmethod
+    def _to_snapshot(record: JobRecord) -> JobSnapshot:
+        return JobSnapshot(
+            job_id=record.job_id,
+            execution_id=record.execution_id,
+            match_id=record.match_id,
+            status=record.status,
+            stage=record.stage,
+            progress_percent=record.progress_percent,
+            error_message=record.error_message,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            draft=record.draft,
+        )
 
     def cancel(self, job_id: UUID) -> bool:
         """Request cooperative cancellation for a tracked job."""
@@ -149,9 +198,16 @@ class JobStore:
             return True
 
     def shutdown(self) -> None:
-        """Stop accepting new jobs and cancel queued futures on server shutdown."""
+        """Signal active jobs to cancel, stop accepting new jobs, and cancel queued futures."""
+        now = datetime.now(UTC)
         with self._condition:
             self._shutdown = True
+            for record in self._jobs.values():
+                if record.status in ("queued", "processing"):
+                    record.cancel_event.set()
+                    record.status = "cancelled"
+                    record.stage = "cancelled"
+                    record.updated_at = now
             self._condition.notify_all()
         self._executor.shutdown(wait=False, cancel_futures=True)
 

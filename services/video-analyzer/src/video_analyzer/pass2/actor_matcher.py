@@ -20,6 +20,7 @@ class MatchedTracklet:
     match_score: float
     nearest_observation: TrackletObservation
     has_spatial_hint: bool = True
+    is_tied: bool = False
 
 
 class ActorMatcher:
@@ -50,6 +51,7 @@ class ActorMatcher:
             )
 
         best: MatchedTracklet | None = None
+        is_tied = False
         diag = hypot(frame_width, frame_height)
         is_gk_event = candidate.definition.name.lower() in {"save", "goalkeeper error"}
         cap_hint = (
@@ -81,8 +83,19 @@ class ActorMatcher:
                     nearest_observation=obs,
                     has_spatial_hint=has_spatial_hint,
                 )
+                is_tied = False
+            elif score == best.match_score:
+                is_tied = True
 
-        return best
+        if best is None:
+            return None
+        return MatchedTracklet(
+            tracklet=best.tracklet,
+            match_score=best.match_score,
+            nearest_observation=best.nearest_observation,
+            has_spatial_hint=best.has_spatial_hint,
+            is_tied=is_tied,
+        )
 
     @staticmethod
     def _score_candidate(

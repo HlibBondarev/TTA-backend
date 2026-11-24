@@ -13,6 +13,7 @@ from uuid import uuid4
 import uvicorn
 
 from video_analyzer.config import Settings
+from video_analyzer.logging_utils import configure_safe_http_logging
 from video_analyzer.pipeline.factory import build_default_orchestrator
 from video_analyzer.schemas.request import (
     AnalysisOptions,
@@ -97,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    configure_safe_http_logging()
 
     if args.command == "serve":
         from video_analyzer.api.app import create_app

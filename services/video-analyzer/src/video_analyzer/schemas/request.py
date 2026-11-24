@@ -95,10 +95,13 @@ class MatchSnapshot(CamelCaseModel):
     event_definitions: list[EventDefinitionSnapshot] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _validate_unique_prompt_codes(self) -> MatchSnapshot:
+    def _validate_unique_event_definitions(self) -> MatchSnapshot:
         codes = [item.prompt_code for item in self.event_definitions]
         if len(codes) != len(set(codes)):
             raise ValueError("eventDefinitions must have unique promptCode values.")
+        definition_ids = [item.event_definition_id for item in self.event_definitions]
+        if len(definition_ids) != len(set(definition_ids)):
+            raise ValueError("eventDefinitions must have unique eventDefinitionId values.")
         return self
 
 
@@ -135,3 +138,9 @@ class AnalyzeJobRequest(CamelCaseModel):
     callback_url: str | None = None
     match_snapshot: MatchSnapshot
     analysis_options: AnalysisOptions = Field(default_factory=AnalysisOptions)
+
+    @model_validator(mode="after")
+    def _validate_tracked_team_consistency(self) -> AnalyzeJobRequest:
+        if self.tracked_team_id != self.match_snapshot.tracked_team.id:
+            raise ValueError("trackedTeamId must match matchSnapshot.trackedTeam.id.")
+        return self

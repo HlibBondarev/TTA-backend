@@ -9,8 +9,10 @@ import cv2
 import httpx
 import numpy as np
 
+from video_analyzer.config import validate_roboflow_api_url
 from video_analyzer.detectors.base import BaseObjectDetector, Detection
 from video_analyzer.detectors.class_map import ClassMapAdapter
+from video_analyzer.logging_utils import configure_safe_http_logging, redact_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +29,22 @@ class RoboflowDetector(BaseObjectDetector):
         iou: float,
         class_map: ClassMapAdapter,
         timeout_sec: float = 30.0,
+        allow_insecure_local_http: bool = False,
         http_client: httpx.Client | None = None,
     ) -> None:
+        configure_safe_http_logging()
         self._model_id = model_id.strip("/")
         self._api_key = api_key.strip()
-        self._api_url = api_url.rstrip("/")
+        self._api_url = validate_roboflow_api_url(
+            api_url,
+            allow_insecure_local_http=allow_insecure_local_http,
+        )
         self._confidence = confidence
         self._iou = iou
         self._class_map = class_map
         self._timeout_sec = timeout_sec
         self._owns_client = http_client is None
-        self._client = http_client or httpx.Client(timeout=timeout_sec)
+        self._client = http_client or httpx.Client(timeout=timeout_sec, follow_redirects=False)
 
     def close(self) -> None:
         """Close the owned HTTP client when tearing down the detector."""
@@ -69,8 +76,18 @@ class RoboflowDetector(BaseObjectDetector):
             "overlap": round(self._iou * 100.0, 2),
         }
         files = {"file": ("frame.jpg", encoded.tobytes(), "image/jpeg")}
-        response = self._client.post(endpoint, params=params, files=files)
-        response.raise_for_status()
+        try:
+            response = self._client.post(
+                endpoint,
+                params=params,
+                files=files,
+                follow_redirects=False,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(
+                f"Roboflow inference request failed: {redact_sensitive_text(str(exc))}"
+            ) from None
         payload = response.json()
         return self.parse_predictions(payload, frame_width=width, frame_height=height)
 

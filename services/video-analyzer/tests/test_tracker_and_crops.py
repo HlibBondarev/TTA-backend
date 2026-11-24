@@ -14,6 +14,7 @@ from video_analyzer.pass1.models import Pass1EventCandidate
 from video_analyzer.pass2.actor_matcher import ActorMatcher
 from video_analyzer.pass2.cap_resolver import GeminiCropGridCapResolver, LocalOcrCapResolver
 from video_analyzer.pass2.crop_selector import CropCandidate, CropSelector, SelectedCrops
+from video_analyzer.pass2.lineup_matcher import LineupMatcher
 from video_analyzer.pass2.tracker import (
     BoTSortTracker,
     Tracklet,
@@ -481,3 +482,153 @@ def test_actor_matcher_filters_ineligible_non_overlapping_track_before_ranking(
         assert matched.tracklet.track_id == 1
         assert matched.has_spatial_hint is True
         assert matched.match_score == pytest.approx(0.1269, abs=1e-3)
+
+
+def test_gemini_cap_resolver_rejects_contradictory_or_non_top_consensus() -> None:
+    crop = np.zeros((64, 64, 3), dtype=np.uint8)
+    selected = SelectedCrops(
+        crops=[CropCandidate(0, 10.0, crop, 100.0)],
+        contact_sheet_jpeg=b"jpeg-bytes",
+        contact_sheet_bgr=crop,
+    )
+
+    class ContradictoryGeminiClient:
+        class models:
+            @staticmethod
+            def generate_content(**kwargs):
+                # Candidate #9 scored 0.95, while consensus picked #7 at 0.82
+                return SimpleNamespace(
+                    text='{"tile_readings":[],"consensus_cap_number":7,"confidence":0.82,'
+                    '"candidate_numbers":[{"cap_number":9,"score":0.95},'
+                    '{"cap_number":7,"score":0.40}],"reasoning":"Conflicting reading"}'
+                )
+
+    res = GeminiCropGridCapResolver(api_key="test", client=ContradictoryGeminiClient()).resolve(
+        selected, allowed_cap_numbers=[7, 9]
+    )
+    assert res.resolved_cap_number is None
+    assert res.candidate_scores[9] == pytest.approx(0.95)
+    assert res.candidate_scores[7] == pytest.approx(0.40)
+
+
+def test_cross_player_cap_ambiguity_blocks_auto_assignment(
+    sample_snapshot: MatchSnapshot,
+) -> None:
+    img = np.zeros((300, 400, 3), dtype=np.uint8)
+    frames = [
+        ExtractedFrame(index=0, video_time_sec=10.0, image_bgr=img),
+        ExtractedFrame(index=1, video_time_sec=10.2, image_bgr=img.copy()),
+    ]
+    # Frame 0: shared cap centered at (160, 100) falls inside BOTH players
+    # Frame 1: player 2 contains two caps (multi-cap overlap)
+    boxes = {
+        0: [
+            Detection((100.0, 60.0, 200.0, 220.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((140.0, 60.0, 240.0, 220.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((150.0, 85.0, 170.0, 115.0), 0.95, CanonicalRole.CAP, "cap"),
+        ],
+        1: [
+            Detection((100.0, 60.0, 200.0, 220.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((110.0, 80.0, 130.0, 110.0), 0.95, CanonicalRole.CAP, "cap"),
+            Detection((160.0, 80.0, 180.0, 110.0), 0.95, CanonicalRole.CAP, "cap"),
+        ],
+    }
+
+    tracklets = BoTSortTracker(iou_threshold=0.20).track_window(frames, SyntheticDetector(boxes))
+    assert len(tracklets) == 2
+    assert all(
+        obs.cap_ambiguous is True and obs.cap_bbox_xyxy is None
+        for obs in tracklets[0].observations
+    )
+    assert tracklets[1].observations[0].cap_ambiguous is True
+
+    selected = CropSelector(min_frame_gap=1).select_and_build_sheet(
+        tracklets[0], frames, max_crops=2
+    )
+    assert selected is not None
+    assert selected.has_ambiguous_cap is True
+
+    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    cand = Pass1EventCandidate(
+        video_time_sec=10.0,
+        definition=defn,
+        period_number=1,
+        is_lead_to_goal=True,
+        actor_bbox_normalized=[100 / 400, 60 / 300, 200 / 400, 220 / 300],
+        pool_zone_hint="center",
+        cap_color_hint="white",
+        confidence=0.94,
+    )
+    from video_analyzer.pass2.cap_resolver import CapResolutionResult
+
+    outcome = LineupMatcher().resolve(
+        cand,
+        CapResolutionResult(
+            resolved_cap_number=7,
+            confidence=0.95,
+            candidate_scores={7: 0.95},
+            reasoning="Sharp upper-body crop",
+        ),
+        sample_snapshot,
+        min_cap_confidence=0.80,
+        cap_ambiguous=selected.has_ambiguous_cap,
+    )
+    assert outcome.match_lineup_id is None
+    assert outcome.resolved_cap_number is None
+    assert outcome.needs_review is True
+    assert "AMBIGUOUS_CAP_DETECTION" in outcome.review_reasons
+    assert [c.cap_number for c in outcome.candidate_lineup_ids] == [7]
+
+
+def test_actor_matcher_flags_tied_tracks_and_blocks_auto_confirmation(
+    sample_snapshot: MatchSnapshot,
+) -> None:
+    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    cand = Pass1EventCandidate(
+        video_time_sec=20.0,
+        definition=defn,
+        period_number=1,
+        is_lead_to_goal=True,
+        actor_bbox_normalized=[0.4, 0.3, 0.5, 0.6],
+        pool_zone_hint="center",
+        cap_color_hint="white",
+        confidence=0.95,
+    )
+    t1 = Tracklet(
+        track_id=1,
+        observations=[
+            TrackletObservation(0, 20.0, (160.0, 90.0, 200.0, 180.0), 0.9, "White team")
+        ],
+    )
+    t2 = Tracklet(
+        track_id=2,
+        observations=[
+            TrackletObservation(0, 20.0, (160.0, 90.0, 200.0, 180.0), 0.9, "White team")
+        ],
+    )
+
+    matched = ActorMatcher().match(
+        cand, [t1, t2], sample_snapshot, frame_width=400, frame_height=300
+    )
+    assert matched is not None
+    assert matched.is_tied is True
+
+    from video_analyzer.pass2.cap_resolver import CapResolutionResult
+
+    outcome = LineupMatcher().resolve(
+        cand,
+        CapResolutionResult(
+            resolved_cap_number=7,
+            confidence=0.95,
+            candidate_scores={7: 0.95},
+            reasoning="Cap #7",
+        ),
+        sample_snapshot,
+        min_cap_confidence=0.80,
+        actor_match_tied=matched.is_tied,
+    )
+    assert outcome.match_lineup_id is None
+    assert outcome.resolved_cap_number is None
+    assert outcome.needs_review is True
+    assert "TIED_ACTOR_TRACKLET_MATCH" in outcome.review_reasons
+    assert [c.cap_number for c in outcome.candidate_lineup_ids] == [7]

@@ -63,9 +63,15 @@ def test_cli_serve_passes_loaded_settings_and_custom_env_file(
     )
 
     captured: dict[str, object] = {}
+    mock_orchestrator = _build_mock_orchestrator()
+
+    def fake_build_orchestrator(settings: Settings):
+        captured["settings"] = settings
+        return mock_orchestrator
+
     monkeypatch.setattr(
-        "video_analyzer.cli.build_default_orchestrator",
-        lambda settings: _build_mock_orchestrator(),
+        "video_analyzer.api.app.build_default_orchestrator",
+        fake_build_orchestrator,
     )
 
     def fake_uvicorn_run(app: object, host: str, port: int) -> None:
@@ -81,6 +87,8 @@ def test_cli_serve_passes_loaded_settings_and_custom_env_file(
     assert isinstance(served_app, FastAPI)
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 8123
+    assert captured["settings"].internal_api_key == "custom-cli-secret"  # type: ignore[union-attr]
+    assert served_app.state.job_store._orchestrator is mock_orchestrator
     assert served_app.state.settings.internal_api_key == "custom-cli-secret"
     assert served_app.state.settings.callback_api_key == "outbound-hook-secret"
     assert served_app.state.settings.resolved_callback_allowed_origins == (
@@ -466,3 +474,104 @@ def test_resubmission_and_eviction_serialize_with_callback_delivery(
             resubmit_thread.join(timeout=2.0)
         store.shutdown()
         mock_http.close()
+
+
+def test_job_store_snapshots_are_atomic_and_isolated_from_subsequent_updates(
+    sample_job_request: AnalyzeJobRequest,
+) -> None:
+    gate = threading.Event()
+    started = threading.Event()
+
+    class GatedOrchestrator:
+        def __init__(self) -> None:
+            self._delegate = _build_mock_orchestrator()
+
+        def run(self, request, cancel_event=None, progress_callback=None):
+            if progress_callback:
+                progress_callback("pass1_vlm", 30)
+            started.set()
+            gate.wait(timeout=5.0)
+            return self._delegate.run(
+                request,
+                cancel_event=cancel_event,
+                progress_callback=progress_callback,
+            )
+
+    store = JobStore(orchestrator=GatedOrchestrator())  # type: ignore[arg-type]
+    try:
+        req = sample_job_request.model_copy(update={"job_id": uuid4(), "callback_url": None})
+        initial = store.submit_and_snapshot(req)
+        assert initial.status in ("queued", "processing")
+        assert started.wait(timeout=3.0)
+
+        mid = store.get_snapshot(req.job_id)
+        assert mid is not None
+        assert mid.status == "processing"
+        assert mid.stage == "pass1_vlm"
+        assert mid.progress_percent == 30
+        assert mid.draft is None
+
+        gate.set()
+        for _ in range(40):
+            done = store.get_snapshot(req.job_id)
+            if done is not None and done.status == "completed":
+                break
+            time.sleep(0.05)
+
+        # Prior mid-flight snapshot must remain unaltered after completion
+        assert mid.status == "processing"
+        assert mid.draft is None
+        final_snap = store.get_snapshot(req.job_id)
+        assert final_snap is not None
+        assert final_snap.status == "completed"
+        assert final_snap.progress_percent == 100
+        assert final_snap.draft is not None
+    finally:
+        gate.set()
+        store.shutdown()
+
+
+def test_job_store_shutdown_signals_active_jobs_to_cancel(
+    sample_job_request: AnalyzeJobRequest,
+) -> None:
+    started = threading.Event()
+    saw_cancel_signal = threading.Event()
+
+    class CooperativeOrchestrator:
+        def run(self, request, cancel_event=None, progress_callback=None):
+            started.set()
+            assert cancel_event is not None
+            if cancel_event.wait(timeout=5.0):
+                saw_cancel_signal.set()
+                raise JobCancelledError("Cancelled on shutdown.")
+            raise AssertionError("Expected cancel_event to be signaled on shutdown.")
+
+    completed_store = JobStore(orchestrator=_build_mock_orchestrator(), max_workers=1)
+    try:
+        done_req = sample_job_request.model_copy(update={"job_id": uuid4(), "callback_url": None})
+        completed_store.submit(done_req)
+        for _ in range(40):
+            rec = completed_store.get(done_req.job_id)
+            if rec is not None and rec.finalized:
+                break
+            time.sleep(0.02)
+        completed_store.shutdown()
+        done_rec = completed_store.get(done_req.job_id)
+        assert done_rec is not None
+        assert done_rec.status == "completed"
+    finally:
+        completed_store.shutdown()
+
+    store = JobStore(
+        orchestrator=CooperativeOrchestrator(),  # type: ignore[arg-type]
+        max_workers=1,
+    )
+    active_req = sample_job_request.model_copy(update={"job_id": uuid4(), "callback_url": None})
+    rec = store.submit(active_req)
+    assert started.wait(timeout=3.0)
+
+    store.shutdown()
+    assert saw_cancel_signal.wait(timeout=3.0)
+    assert rec.cancel_event.is_set()
+    assert rec.status == "cancelled"
+    assert rec.stage == "cancelled"

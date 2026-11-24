@@ -11,8 +11,9 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 
 from video_analyzer import __version__
-from video_analyzer.api.job_store import JobRecord, JobStore
+from video_analyzer.api.job_store import JobSnapshot, JobStore
 from video_analyzer.config import Settings
+from video_analyzer.logging_utils import configure_safe_http_logging
 from video_analyzer.pipeline.factory import build_default_orchestrator
 from video_analyzer.pipeline.orchestrator import VideoAnalysisOrchestrator
 from video_analyzer.schemas.request import AnalyzeJobRequest
@@ -23,6 +24,7 @@ def create_app(
     orchestrator: VideoAnalysisOrchestrator | None = None,
 ) -> FastAPI:
     """Create the FastAPI application with internal API key security."""
+    configure_safe_http_logging()
     active_settings = settings or Settings()
     internal_api_key = active_settings.require_internal_api_key()
     active_orchestrator = orchestrator or build_default_orchestrator(active_settings)
@@ -80,19 +82,19 @@ def create_app(
     )
     def submit_job(request: AnalyzeJobRequest) -> dict[str, Any]:
         try:
-            record = job_store.submit(request)
+            snapshot = job_store.submit_and_snapshot(request)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(exc),
             ) from exc
         return {
-            "jobId": str(record.job_id),
-            "executionId": str(record.execution_id),
-            "matchId": str(record.match_id),
-            "status": record.status,
-            "stage": record.stage,
-            "progressPercent": record.progress_percent,
+            "jobId": str(snapshot.job_id),
+            "executionId": str(snapshot.execution_id),
+            "matchId": str(snapshot.match_id),
+            "status": snapshot.status,
+            "stage": snapshot.stage,
+            "progressPercent": snapshot.progress_percent,
         }
 
     @application.get(
@@ -100,13 +102,13 @@ def create_app(
         dependencies=[Depends(verify_internal_api_key)],
     )
     def get_job(job_id: UUID) -> JSONResponse:
-        record = job_store.get(job_id)
-        if record is None:
+        snapshot = job_store.get_snapshot(job_id)
+        if snapshot is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Video analysis job '{job_id}' was not found.",
             )
-        return JSONResponse(content=_serialize_job(record))
+        return JSONResponse(content=_serialize_job(snapshot))
 
     @application.delete(
         "/v1/analysis/jobs/{job_id}",
@@ -124,18 +126,18 @@ def create_app(
     return application
 
 
-def _serialize_job(record: JobRecord) -> dict[str, Any]:
+def _serialize_job(snapshot: JobSnapshot) -> dict[str, Any]:
     return {
-        "jobId": str(record.job_id),
-        "executionId": str(record.execution_id),
-        "matchId": str(record.match_id),
-        "status": record.status,
-        "stage": record.stage,
-        "progressPercent": record.progress_percent,
-        "errorMessage": record.error_message,
-        "createdAt": record.created_at.isoformat(),
-        "updatedAt": record.updated_at.isoformat(),
-        "draft": record.draft.model_dump(mode="json", by_alias=True) if record.draft else None,
+        "jobId": str(snapshot.job_id),
+        "executionId": str(snapshot.execution_id),
+        "matchId": str(snapshot.match_id),
+        "status": snapshot.status,
+        "stage": snapshot.stage,
+        "progressPercent": snapshot.progress_percent,
+        "errorMessage": snapshot.error_message,
+        "createdAt": snapshot.created_at.isoformat(),
+        "updatedAt": snapshot.updated_at.isoformat(),
+        "draft": snapshot.draft.model_dump(mode="json", by_alias=True) if snapshot.draft else None,
     }
 
 

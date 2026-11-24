@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 INSECURE_PLACEHOLDER_API_KEYS: frozenset[str] = frozenset({"change-me-local-dev-key"})
@@ -60,6 +61,7 @@ class Settings(BaseSettings):
     # Roboflow-specific settings
     roboflow_api_key: str = Field(default="")
     roboflow_api_url: str = Field(default="https://detect.roboflow.com")
+    roboflow_allow_insecure_local_http: bool = Field(default=False)
     roboflow_timeout_sec: float = Field(default=30.0, gt=0)
 
     # Pass 2 Tracking & Cap Number Resolution
@@ -155,6 +157,14 @@ class Settings(BaseSettings):
             return tuple(self.callback_allowed_origins)
         return tuple(self._parse_callback_allowed_origins(self.callback_allowed_origins))
 
+    @model_validator(mode="after")
+    def _validate_roboflow_url(self) -> Settings:
+        self.roboflow_api_url = validate_roboflow_api_url(
+            self.roboflow_api_url,
+            allow_insecure_local_http=self.roboflow_allow_insecure_local_http,
+        )
+        return self
+
     def require_internal_api_key(self) -> str:
         """Validate and return the configured internal API key for server startup."""
         key = self.internal_api_key.strip()
@@ -174,6 +184,50 @@ def normalize_origin(raw_origin: str) -> str:
 def extract_origin(url: str) -> str:
     """Validate an HTTP(S) callback URL and return its canonical origin (scheme://host:port)."""
     return _parse_origin(url, allow_path_and_query=True)
+
+
+def validate_roboflow_api_url(
+    api_url: str,
+    *,
+    allow_insecure_local_http: bool = False,
+) -> str:
+    """Validate Roboflow endpoint URL, requiring HTTPS unless local loopback HTTP is enabled."""
+    stripped = api_url.strip()
+    if not stripped:
+        raise ValueError("ROBOFLOW_API_URL cannot be empty.")
+
+    parsed = urlsplit(stripped)
+    scheme = parsed.scheme.lower()
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("ROBOFLOW_API_URL must not contain embedded userinfo credentials.")
+    if parsed.query or parsed.fragment:
+        raise ValueError("ROBOFLOW_API_URL must not contain query parameters or fragments.")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"ROBOFLOW_API_URL '{api_url}' is missing a valid host.")
+    _ = parsed.port
+
+    if scheme == "https":
+        return stripped.rstrip("/")
+    if scheme == "http":
+        if allow_insecure_local_http and _is_loopback_host(hostname):
+            return stripped.rstrip("/")
+        raise ValueError(
+            "ROBOFLOW_API_URL must use https:// "
+            "(plain http:// is disallowed unless ROBOFLOW_ALLOW_INSECURE_LOCAL_HTTP=true "
+            "for a loopback host)."
+        )
+    raise ValueError(f"Unsupported ROBOFLOW_API_URL scheme '{parsed.scheme}'; expected https.")
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    normalized = hostname.strip().lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 def _parse_origin(raw_url: str, *, allow_path_and_query: bool) -> str:

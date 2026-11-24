@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from uuid import uuid4
 
 import cv2
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from video_analyzer.api.app import create_app
 from video_analyzer.cli import main as cli_main
@@ -265,3 +268,81 @@ def test_cli_analyze_writes_draft_json(
     written = json.loads(out_file.read_text(encoding="utf-8"))
     assert len(written["events"]) == 2
     assert written["videoMetadata"]["width"] == 3840
+
+
+def test_request_schemas_validate_unique_definition_ids_and_team_consistency(
+    sample_snapshot: MatchSnapshot,
+    sample_job_request: AnalyzeJobRequest,
+) -> None:
+    dup_defs = [
+        sample_snapshot.event_definitions[0],
+        sample_snapshot.event_definitions[1].model_copy(
+            update={"event_definition_id": sample_snapshot.event_definitions[0].event_definition_id}
+        ),
+    ]
+    with pytest.raises(ValidationError, match="eventDefinitionId"):
+        MatchSnapshot.model_validate(
+            {
+                **sample_snapshot.model_dump(by_alias=True),
+                "eventDefinitions": [d.model_dump(by_alias=True) for d in dup_defs],
+            }
+        )
+
+    mismatched_payload = {
+        **sample_job_request.model_dump(by_alias=True),
+        "trackedTeamId": str(uuid4()),
+    }
+    with pytest.raises(ValidationError, match="trackedTeamId"):
+        AnalyzeJobRequest.model_validate(mismatched_payload)
+
+
+def test_orchestrator_cleans_up_per_window_temp_dirs_and_propagates_tied_tracks(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    work_root = tmp_path / "work"
+    work_root.mkdir()
+    created_win_dirs: list[Path] = []
+
+    class TrackingFFmpeg(MockFFmpegClient):
+        def extract_window_frames(self, video_path, center_sec, work_dir, **kwargs):
+            work_dir.mkdir(parents=True, exist_ok=True)
+            (work_dir / "frame_0.jpg").write_bytes(b"jpg")
+            created_win_dirs.append(work_dir)
+            return super().extract_window_frames(
+                video_path,
+                center_sec,
+                work_dir=work_dir,
+                **kwargs,
+            )
+
+    class TiedDetector(BaseObjectDetector):
+        def provider_info(self) -> dict[str, str]:
+            return {"provider": "mock", "model": "tied"}
+
+        def detect(self, frame_bgr: np.ndarray) -> list[Detection]:
+            h, w = frame_bgr.shape[:2]
+            box = (0.45 * w, 0.35 * h, 0.55 * w, 0.65 * h)
+            return [
+                Detection(box, 0.91, CanonicalRole.PLAYER, "White team"),
+                Detection(box, 0.91, CanonicalRole.PLAYER, "White team"),
+            ]
+
+    orchestrator = VideoAnalysisOrchestrator(
+        settings=Settings(
+            _env_file=None,
+            internal_api_key="test-key",
+            work_dir=str(work_root),
+        ),
+        ffmpeg_client=TrackingFFmpeg(),  # type: ignore[arg-type]
+        pass1_analyzer=MockPass1Analyzer(),
+        detector=TiedDetector(),
+        cap_resolver=MockCapResolver(),
+    )
+
+    draft = orchestrator.run(sample_job_request)
+    assert len(created_win_dirs) == 2
+    assert all(not win_dir.exists() for win_dir in created_win_dirs)
+    assert all(evt.match_lineup_id is None for evt in draft.events)
+    assert all(evt.needs_review is True for evt in draft.events)
+    assert all("TIED_ACTOR_TRACKLET_MATCH" in evt.review_reasons for evt in draft.events)

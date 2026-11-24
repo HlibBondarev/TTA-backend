@@ -16,6 +16,55 @@ from video_analyzer.pass2.crop_selector import SelectedCrops
 logger = logging.getLogger(__name__)
 
 
+def _build_cap_grid_response_schema(types_module: Any) -> Any:
+    """Build a default-free Gemini schema for Pass 2 cap-grid recognition."""
+    tile_schema = types_module.Schema(
+        type=types_module.Type.OBJECT,
+        properties={
+            "tile_index": types_module.Schema(type=types_module.Type.INTEGER),
+            "cap_number": types_module.Schema(
+                type=types_module.Type.INTEGER,
+                nullable=True,
+            ),
+            "confidence": types_module.Schema(type=types_module.Type.NUMBER),
+        },
+        required=["tile_index", "confidence"],
+    )
+    cand_schema = types_module.Schema(
+        type=types_module.Type.OBJECT,
+        properties={
+            "cap_number": types_module.Schema(type=types_module.Type.INTEGER),
+            "score": types_module.Schema(type=types_module.Type.NUMBER),
+        },
+        required=["cap_number", "score"],
+    )
+    return types_module.Schema(
+        type=types_module.Type.OBJECT,
+        properties={
+            "tile_readings": types_module.Schema(
+                type=types_module.Type.ARRAY,
+                items=tile_schema,
+            ),
+            "consensus_cap_number": types_module.Schema(
+                type=types_module.Type.INTEGER,
+                nullable=True,
+            ),
+            "confidence": types_module.Schema(type=types_module.Type.NUMBER),
+            "candidate_numbers": types_module.Schema(
+                type=types_module.Type.ARRAY,
+                items=cand_schema,
+            ),
+            "reasoning": types_module.Schema(type=types_module.Type.STRING),
+        },
+        required=[
+            "tile_readings",
+            "confidence",
+            "candidate_numbers",
+            "reasoning",
+        ],
+    )
+
+
 class CapResolutionResult(BaseModel):
     """Consensus cap-number reading returned by a CapResolver."""
 
@@ -64,10 +113,12 @@ class GeminiCropGridCapResolver(BaseCapResolver):
         self,
         api_key: str,
         model_name: str = "gemini-2.5-flash",
+        timeout_sec: float = 180.0,
         client: Any = None,
     ) -> None:
         self._api_key = api_key.strip()
         self._model_name = model_name
+        self._timeout_sec = timeout_sec
         self._client = client
 
     def resolve(
@@ -108,13 +159,17 @@ class GeminiCropGridCapResolver(BaseCapResolver):
             contents=[image_part, prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema=_GeminiCapGridResponse,
+                response_schema=_build_cap_grid_response_schema(types),
                 temperature=0.0,
             ),
         )
 
         parsed = getattr(response, "parsed", None)
-        if not isinstance(parsed, _GeminiCapGridResponse):
+        if isinstance(parsed, _GeminiCapGridResponse):
+            pass
+        elif isinstance(parsed, dict):
+            parsed = _GeminiCapGridResponse.model_validate(parsed)
+        else:
             raw_text = getattr(response, "text", None)
             if not isinstance(raw_text, str) or not raw_text.strip():
                 raise RuntimeError("Gemini Pass 2 cap resolver returned an empty response.")
@@ -125,8 +180,13 @@ class GeminiCropGridCapResolver(BaseCapResolver):
     def _get_client(self) -> Any:
         if self._client is None:
             from google import genai
+            from google.genai import types
 
-            self._client = genai.Client(api_key=self._api_key)
+            timeout_ms = max(1, int(round(self._timeout_sec * 1000.0)))
+            self._client = genai.Client(
+                api_key=self._api_key,
+                http_options=types.HttpOptions(timeout=timeout_ms),
+            )
         return self._client
 
     @staticmethod
@@ -151,11 +211,19 @@ class GeminiCropGridCapResolver(BaseCapResolver):
             else None
         )
         if resolved is not None:
-            scores[resolved] = max(scores.get(resolved, 0.0), parsed.confidence)
-            top_score = max(scores.values(), default=0.0)
-            tied_top = [num for num, score in scores.items() if score == top_score]
-            if len(tied_top) > 1:
-                resolved = None
+            if scores:
+                pre_top_score = max(scores.values())
+                pre_top_candidates = [
+                    num for num, score in scores.items() if score == pre_top_score
+                ]
+                if len(pre_top_candidates) != 1 or pre_top_candidates[0] != resolved:
+                    resolved = None
+            if resolved is not None:
+                scores[resolved] = max(scores.get(resolved, 0.0), parsed.confidence)
+                top_score = max(scores.values(), default=0.0)
+                top_candidates = [num for num, score in scores.items() if score == top_score]
+                if top_score <= 0.0 or len(top_candidates) != 1 or top_candidates[0] != resolved:
+                    resolved = None
 
         resolved_conf = (
             parsed.confidence if resolved is not None else max(scores.values(), default=0.0)
@@ -263,6 +331,7 @@ class CapResolverFactory:
             return GeminiCropGridCapResolver(
                 api_key=settings.gemini_api_key,
                 model_name=settings.gemini_pass2_model,
+                timeout_sec=settings.gemini_request_timeout_sec,
             )
         if provider == "local_ocr":
             return LocalOcrCapResolver(languages=settings.ocr_languages)

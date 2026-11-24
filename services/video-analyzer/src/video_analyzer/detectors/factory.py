@@ -28,6 +28,7 @@ class DetectorFactory:
                 iou=settings.detector_iou,
                 class_map=class_map,
                 timeout_sec=settings.roboflow_timeout_sec,
+                allow_insecure_local_http=settings.roboflow_allow_insecure_local_http,
             )
 
         if provider == "local_yolo":

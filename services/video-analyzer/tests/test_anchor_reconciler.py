@@ -111,3 +111,130 @@ def test_anchor_reconciler_ignores_out_of_range_chunk_offsets(tmp_path: Path) ->
     assert len(reconciled) == 1
     assert reconciled[0].type == TimeAnchorType.PERIOD_START
     assert any("out-of-range" in w for w in warnings)
+
+
+def test_anchor_reconciler_preserves_distinct_stoppages_and_avoids_cross_pairing(
+    tmp_path: Path,
+) -> None:
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
+    chunk1 = VideoChunk(index=1, start_sec=105.0, end_sec=225.0, path=tmp_path / "c1.mp4")
+
+    # Two distinct close stoppages ([60..61] and [62..63]) in chunk0, overlap stoppage [110..112]
+    # observed in both chunks, plus a true cross-chunk stoppage (Start 118 in c0 -> End 130 in c1)
+    res0 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=5.0, period_number=1, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=60.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.90
+            ),
+            Pass1RawAnchor(
+                time_sec=61.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.90
+            ),
+            Pass1RawAnchor(
+                time_sec=62.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.90
+            ),
+            Pass1RawAnchor(
+                time_sec=63.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.90
+            ),
+            Pass1RawAnchor(
+                time_sec=110.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.80
+            ),
+            Pass1RawAnchor(
+                time_sec=112.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.80
+            ),
+            Pass1RawAnchor(
+                time_sec=118.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.90
+            ),
+        ]
+    )
+    res1 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=5.4,  # abs = 110.4s (higher-conf observation of [110..112])
+                period_number=1,
+                type=TimeAnchorType.STOPPAGE_START,
+                confidence=0.95,
+            ),
+            Pass1RawAnchor(
+                time_sec=7.3,  # abs = 112.3s
+                period_number=1,
+                type=TimeAnchorType.STOPPAGE_END,
+                confidence=0.95,
+            ),
+            Pass1RawAnchor(
+                time_sec=25.0,  # abs = 130.0s (pairs with chunk0's 118.0s start)
+                period_number=1,
+                type=TimeAnchorType.STOPPAGE_END,
+                confidence=0.92,
+            ),
+            Pass1RawAnchor(
+                time_sec=100.0,  # abs = 205.0s
+                period_number=1,
+                type=TimeAnchorType.PERIOD_END,
+                confidence=0.95,
+            ),
+        ]
+    )
+
+    reconciled, warnings = AnchorReconciler(merge_window_sec=3.0).reconcile(
+        chunk_results=[(chunk0, res0), (chunk1, res1)],
+        total_duration_sec=240.0,
+    )
+
+    assert warnings == []
+    stoppages = [
+        (a.type, a.video_time_sec)
+        for a in reconciled
+        if a.type in (TimeAnchorType.STOPPAGE_START, TimeAnchorType.STOPPAGE_END)
+    ]
+    assert stoppages == [
+        (TimeAnchorType.STOPPAGE_START, 60.0),
+        (TimeAnchorType.STOPPAGE_END, 61.0),
+        (TimeAnchorType.STOPPAGE_START, 62.0),
+        (TimeAnchorType.STOPPAGE_END, 63.0),
+        (TimeAnchorType.STOPPAGE_START, 110.4),
+        (TimeAnchorType.STOPPAGE_END, 112.3),
+        (TimeAnchorType.STOPPAGE_START, 118.0),
+        (TimeAnchorType.STOPPAGE_END, 130.0),
+    ]
+
+
+def test_anchor_reconciler_flags_overlapping_periods(tmp_path: Path) -> None:
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=200.0, path=tmp_path / "c0.mp4")
+    res0 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=10.0, period_number=1, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=120.0, period_number=1, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=110.0, period_number=2, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=190.0, period_number=2, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+        ]
+    )
+
+    reconciled, warnings = AnchorReconciler().reconcile(
+        chunk_results=[(chunk0, res0)],
+        total_duration_sec=200.0,
+    )
+
+    assert any("precedes Period 1" in w for w in warnings)
+    p1_end = next(
+        a for a in reconciled if a.period_number == 1 and a.type == TimeAnchorType.PERIOD_END
+    )
+    p2_start = next(
+        a for a in reconciled if a.period_number == 2 and a.type == TimeAnchorType.PERIOD_START
+    )
+    p2_end = next(
+        a for a in reconciled if a.period_number == 2 and a.type == TimeAnchorType.PERIOD_END
+    )
+    assert p1_end.needs_review is True
+    assert p2_start.needs_review is True
+    assert p2_end.needs_review is False

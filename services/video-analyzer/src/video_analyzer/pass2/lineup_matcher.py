@@ -35,6 +35,8 @@ class LineupMatcher:
         min_cap_confidence: float,
         max_candidates: int = 5,
         has_spatial_hint: bool = True,
+        actor_match_tied: bool = False,
+        cap_ambiguous: bool = False,
     ) -> LineupMatchOutcome:
         team_lineup = [
             entry for entry in snapshot.lineup if entry.team_id == snapshot.tracked_team.id
@@ -47,6 +49,10 @@ class LineupMatcher:
         review_reasons: list[str] = list(dict.fromkeys(candidate.review_reasons))
         if candidate.confidence < 0.80 and "LOW_EVENT_CONFIDENCE" not in review_reasons:
             review_reasons.append("LOW_EVENT_CONFIDENCE")
+        if actor_match_tied and "TIED_ACTOR_TRACKLET_MATCH" not in review_reasons:
+            review_reasons.append("TIED_ACTOR_TRACKLET_MATCH")
+        if cap_ambiguous and "AMBIGUOUS_CAP_DETECTION" not in review_reasons:
+            review_reasons.append("AMBIGUOUS_CAP_DETECTION")
 
         if cap_result is None:
             if "NO_PLAYER_TRACKLET_MATCHED" not in review_reasons:
@@ -108,8 +114,8 @@ class LineupMatcher:
                 review_reasons=review_reasons,
             )
 
-        # Unhinted matches must never auto-confirm a lineup assignment
-        if missing_spatial_hint:
+        # Unhinted, tied-track, or ambiguous-cap matches must never auto-confirm a lineup entry
+        if missing_spatial_hint or actor_match_tied or cap_ambiguous:
             return LineupMatchOutcome(
                 match_lineup_id=None,
                 resolved_cap_number=None,

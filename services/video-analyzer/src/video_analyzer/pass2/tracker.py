@@ -21,6 +21,7 @@ class TrackletObservation:
     confidence: float
     raw_class_name: str
     cap_bbox_xyxy: tuple[float, float, float, float] | None = None
+    cap_ambiguous: bool = False
 
 
 @dataclass(slots=True)
@@ -165,6 +166,7 @@ class BoTSortTracker:
             detections = detector.detect(frame.image_bgr)
             player_dets = [d for d in detections if d.role == CanonicalRole.PLAYER]
             cap_dets = [d for d in detections if d.role == CanonicalRole.CAP]
+            cap_assignments = _match_caps_to_players(player_dets, cap_dets)
 
             high_dets = [d for d in player_dets if d.confidence >= self._high_conf_thresh]
             low_dets = [d for d in player_dets if d.confidence < self._high_conf_thresh]
@@ -174,7 +176,7 @@ class BoTSortTracker:
             )
             for trk_idx, det in matched_tracks:
                 active_tracks[trk_idx].update(
-                    self._build_observation(frame, det, cap_dets)
+                    self._build_observation(frame, det, cap_assignments)
                 )
 
             # Second association stage (ByteTrack / BoT-SORT low-confidence recovery)
@@ -184,7 +186,7 @@ class BoTSortTracker:
             )
             for rel_idx, det in matched_low:
                 remaining_tracks[rel_idx].update(
-                    self._build_observation(frame, det, cap_dets)
+                    self._build_observation(frame, det, cap_assignments)
                 )
 
             for rel_idx in still_unmatched_rel:
@@ -200,7 +202,7 @@ class BoTSortTracker:
                     still_active.append(track)
 
             for det in unmatched_high:
-                obs = self._build_observation(frame, det, cap_dets)
+                obs = self._build_observation(frame, det, cap_assignments)
                 still_active.append(_TrackState(track_id=next_track_id, obs=obs))
                 next_track_id += 1
 
@@ -250,9 +252,9 @@ class BoTSortTracker:
     def _build_observation(
         frame: ExtractedFrame,
         player_det: Detection,
-        cap_dets: list[Detection],
+        cap_assignments: dict[int, tuple[tuple[float, float, float, float] | None, bool]],
     ) -> TrackletObservation:
-        cap_bbox = _match_cap_to_player(player_det.bbox_xyxy, cap_dets)
+        cap_bbox, cap_ambiguous = cap_assignments.get(id(player_det), (None, False))
         return TrackletObservation(
             frame_index=frame.index,
             video_time_sec=frame.video_time_sec,
@@ -260,24 +262,46 @@ class BoTSortTracker:
             confidence=player_det.confidence,
             raw_class_name=player_det.raw_class_name,
             cap_bbox_xyxy=cap_bbox,
+            cap_ambiguous=cap_ambiguous,
         )
 
 
-def _match_cap_to_player(
-    player_box: tuple[float, float, float, float],
+def _match_caps_to_players(
+    player_dets: list[Detection],
     cap_dets: list[Detection],
-) -> tuple[float, float, float, float] | None:
-    px1, py1, px2, py2 = player_box
-    best_box: tuple[float, float, float, float] | None = None
-    best_overlap = 0.0
-    for cap in cap_dets:
-        cx, cy = _bbox_center(cap.bbox_xyxy)
-        if px1 <= cx <= px2 and py1 <= cy <= py2:
-            overlap = _bbox_iou(player_box, cap.bbox_xyxy) + cap.confidence * 0.1
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_box = cap.bbox_xyxy
-    return best_box
+) -> dict[int, tuple[tuple[float, float, float, float] | None, bool]]:
+    """Assign each cap detection across all players, flagging contested or multi-cap overlaps."""
+    assignments: dict[int, tuple[tuple[float, float, float, float] | None, bool]] = {
+        id(det): (None, False) for det in player_dets
+    }
+    if not player_dets or not cap_dets:
+        return assignments
+
+    caps_per_player: dict[int, list[int]] = {idx: [] for idx in range(len(player_dets))}
+    players_per_cap: dict[int, list[int]] = {idx: [] for idx in range(len(cap_dets))}
+
+    for p_idx, p_det in enumerate(player_dets):
+        px1, py1, px2, py2 = p_det.bbox_xyxy
+        for c_idx, c_det in enumerate(cap_dets):
+            cx, cy = _bbox_center(c_det.bbox_xyxy)
+            if px1 <= cx <= px2 and py1 <= cy <= py2:
+                caps_per_player[p_idx].append(c_idx)
+                players_per_cap[c_idx].append(p_idx)
+
+    for p_idx, p_det in enumerate(player_dets):
+        contained = caps_per_player[p_idx]
+        if not contained:
+            continue
+        if len(contained) > 1:
+            assignments[id(p_det)] = (None, True)
+            continue
+        c_idx = contained[0]
+        if len(players_per_cap[c_idx]) > 1:
+            assignments[id(p_det)] = (None, True)
+        else:
+            assignments[id(p_det)] = (cap_dets[c_idx].bbox_xyxy, False)
+
+    return assignments
 
 
 def _bbox_center(box: tuple[float, float, float, float]) -> tuple[float, float]:

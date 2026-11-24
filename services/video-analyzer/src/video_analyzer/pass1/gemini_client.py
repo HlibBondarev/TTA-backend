@@ -10,9 +10,73 @@ from typing import Any
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.models import Pass1ChunkResult
 from video_analyzer.pass1.prompt_builder import Pass1PromptBuilder
+from video_analyzer.schemas.draft import TimeAnchorType
 from video_analyzer.schemas.request import MatchSnapshot
 
 logger = logging.getLogger(__name__)
+
+
+def _build_pass1_response_schema(types_module: Any) -> Any:
+    """Build a default-free Gemini response schema compatible with all google-genai versions."""
+    event_schema = types_module.Schema(
+        type=types_module.Type.OBJECT,
+        properties={
+            "time_sec": types_module.Schema(type=types_module.Type.NUMBER),
+            "prompt_code": types_module.Schema(type=types_module.Type.STRING),
+            "period_number": types_module.Schema(type=types_module.Type.INTEGER),
+            "is_lead_to_goal": types_module.Schema(type=types_module.Type.BOOLEAN),
+            "actor_bbox_normalized": types_module.Schema(
+                type=types_module.Type.ARRAY,
+                items=types_module.Schema(type=types_module.Type.NUMBER),
+                nullable=True,
+            ),
+            "pool_zone_hint": types_module.Schema(
+                type=types_module.Type.STRING,
+                nullable=True,
+            ),
+            "cap_color_hint": types_module.Schema(
+                type=types_module.Type.STRING,
+                nullable=True,
+            ),
+            "confidence": types_module.Schema(type=types_module.Type.NUMBER),
+            "evidence": types_module.Schema(
+                type=types_module.Type.STRING,
+                nullable=True,
+            ),
+        },
+        required=["time_sec", "prompt_code", "period_number", "is_lead_to_goal", "confidence"],
+    )
+    anchor_schema = types_module.Schema(
+        type=types_module.Type.OBJECT,
+        properties={
+            "time_sec": types_module.Schema(type=types_module.Type.NUMBER),
+            "period_number": types_module.Schema(type=types_module.Type.INTEGER),
+            "type": types_module.Schema(
+                type=types_module.Type.STRING,
+                enum=[item.value for item in TimeAnchorType],
+            ),
+            "confidence": types_module.Schema(type=types_module.Type.NUMBER),
+            "evidence": types_module.Schema(
+                type=types_module.Type.STRING,
+                nullable=True,
+            ),
+        },
+        required=["time_sec", "period_number", "type", "confidence"],
+    )
+    return types_module.Schema(
+        type=types_module.Type.OBJECT,
+        properties={
+            "period_events": types_module.Schema(
+                type=types_module.Type.ARRAY,
+                items=event_schema,
+            ),
+            "time_anchors": types_module.Schema(
+                type=types_module.Type.ARRAY,
+                items=anchor_schema,
+            ),
+        },
+        required=["period_events", "time_anchors"],
+    )
 
 
 class BasePass1Analyzer(ABC):
@@ -58,13 +122,15 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
                 prompt=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=Pass1ChunkResult,
+                    response_schema=_build_pass1_response_schema(types),
                     temperature=0.1,
                 ),
             )
             parsed = getattr(response, "parsed", None)
             if isinstance(parsed, Pass1ChunkResult):
                 return parsed
+            if isinstance(parsed, dict):
+                return Pass1ChunkResult.model_validate(parsed)
             raw_text = getattr(response, "text", None)
             if not isinstance(raw_text, str) or not raw_text.strip():
                 raise RuntimeError(
@@ -77,8 +143,13 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
     def _get_client(self) -> Any:
         if self._client is None:
             from google import genai
+            from google.genai import types
 
-            self._client = genai.Client(api_key=self._api_key)
+            timeout_ms = max(1, int(round(self._timeout_sec * 1000.0)))
+            self._client = genai.Client(
+                api_key=self._api_key,
+                http_options=types.HttpOptions(timeout=timeout_ms),
+            )
         return self._client
 
     def _wait_until_active(self, client: Any, uploaded_file: Any) -> Any:

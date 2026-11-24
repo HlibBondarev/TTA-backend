@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from video_analyzer.config import Settings
 from video_analyzer.detectors.base import CanonicalRole
@@ -261,3 +263,142 @@ def test_roboflow_detector_falls_back_to_numeric_class_id() -> None:
     assert len(dets) == 1
     assert dets[0].role == CanonicalRole.PLAYER
     assert dets[0].raw_class_name == "unmapped_custom_label"
+
+
+def test_onnx_equal_axis_output_layout_handles_channels_first_and_last() -> None:
+    class_map = ClassMapAdapter({"0": "player", "1": "ball"})
+
+    # Case 1: Equal-axis [1, 84, 84] in channels_first ([4 + 80, 84])
+    cf_tensor = np.zeros((1, 84, 84), dtype=np.float32)
+    cf_tensor[0, :4, 0] = [320.0, 320.0, 80.0, 120.0]
+    cf_tensor[0, 5, 0] = 0.91  # class 1
+
+    detector_auto = OnnxDetector(
+        model_path="dummy.onnx",
+        confidence=0.3,
+        iou=0.45,
+        class_map=class_map,
+        input_size=640,
+    )
+    cf_dets = detector_auto.decode_outputs(
+        cf_tensor, orig_width=640, orig_height=640, scale=1.0, pad_x=0.0, pad_y=0.0
+    )
+    assert len(cf_dets) == 1
+    assert cf_dets[0].role == CanonicalRole.BALL
+    assert cf_dets[0].confidence == pytest.approx(0.91, abs=1e-4)
+
+    # Case 2: Equal-axis [1, 84, 84] in channels_last ([84, 4 + 80])
+    cl_tensor = np.zeros((1, 84, 84), dtype=np.float32)
+    cl_tensor[0, 0, :4] = [320.0, 320.0, 80.0, 120.0]
+    cl_tensor[0, 0, 4] = 0.88  # class 0
+
+    cl_dets = detector_auto.decode_outputs(
+        cl_tensor, orig_width=640, orig_height=640, scale=1.0, pad_x=0.0, pad_y=0.0
+    )
+    assert len(cl_dets) == 1
+    assert cl_dets[0].role == CanonicalRole.PLAYER
+    assert cl_dets[0].confidence == pytest.approx(0.88, abs=1e-4)
+
+    # Case 3: Explicit channels_last override even when zeroed coordinates match fallback
+    detector_cl = OnnxDetector(
+        model_path="dummy.onnx",
+        confidence=0.3,
+        iou=0.45,
+        class_map=class_map,
+        input_size=640,
+        output_layout="channels_last",
+    )
+    cl_dets_explicit = detector_cl.decode_outputs(
+        cl_tensor, orig_width=640, orig_height=640, scale=1.0, pad_x=0.0, pad_y=0.0
+    )
+    assert len(cl_dets_explicit) == 1
+    assert cl_dets_explicit[0].role == CanonicalRole.PLAYER
+
+
+def test_roboflow_rejects_non_https_unless_explicit_local_loopback_http() -> None:
+    with pytest.raises(ValidationError, match="https://"):
+        Settings(_env_file=None, roboflow_api_url="http://detect.roboflow.com")
+
+    with pytest.raises(ValidationError, match="https://"):
+        Settings(_env_file=None, roboflow_api_url="http://localhost:9001")
+
+    with pytest.raises(ValidationError, match="https://"):
+        Settings(
+            _env_file=None,
+            roboflow_api_url="http://remote.example.com:9001",
+            roboflow_allow_insecure_local_http=True,
+        )
+
+    local_settings = Settings(
+        _env_file=None,
+        roboflow_api_url="http://127.0.0.1:9001/",
+        roboflow_allow_insecure_local_http=True,
+    )
+    assert local_settings.roboflow_api_url == "http://127.0.0.1:9001"
+
+    with pytest.raises(ValueError, match="https://"):
+        RoboflowDetector(
+            model_id="waterpolo-salvasc/5",
+            api_key="test-key",
+            api_url="http://localhost:9001",
+            confidence=0.25,
+            iou=0.45,
+            class_map=ClassMapAdapter({"White team": "player"}),
+        )
+
+
+def test_roboflow_redacts_api_key_in_httpx_logs_and_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret_key = "rf_super_secret_key_value"
+
+    def ok_handler(request: httpx.Request) -> httpx.Response:
+        # Simulate httpx INFO request log carrying the URL with api_key
+        logging.getLogger("httpx").info(
+            'HTTP Request: POST %s "HTTP/1.1 200 OK"',
+            str(request.url),
+        )
+        return httpx.Response(200, json={"predictions": []})
+
+    client = httpx.Client(transport=httpx.MockTransport(ok_handler))
+    detector = RoboflowDetector(
+        model_id="waterpolo-salvasc/5",
+        api_key=secret_key,
+        api_url="https://detect.roboflow.com",
+        confidence=0.25,
+        iou=0.45,
+        class_map=ClassMapAdapter({"White team": "player"}),
+        http_client=client,
+    )
+    frame = np.zeros((120, 160, 3), dtype=np.uint8)
+
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        detector.detect(frame)
+
+    # Default httpx level was raised to WARNING, and any explicit INFO log redacts api_key
+    assert secret_key not in caplog.text
+
+    # Force INFO directly on httpx logger to confirm the filter redacts api_key if re-enabled
+    logging.getLogger("httpx").setLevel(logging.INFO)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        detector.detect(frame)
+    assert secret_key not in caplog.text
+    assert "[REDACTED]" in caplog.text
+
+    def error_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, request=request)
+
+    err_detector = RoboflowDetector(
+        model_id="waterpolo-salvasc/5",
+        api_key=secret_key,
+        api_url="https://detect.roboflow.com",
+        confidence=0.25,
+        iou=0.45,
+        class_map=ClassMapAdapter({"White team": "player"}),
+        http_client=httpx.Client(transport=httpx.MockTransport(error_handler)),
+    )
+    with pytest.raises(RuntimeError) as exc_info:
+        err_detector.detect(frame)
+    assert secret_key not in str(exc_info.value)
+    assert "[REDACTED]" in str(exc_info.value)

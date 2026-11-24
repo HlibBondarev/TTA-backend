@@ -21,6 +21,7 @@ class CropCandidate:
     video_time_sec: float
     crop_bgr: np.ndarray
     sharpness_score: float
+    cap_ambiguous: bool = False
 
 
 @dataclass(slots=True)
@@ -30,6 +31,7 @@ class SelectedCrops:
     crops: list[CropCandidate]
     contact_sheet_jpeg: bytes
     contact_sheet_bgr: np.ndarray
+    has_ambiguous_cap: bool = False
 
 
 class CropSelector:
@@ -63,13 +65,18 @@ class CropSelector:
                     video_time_sec=obs.video_time_sec,
                     crop_bgr=crop,
                     sharpness_score=score,
+                    cap_ambiguous=obs.cap_ambiguous,
                 )
             )
 
         if not candidates:
             return None
 
-        selected = self._pick_diverse_top_k(candidates, max_crops=max_crops)
+        unambiguous = [c for c in candidates if not c.cap_ambiguous]
+        pool = unambiguous if unambiguous else candidates
+        has_ambiguous_cap = len(unambiguous) == 0
+
+        selected = self._pick_diverse_top_k(pool, max_crops=max_crops)
         sheet_bgr = self._build_contact_sheet(selected)
         ok, encoded = cv2.imencode(".jpg", sheet_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
         if not ok:
@@ -79,6 +86,7 @@ class CropSelector:
             crops=selected,
             contact_sheet_jpeg=encoded.tobytes(),
             contact_sheet_bgr=sheet_bgr,
+            has_ambiguous_cap=has_ambiguous_cap,
         )
 
     @staticmethod
