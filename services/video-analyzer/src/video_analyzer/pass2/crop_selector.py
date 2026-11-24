@@ -10,7 +10,11 @@ import cv2
 import numpy as np
 
 from video_analyzer.media.ffmpeg_client import ExtractedFrame
-from video_analyzer.pass2.tracker import Tracklet, TrackletObservation
+from video_analyzer.pass2.tracker import (
+    Tracklet,
+    TrackletObservation,
+    compute_cap_crop_box,
+)
 
 
 @dataclass(slots=True)
@@ -197,23 +201,11 @@ class CropSelector:
         obs: TrackletObservation,
     ) -> np.ndarray | None:
         img_h, img_w = frame_bgr.shape[:2]
-        if obs.cap_bbox_xyxy is not None:
-            bx1, by1, bx2, by2 = obs.cap_bbox_xyxy
-        else:
-            px1, py1, px2, py2 = obs.bbox_xyxy
-            pw = px2 - px1
-            ph = py2 - py1
-            bx1 = px1 + pw * 0.10
-            bx2 = px2 - pw * 0.10
-            by1 = py1
-            by2 = py1 + ph * 0.45
-
-        pad_x = (bx2 - bx1) * 0.20
-        pad_y = (by2 - by1) * 0.20
-        x1 = max(0, int(round(bx1 - pad_x)))
-        y1 = max(0, int(round(by1 - pad_y)))
-        x2 = min(img_w, int(round(bx2 + pad_x)))
-        y2 = min(img_h, int(round(by2 + pad_y)))
+        raw_x1, raw_y1, raw_x2, raw_y2 = compute_cap_crop_box(obs.bbox_xyxy, obs.cap_bbox_xyxy)
+        x1 = max(0, int(round(raw_x1)))
+        y1 = max(0, int(round(raw_y1)))
+        x2 = min(img_w, int(round(raw_x2)))
+        y2 = min(img_h, int(round(raw_y2)))
 
         if x2 - x1 < 8 or y2 - y1 < 8:
             return None

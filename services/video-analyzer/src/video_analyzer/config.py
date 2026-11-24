@@ -57,6 +57,9 @@ class Settings(BaseSettings):
         default_factory=lambda: dict(DEFAULT_CLASS_MAP)
     )
     detector_onnx_input_size: int = Field(default=640, ge=32)
+    detector_onnx_output_layout: Literal["auto", "channels_first", "channels_last", "nms"] = (
+        Field(default="auto")
+    )
 
     # Roboflow-specific settings
     roboflow_api_key: str = Field(default="")
@@ -86,6 +89,13 @@ class Settings(BaseSettings):
     @field_validator("cap_resolver_provider", mode="before")
     @classmethod
     def _normalize_cap_resolver(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
+    @field_validator("detector_onnx_output_layout", mode="before")
+    @classmethod
+    def _normalize_onnx_output_layout(cls, value: Any) -> Any:
         if isinstance(value, str):
             return value.strip().lower()
         return value

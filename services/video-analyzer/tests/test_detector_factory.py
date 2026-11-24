@@ -287,10 +287,10 @@ def test_onnx_equal_axis_output_layout_handles_channels_first_and_last() -> None
     assert cf_dets[0].role == CanonicalRole.BALL
     assert cf_dets[0].confidence == pytest.approx(0.91, abs=1e-4)
 
-    # Case 2: Equal-axis [1, 84, 84] in channels_last ([84, 4 + 80])
+    # Case 2: Equal-axis [1, 84, 84] in channels_last ([84, 4 + 80]) with candidate idx >= 4
     cl_tensor = np.zeros((1, 84, 84), dtype=np.float32)
-    cl_tensor[0, 0, :4] = [320.0, 320.0, 80.0, 120.0]
-    cl_tensor[0, 0, 4] = 0.88  # class 0
+    cl_tensor[0, 5, :4] = [320.0, 320.0, 80.0, 120.0]
+    cl_tensor[0, 5, 4] = 0.88  # class 0
 
     cl_dets = detector_auto.decode_outputs(
         cl_tensor, orig_width=640, orig_height=640, scale=1.0, pad_x=0.0, pad_y=0.0
@@ -299,20 +299,76 @@ def test_onnx_equal_axis_output_layout_handles_channels_first_and_last() -> None
     assert cl_dets[0].role == CanonicalRole.PLAYER
     assert cl_dets[0].confidence == pytest.approx(0.88, abs=1e-4)
 
-    # Case 3: Explicit channels_last override even when zeroed coordinates match fallback
-    detector_cl = OnnxDetector(
-        model_path="dummy.onnx",
-        confidence=0.3,
-        iou=0.45,
-        class_map=class_map,
-        input_size=640,
-        output_layout="channels_last",
+    # Case 3: Channels-first [1, 84, 84] with sub-threshold scores and coords in [conf, 1.0]
+    # Must remain channels_first in auto mode and yield zero false detections.
+    cf_subthreshold = np.zeros((1, 84, 84), dtype=np.float32)
+    cf_subthreshold[0, :4, 10] = [0.5, 0.6, 0.4, 0.5]
+    cf_subthreshold[0, 4:, 10] = 0.05
+    assert (
+        detector_auto.decode_outputs(
+            cf_subthreshold, orig_width=640, orig_height=640, scale=1.0, pad_x=0.0, pad_y=0.0
+        )
+        == []
     )
-    cl_dets_explicit = detector_cl.decode_outputs(
-        cl_tensor, orig_width=640, orig_height=640, scale=1.0, pad_x=0.0, pad_y=0.0
+
+    # Case 4: DetectorFactory exposes DETECTOR_ONNX_OUTPUT_LAYOUT for explicit overrides
+    factory_cl = DetectorFactory.create(
+        Settings(
+            _env_file=None,
+            detector_provider="onnx",
+            detector_model_path_or_id="dummy.onnx",
+            detector_confidence=0.3,
+            detector_iou=0.45,
+            detector_onnx_output_layout=" CHANNELS_LAST ",
+            detector_class_map={"0": "player", "1": "ball"},
+        )
     )
-    assert len(cl_dets_explicit) == 1
-    assert cl_dets_explicit[0].role == CanonicalRole.PLAYER
+    assert isinstance(factory_cl, OnnxDetector)
+    assert factory_cl.provider_info()["outputLayout"] == "channels_last"
+
+    cl_idx0_tensor = np.zeros((1, 84, 84), dtype=np.float32)
+    cl_idx0_tensor[0, 0, :4] = [320.0, 320.0, 80.0, 120.0]
+    cl_idx0_tensor[0, 0, 4] = 0.88
+    cl_idx0_dets = factory_cl.decode_outputs(
+        cl_idx0_tensor, orig_width=640, orig_height=640, scale=1.0, pad_x=0.0, pad_y=0.0
+    )
+    assert len(cl_idx0_dets) == 1
+    assert cl_idx0_dets[0].role == CanonicalRole.PLAYER
+
+    # Explicit channels_last also prevents raw [1, N, 6] (2 classes) from being treated as NMS
+    raw_cl_two_class = np.zeros((1, 20, 6), dtype=np.float32)
+    raw_cl_two_class[0, 0, :] = [320.0, 320.0, 80.0, 120.0, 0.05, 0.89]
+    raw_cl_dets = factory_cl.decode_outputs(
+        raw_cl_two_class, orig_width=640, orig_height=640, scale=1.0, pad_x=0.0, pad_y=0.0
+    )
+    assert len(raw_cl_dets) == 1
+    assert raw_cl_dets[0].role == CanonicalRole.BALL
+    assert raw_cl_dets[0].confidence == pytest.approx(0.89, abs=1e-4)
+
+    # Explicit nms layout routes [1, N, 6] directly to NMS decoding
+    factory_nms = DetectorFactory.create(
+        Settings(
+            _env_file=None,
+            detector_provider="onnx",
+            detector_model_path_or_id="dummy.onnx",
+            detector_confidence=0.3,
+            detector_onnx_output_layout="nms",
+            detector_class_map={"0": "player", "1": "ball"},
+        )
+    )
+    nms_dets = factory_nms.decode_outputs(
+        np.array([[[100.0, 200.0, 180.0, 320.0, 0.85, 1.0]]], dtype=np.float32),
+        orig_width=1280,
+        orig_height=720,
+        scale=0.5,
+        pad_x=0.0,
+        pad_y=140.0,
+    )
+    assert len(nms_dets) == 1
+    assert nms_dets[0].role == CanonicalRole.BALL
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, detector_onnx_output_layout="invalid_layout")
 
 
 def test_roboflow_rejects_non_https_unless_explicit_local_loopback_http() -> None:

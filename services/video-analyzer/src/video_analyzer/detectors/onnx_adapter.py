@@ -23,7 +23,7 @@ class OnnxDetector(BaseObjectDetector):
         iou: float,
         class_map: ClassMapAdapter,
         input_size: int = 640,
-        output_layout: Literal["auto", "channels_first", "channels_last"] = "auto",
+        output_layout: Literal["auto", "channels_first", "channels_last", "nms"] = "auto",
         session: Any = None,
     ) -> None:
         self._model_path = model_path
@@ -42,6 +42,7 @@ class OnnxDetector(BaseObjectDetector):
             "provider": "onnx",
             "model": self._model_path,
             "inputSize": str(self._input_size),
+            "outputLayout": self._output_layout,
         }
 
     def warmup(self) -> None:
@@ -159,11 +160,11 @@ class OnnxDetector(BaseObjectDetector):
         return detections
 
     def _is_nms_output(self, tensor: np.ndarray) -> bool:
-        if self._output_layout == "channels_first" or tensor.shape[1] != 6:
+        if self._output_layout == "nms":
+            return tensor.shape[1] == 6
+        if self._output_layout in ("channels_first", "channels_last") or tensor.shape[1] != 6:
             return False
         if tensor.shape[0] != 6:
-            return True
-        if self._output_layout == "channels_last":
             return True
         # Disambiguate equal-axis (6, 6): NMS rows have conf in [0, 1], integer cls, and x2 >= x1
         confs = tensor[:, 4]
@@ -208,13 +209,6 @@ class OnnxDetector(BaseObjectDetector):
                 return True
             if cl_valid and not cf_valid:
                 return False
-            if cf_valid and cl_valid:
-                cf_has_det = bool(np.any(cf_scores >= self._confidence))
-                cl_has_det = bool(np.any(cl_scores >= self._confidence))
-                if cf_has_det and not cl_has_det:
-                    return True
-                if cl_has_det and not cf_has_det:
-                    return False
 
         if tensor.shape[0] != tensor.shape[1]:
             return tensor.shape[0] < tensor.shape[1]

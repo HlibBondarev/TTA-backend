@@ -632,3 +632,102 @@ def test_actor_matcher_flags_tied_tracks_and_blocks_auto_confirmation(
     assert outcome.needs_review is True
     assert "TIED_ACTOR_TRACKLET_MATCH" in outcome.review_reasons
     assert [c.cap_number for c in outcome.candidate_lineup_ids] == [7]
+
+
+def test_fallback_crop_overlapping_neighbor_cap_marks_ambiguous_and_blocks_auto_assign(
+    sample_snapshot: MatchSnapshot,
+) -> None:
+    img = np.zeros((240, 300, 3), dtype=np.uint8)
+    frames = [
+        ExtractedFrame(index=0, video_time_sec=10.0, image_bgr=img),
+        ExtractedFrame(index=1, video_time_sec=10.2, image_bgr=img.copy()),
+    ]
+    # Frame 0: shared cap centered at (75, 20) inside both players -> both ambiguous.
+    # Frame 1: cap (97, 10, 105, 30) center is (101, 20), which belongs only to Player 2,
+    # yet overlaps Player 1's padded upper-body fallback crop (-6, -18, 106, 108).
+    boxes = {
+        0: [
+            Detection((0.0, 0.0, 100.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((50.0, 0.0, 150.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((70.0, 10.0, 80.0, 30.0), 0.95, CanonicalRole.CAP, "cap"),
+        ],
+        1: [
+            Detection((0.0, 0.0, 100.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((50.0, 0.0, 150.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((97.0, 10.0, 105.0, 30.0), 0.95, CanonicalRole.CAP, "cap"),
+        ],
+    }
+
+    tracklets = BoTSortTracker(iou_threshold=0.20).track_window(frames, SyntheticDetector(boxes))
+    assert len(tracklets) == 2
+
+    player1_obs1 = tracklets[0].observations[1]
+    assert player1_obs1.cap_bbox_xyxy is None
+    assert player1_obs1.cap_ambiguous is True
+
+    player2_obs1 = tracklets[1].observations[1]
+    assert player2_obs1.cap_bbox_xyxy == (97.0, 10.0, 105.0, 30.0)
+    assert player2_obs1.cap_ambiguous is False
+
+    selected = CropSelector(min_frame_gap=1).select_and_build_sheet(
+        tracklets[0], frames, max_crops=2
+    )
+    assert selected is not None
+    assert selected.has_ambiguous_cap is True
+
+    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    cand = Pass1EventCandidate(
+        video_time_sec=10.2,
+        definition=defn,
+        period_number=1,
+        is_lead_to_goal=True,
+        actor_bbox_normalized=[0.0, 0.0, 100.0 / 300.0, 200.0 / 240.0],
+        pool_zone_hint="center",
+        cap_color_hint="white",
+        confidence=0.95,
+    )
+    from video_analyzer.pass2.cap_resolver import CapResolutionResult
+
+    outcome = LineupMatcher().resolve(
+        cand,
+        CapResolutionResult(
+            resolved_cap_number=7,
+            confidence=0.95,
+            candidate_scores={7: 0.95},
+            reasoning="Clear cap #7 inside padded crop",
+        ),
+        sample_snapshot,
+        min_cap_confidence=0.80,
+        cap_ambiguous=selected.has_ambiguous_cap,
+    )
+    assert outcome.match_lineup_id is None
+    assert outcome.resolved_cap_number is None
+    assert outcome.needs_review is True
+    assert "AMBIGUOUS_CAP_DETECTION" in outcome.review_reasons
+
+    # Without cap detections, overlapping head zones are flagged while separated players stay clean
+    overlap_no_caps = BoTSortTracker().track_window(
+        [frames[0]],
+        SyntheticDetector(
+            {
+                0: [
+                    Detection((0.0, 0.0, 100.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+                    Detection((50.0, 0.0, 150.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+                ]
+            }
+        ),
+    )
+    assert all(t.observations[0].cap_ambiguous is True for t in overlap_no_caps)
+
+    separated_no_caps = BoTSortTracker().track_window(
+        [frames[0]],
+        SyntheticDetector(
+            {
+                0: [
+                    Detection((0.0, 0.0, 100.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+                    Detection((160.0, 0.0, 260.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+                ]
+            }
+        ),
+    )
+    assert all(t.observations[0].cap_ambiguous is False for t in separated_no_caps)

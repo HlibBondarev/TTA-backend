@@ -266,17 +266,45 @@ class BoTSortTracker:
         )
 
 
-def _match_caps_to_players(
+def compute_cap_crop_box(
+    player_bbox_xyxy: tuple[float, float, float, float],
+    cap_bbox_xyxy: tuple[float, float, float, float] | None = None,
+) -> tuple[float, float, float, float]:
+    """Return the padded crop coordinates used for cap number recognition."""
+    bx1, by1, bx2, by2 = (
+        cap_bbox_xyxy
+        if cap_bbox_xyxy is not None
+        else _upper_body_cap_zone(player_bbox_xyxy)
+    )
+    pad_x = (bx2 - bx1) * 0.20
+    pad_y = (by2 - by1) * 0.20
+    return (bx1 - pad_x, by1 - pad_y, bx2 + pad_x, by2 + pad_y)
+
+
+def _upper_body_cap_zone(
+    player_bbox_xyxy: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    """Estimate the unpadded upper-body cap zone for a player bounding box."""
+    px1, py1, px2, py2 = player_bbox_xyxy
+    pw = px2 - px1
+    ph = py2 - py1
+    return (px1 + pw * 0.10, py1, px2 - pw * 0.10, py1 + ph * 0.45)
+
+
+def _boxes_overlap(
+    box_a: tuple[float, float, float, float],
+    box_b: tuple[float, float, float, float],
+) -> bool:
+    """Return True when two xyxy bounding boxes have positive intersection area."""
+    return min(box_a[2], box_b[2]) > max(box_a[0], box_b[0]) and min(
+        box_a[3], box_b[3]
+    ) > max(box_a[1], box_b[1])
+
+
+def _index_contained_caps(
     player_dets: list[Detection],
     cap_dets: list[Detection],
-) -> dict[int, tuple[tuple[float, float, float, float] | None, bool]]:
-    """Assign each cap detection across all players, flagging contested or multi-cap overlaps."""
-    assignments: dict[int, tuple[tuple[float, float, float, float] | None, bool]] = {
-        id(det): (None, False) for det in player_dets
-    }
-    if not player_dets or not cap_dets:
-        return assignments
-
+) -> tuple[dict[int, list[int]], dict[int, list[int]]]:
     caps_per_player: dict[int, list[int]] = {idx: [] for idx in range(len(player_dets))}
     players_per_cap: dict[int, list[int]] = {idx: [] for idx in range(len(cap_dets))}
 
@@ -288,20 +316,89 @@ def _match_caps_to_players(
                 caps_per_player[p_idx].append(c_idx)
                 players_per_cap[c_idx].append(p_idx)
 
-    for p_idx, p_det in enumerate(player_dets):
-        contained = caps_per_player[p_idx]
-        if not contained:
-            continue
-        if len(contained) > 1:
-            assignments[id(p_det)] = (None, True)
-            continue
-        c_idx = contained[0]
-        if len(players_per_cap[c_idx]) > 1:
-            assignments[id(p_det)] = (None, True)
-        else:
-            assignments[id(p_det)] = (cap_dets[c_idx].bbox_xyxy, False)
+    return caps_per_player, players_per_cap
 
-    return assignments
+
+def _fallback_crop_is_ambiguous(
+    player_idx: int,
+    player_det: Detection,
+    player_dets: list[Detection],
+    cap_dets: list[Detection],
+    unique_cap_idx_by_player: dict[int, int],
+) -> bool:
+    """Flag a fallback upper-body crop that overlaps another cap or unowned head zone."""
+    fallback_box = compute_cap_crop_box(player_det.bbox_xyxy, None)
+    if any(_boxes_overlap(fallback_box, c_det.bbox_xyxy) for c_det in cap_dets):
+        return True
+    for other_idx, other_det in enumerate(player_dets):
+        if other_idx == player_idx or other_idx in unique_cap_idx_by_player:
+            continue
+        if _boxes_overlap(fallback_box, _upper_body_cap_zone(other_det.bbox_xyxy)):
+            return True
+    return False
+
+
+def _resolve_player_cap_assignment(
+    p_idx: int,
+    p_det: Detection,
+    contained_caps: list[int],
+    players_per_cap: dict[int, list[int]],
+    player_dets: list[Detection],
+    cap_dets: list[Detection],
+    unique_cap_idx_by_player: dict[int, int],
+) -> tuple[tuple[float, float, float, float] | None, bool]:
+    if not contained_caps:
+        return (
+            None,
+            _fallback_crop_is_ambiguous(
+                p_idx, p_det, player_dets, cap_dets, unique_cap_idx_by_player
+            ),
+        )
+    if len(contained_caps) > 1:
+        return (None, True)
+
+    c_idx = contained_caps[0]
+    if len(players_per_cap[c_idx]) > 1:
+        return (None, True)
+
+    crop_box = compute_cap_crop_box(p_det.bbox_xyxy, cap_dets[c_idx].bbox_xyxy)
+    crop_hits_other_cap = any(
+        _boxes_overlap(crop_box, c_det.bbox_xyxy)
+        for other_c_idx, c_det in enumerate(cap_dets)
+        if other_c_idx != c_idx
+    )
+    if crop_hits_other_cap:
+        return (None, True)
+    return (cap_dets[c_idx].bbox_xyxy, False)
+
+
+def _match_caps_to_players(
+    player_dets: list[Detection],
+    cap_dets: list[Detection],
+) -> dict[int, tuple[tuple[float, float, float, float] | None, bool]]:
+    """Assign each cap detection across all players, flagging contested or overlapping crops."""
+    if not player_dets:
+        return {}
+
+    caps_per_player, players_per_cap = _index_contained_caps(player_dets, cap_dets)
+    unique_cap_idx_by_player: dict[int, int] = {
+        p_idx: contained[0]
+        for p_idx, contained in caps_per_player.items()
+        if len(contained) == 1 and len(players_per_cap[contained[0]]) == 1
+    }
+
+    return {
+        id(p_det): _resolve_player_cap_assignment(
+            p_idx,
+            p_det,
+            caps_per_player[p_idx],
+            players_per_cap,
+            player_dets,
+            cap_dets,
+            unique_cap_idx_by_player,
+        )
+        for p_idx, p_det in enumerate(player_dets)
+    }
 
 
 def _bbox_center(box: tuple[float, float, float, float]) -> tuple[float, float]:

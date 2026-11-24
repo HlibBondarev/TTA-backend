@@ -238,3 +238,106 @@ def test_anchor_reconciler_flags_overlapping_periods(tmp_path: Path) -> None:
     assert p1_end.needs_review is True
     assert p2_start.needs_review is True
     assert p2_end.needs_review is False
+
+
+def test_anchor_reconciler_preserves_cross_chunk_unpaired_stoppage_pairs(
+    tmp_path: Path,
+) -> None:
+    # Case 1: Unpaired endpoints across three overlapping chunks
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=30.0, path=tmp_path / "c0.mp4")
+    chunk1 = VideoChunk(index=1, start_sec=8.0, end_sec=20.0, path=tmp_path / "c1.mp4")
+    chunk2 = VideoChunk(index=2, start_sec=10.0, end_sec=40.0, path=tmp_path / "c2.mp4")
+
+    res0 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=2.0, period_number=1, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=10.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.80
+            ),
+        ]
+    )
+    res1 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=3.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=4.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.95
+            ),
+        ]
+    )
+    res2 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=3.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.80
+            ),
+            Pass1RawAnchor(
+                time_sec=30.0, period_number=1, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+        ]
+    )
+
+    reconciled, warnings = AnchorReconciler(merge_window_sec=3.0).reconcile(
+        chunk_results=[(chunk0, res0), (chunk1, res1), (chunk2, res2)],
+        total_duration_sec=50.0,
+    )
+    assert warnings == []
+    stoppages = [
+        (a.type, a.video_time_sec)
+        for a in reconciled
+        if a.type in (TimeAnchorType.STOPPAGE_START, TimeAnchorType.STOPPAGE_END)
+    ]
+    assert stoppages == [
+        (TimeAnchorType.STOPPAGE_START, 10.0),
+        (TimeAnchorType.STOPPAGE_END, 11.0),
+        (TimeAnchorType.STOPPAGE_START, 12.0),
+        (TimeAnchorType.STOPPAGE_END, 13.0),
+    ]
+
+    # Case 2: Mixed unpaired cross-chunk stoppage [10..11] plus within-chunk stoppage [12..13]
+    mixed_chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=30.0, path=tmp_path / "mc0.mp4")
+    mixed_chunk1 = VideoChunk(index=1, start_sec=8.0, end_sec=40.0, path=tmp_path / "mc1.mp4")
+    mixed_res0 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=2.0, period_number=1, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=10.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.80
+            ),
+        ]
+    )
+    mixed_res1 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=3.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=4.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=5.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=30.0, period_number=1, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+        ]
+    )
+    mixed_reconciled, mixed_warnings = AnchorReconciler(merge_window_sec=3.0).reconcile(
+        chunk_results=[(mixed_chunk0, mixed_res0), (mixed_chunk1, mixed_res1)],
+        total_duration_sec=50.0,
+    )
+    assert mixed_warnings == []
+    mixed_stoppages = [
+        (a.type, a.video_time_sec)
+        for a in mixed_reconciled
+        if a.type in (TimeAnchorType.STOPPAGE_START, TimeAnchorType.STOPPAGE_END)
+    ]
+    assert mixed_stoppages == [
+        (TimeAnchorType.STOPPAGE_START, 10.0),
+        (TimeAnchorType.STOPPAGE_END, 11.0),
+        (TimeAnchorType.STOPPAGE_START, 12.0),
+        (TimeAnchorType.STOPPAGE_END, 13.0),
+    ]

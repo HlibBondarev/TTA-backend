@@ -47,6 +47,7 @@ class DetectorFactory:
                 iou=settings.detector_iou,
                 class_map=class_map,
                 input_size=settings.detector_onnx_input_size,
+                output_layout=settings.detector_onnx_output_layout,
             )
 
         raise ValueError(

@@ -20,6 +20,8 @@ class _IndexedAnchor:
 @dataclass(slots=True)
 class _MergedAnchorEntry:
     anchor: Pass1AnchorCandidate
+    min_time_sec: float
+    max_time_sec: float
     source_chunks: set[int] = field(default_factory=set)
 
 
@@ -167,18 +169,34 @@ class AnchorReconciler:
         self,
         items: list[_IndexedAnchor],
         chunk_bounds: dict[int, tuple[float, float]],
+        *,
+        separator_times: Sequence[float] | None = None,
+        separator_is_start: bool = True,
     ) -> list[Pass1AnchorCandidate]:
         ordered = sorted(items, key=lambda i: (i.anchor.video_time_sec, -i.anchor.confidence))
         merged: list[_MergedAnchorEntry] = []
 
         for item in ordered:
-            target = self._find_anchor_merge_target(merged, item, chunk_bounds)
+            target = self._find_anchor_merge_target(
+                merged,
+                item,
+                chunk_bounds,
+                separator_times=separator_times,
+                separator_is_start=separator_is_start,
+            )
             if target is None:
                 merged.append(
-                    _MergedAnchorEntry(anchor=item.anchor, source_chunks={item.chunk_index})
+                    _MergedAnchorEntry(
+                        anchor=item.anchor,
+                        min_time_sec=item.anchor.video_time_sec,
+                        max_time_sec=item.anchor.video_time_sec,
+                        source_chunks={item.chunk_index},
+                    )
                 )
                 continue
             target.source_chunks.add(item.chunk_index)
+            target.min_time_sec = min(target.min_time_sec, item.anchor.video_time_sec)
+            target.max_time_sec = max(target.max_time_sec, item.anchor.video_time_sec)
             if item.anchor.confidence > target.anchor.confidence:
                 target.anchor = item.anchor
 
@@ -189,6 +207,9 @@ class AnchorReconciler:
         merged: list[_MergedAnchorEntry],
         item: _IndexedAnchor,
         chunk_bounds: dict[int, tuple[float, float]],
+        *,
+        separator_times: Sequence[float] | None = None,
+        separator_is_start: bool = True,
     ) -> _MergedAnchorEntry | None:
         best_entry: _MergedAnchorEntry | None = None
         best_delta: float | None = None
@@ -197,6 +218,15 @@ class AnchorReconciler:
                 continue
             delta = abs(item.anchor.video_time_sec - entry.anchor.video_time_sec)
             if delta > self._merge_window_sec:
+                continue
+            span_low = min(entry.min_time_sec, item.anchor.video_time_sec)
+            span_high = max(entry.max_time_sec, item.anchor.video_time_sec)
+            if self._has_separator(
+                span_low,
+                span_high,
+                separator_times,
+                is_start=separator_is_start,
+            ):
                 continue
             if not self._chunks_overlap_near_times(
                 entry.source_chunks,
@@ -209,6 +239,21 @@ class AnchorReconciler:
                 best_entry = entry
                 best_delta = delta
         return best_entry
+
+    @staticmethod
+    def _has_separator(
+        t1: float,
+        t2: float,
+        separator_times: Sequence[float] | None,
+        *,
+        is_start: bool,
+    ) -> bool:
+        if not separator_times or t1 == t2:
+            return False
+        low, high = (t1, t2) if t1 < t2 else (t2, t1)
+        if is_start:
+            return any(low < sep <= high for sep in separator_times)
+        return any(low <= sep < high for sep in separator_times)
 
     def _reconcile_period_stoppages(
         self,
@@ -250,23 +295,50 @@ class AnchorReconciler:
         deduped_intervals = self._dedupe_intervals(chunk_intervals, chunk_bounds)
         resolved_intervals = self._select_non_overlapping_intervals(deduped_intervals)
 
+        all_end_times = [
+            *(item.anchor.video_time_sec for item in unpaired_ends),
+            *(iv.end.video_time_sec for iv in resolved_intervals),
+        ]
+        all_start_times = [
+            *(item.anchor.video_time_sec for item in unpaired_starts),
+            *(iv.start.video_time_sec for iv in resolved_intervals),
+        ]
+
         remaining_starts = [
             item
             for item in unpaired_starts
             if not self._endpoint_matches_interval(
-                item, resolved_intervals, chunk_bounds, is_start=True
+                item,
+                resolved_intervals,
+                chunk_bounds,
+                is_start=True,
+                separator_times=all_end_times,
             )
         ]
         remaining_ends = [
             item
             for item in unpaired_ends
             if not self._endpoint_matches_interval(
-                item, resolved_intervals, chunk_bounds, is_start=False
+                item,
+                resolved_intervals,
+                chunk_bounds,
+                is_start=False,
+                separator_times=all_start_times,
             )
         ]
 
-        deduped_starts = self._dedupe_cross_chunk_anchors(remaining_starts, chunk_bounds)
-        deduped_ends = self._dedupe_cross_chunk_anchors(remaining_ends, chunk_bounds)
+        deduped_starts = self._dedupe_cross_chunk_anchors(
+            remaining_starts,
+            chunk_bounds,
+            separator_times=all_end_times,
+            separator_is_start=True,
+        )
+        deduped_ends = self._dedupe_cross_chunk_anchors(
+            remaining_ends,
+            chunk_bounds,
+            separator_times=all_start_times,
+            separator_is_start=False,
+        )
 
         cross_chunk_intervals = self._pair_cross_chunk_endpoints(
             period_num=period_num,
@@ -426,12 +498,20 @@ class AnchorReconciler:
         chunk_bounds: dict[int, tuple[float, float]],
         *,
         is_start: bool,
+        separator_times: Sequence[float] | None = None,
     ) -> bool:
         for iv in intervals:
             if item.chunk_index in iv.source_chunks:
                 continue
             ref = iv.start if is_start else iv.end
             if abs(item.anchor.video_time_sec - ref.video_time_sec) > self._merge_window_sec:
+                continue
+            if self._has_separator(
+                item.anchor.video_time_sec,
+                ref.video_time_sec,
+                separator_times,
+                is_start=is_start,
+            ):
                 continue
             if self._chunks_overlap_near_times(
                 iv.source_chunks,
