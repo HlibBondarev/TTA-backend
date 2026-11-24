@@ -319,21 +319,22 @@ def _index_contained_caps(
     return caps_per_player, players_per_cap
 
 
-def _fallback_crop_is_ambiguous(
+def _crop_overlaps_neighbor_cap_or_head(
+    crop_box: tuple[float, float, float, float],
     player_idx: int,
-    player_det: Detection,
+    owned_cap_idx: int | None,
     player_dets: list[Detection],
     cap_dets: list[Detection],
     unique_cap_idx_by_player: dict[int, int],
 ) -> bool:
-    """Flag a fallback upper-body crop that overlaps another cap or unowned head zone."""
-    fallback_box = compute_cap_crop_box(player_det.bbox_xyxy, None)
-    if any(_boxes_overlap(fallback_box, c_det.bbox_xyxy) for c_det in cap_dets):
-        return True
+    """Flag a crop box that overlaps another cap or an unowned neighbor head zone."""
+    for other_c_idx, c_det in enumerate(cap_dets):
+        if other_c_idx != owned_cap_idx and _boxes_overlap(crop_box, c_det.bbox_xyxy):
+            return True
     for other_idx, other_det in enumerate(player_dets):
         if other_idx == player_idx or other_idx in unique_cap_idx_by_player:
             continue
-        if _boxes_overlap(fallback_box, _upper_body_cap_zone(other_det.bbox_xyxy)):
+        if _boxes_overlap(crop_box, _upper_body_cap_zone(other_det.bbox_xyxy)):
             return True
     return False
 
@@ -348,12 +349,11 @@ def _resolve_player_cap_assignment(
     unique_cap_idx_by_player: dict[int, int],
 ) -> tuple[tuple[float, float, float, float] | None, bool]:
     if not contained_caps:
-        return (
-            None,
-            _fallback_crop_is_ambiguous(
-                p_idx, p_det, player_dets, cap_dets, unique_cap_idx_by_player
-            ),
+        fallback_box = compute_cap_crop_box(p_det.bbox_xyxy, None)
+        is_ambiguous = _crop_overlaps_neighbor_cap_or_head(
+            fallback_box, p_idx, None, player_dets, cap_dets, unique_cap_idx_by_player
         )
+        return (None, is_ambiguous)
     if len(contained_caps) > 1:
         return (None, True)
 
@@ -362,14 +362,10 @@ def _resolve_player_cap_assignment(
         return (None, True)
 
     crop_box = compute_cap_crop_box(p_det.bbox_xyxy, cap_dets[c_idx].bbox_xyxy)
-    crop_hits_other_cap = any(
-        _boxes_overlap(crop_box, c_det.bbox_xyxy)
-        for other_c_idx, c_det in enumerate(cap_dets)
-        if other_c_idx != c_idx
+    is_ambiguous = _crop_overlaps_neighbor_cap_or_head(
+        crop_box, p_idx, c_idx, player_dets, cap_dets, unique_cap_idx_by_player
     )
-    if crop_hits_other_cap:
-        return (None, True)
-    return (cap_dets[c_idx].bbox_xyxy, False)
+    return (cap_dets[c_idx].bbox_xyxy, is_ambiguous)
 
 
 def _match_caps_to_players(

@@ -277,8 +277,14 @@ class AnchorReconciler:
             )
 
         by_chunk: dict[int, list[Pass1AnchorCandidate]] = defaultdict(list)
+        raw_start_times: list[float] = []
+        raw_end_times: list[float] = []
         for item in in_bounds:
             by_chunk[item.chunk_index].append(item.anchor)
+            if item.anchor.type == TimeAnchorType.STOPPAGE_START:
+                raw_start_times.append(item.anchor.video_time_sec)
+            elif item.anchor.type == TimeAnchorType.STOPPAGE_END:
+                raw_end_times.append(item.anchor.video_time_sec)
 
         chunk_intervals: list[_StoppageInterval] = []
         unpaired_starts: list[_IndexedAnchor] = []
@@ -286,7 +292,10 @@ class AnchorReconciler:
 
         for chunk_idx in sorted(by_chunk):
             intervals, left_starts, left_ends = self._pair_within_chunk(
-                chunk_idx, by_chunk[chunk_idx]
+                chunk_idx,
+                by_chunk[chunk_idx],
+                all_start_times=raw_start_times,
+                all_end_times=raw_end_times,
             )
             chunk_intervals.extend(intervals)
             unpaired_starts.extend(left_starts)
@@ -359,9 +368,24 @@ class AnchorReconciler:
         return paired
 
     @staticmethod
+    def _interval_contains_split(
+        start_time: float,
+        end_time: float,
+        all_start_times: Sequence[float],
+        all_end_times: Sequence[float],
+    ) -> bool:
+        inner_ends = [e for e in all_end_times if start_time < e < end_time]
+        if not inner_ends:
+            return False
+        earliest_inner_end = min(inner_ends)
+        return any(earliest_inner_end <= s < end_time for s in all_start_times)
+
+    @staticmethod
     def _pair_within_chunk(
         chunk_index: int,
         anchors: list[Pass1AnchorCandidate],
+        all_start_times: Sequence[float] = (),
+        all_end_times: Sequence[float] = (),
     ) -> tuple[list[_StoppageInterval], list[_IndexedAnchor], list[_IndexedAnchor]]:
         starts = sorted(
             (a for a in anchors if a.type == TimeAnchorType.STOPPAGE_START),
@@ -387,6 +411,14 @@ class AnchorReconciler:
                 unpaired_starts.append(_IndexedAnchor(chunk_index=chunk_index, anchor=start))
                 continue
             end = ends[end_idx]
+            if AnchorReconciler._interval_contains_split(
+                start.video_time_sec,
+                end.video_time_sec,
+                all_start_times,
+                all_end_times,
+            ):
+                unpaired_starts.append(_IndexedAnchor(chunk_index=chunk_index, anchor=start))
+                continue
             used_ends.add(end_idx)
             end_idx += 1
             last_end_time = end.video_time_sec

@@ -731,3 +731,79 @@ def test_fallback_crop_overlapping_neighbor_cap_marks_ambiguous_and_blocks_auto_
         ),
     )
     assert all(t.observations[0].cap_ambiguous is False for t in separated_no_caps)
+
+
+def test_unique_cap_crop_overlapping_neighbor_unowned_head_marks_ambiguous(
+    sample_snapshot: MatchSnapshot,
+) -> None:
+    img = np.zeros((240, 300, 3), dtype=np.uint8)
+    frames = [ExtractedFrame(index=0, video_time_sec=10.0, image_bgr=img)]
+
+    # Cap (70, 10, 90, 30) center is (80, 20), inside Player 1 (0, 0, 100, 200) only.
+    # Its padded crop (66, 6, 94, 34) overlaps Player 2's unowned head zone (86, 0, 126, 90).
+    boxes = {
+        0: [
+            Detection((0.0, 0.0, 100.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((81.0, 0.0, 131.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((70.0, 10.0, 90.0, 30.0), 0.95, CanonicalRole.CAP, "cap"),
+        ]
+    }
+    tracklets = BoTSortTracker().track_window(frames, SyntheticDetector(boxes))
+    assert len(tracklets) == 2
+
+    player1_obs = tracklets[0].observations[0]
+    assert player1_obs.cap_bbox_xyxy == (70.0, 10.0, 90.0, 30.0)
+    assert player1_obs.cap_ambiguous is True
+
+    selected = CropSelector(min_frame_gap=1).select_and_build_sheet(
+        tracklets[0], frames, max_crops=1
+    )
+    assert selected is not None
+    assert selected.has_ambiguous_cap is True
+
+    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    cand = Pass1EventCandidate(
+        video_time_sec=10.0,
+        definition=defn,
+        period_number=1,
+        is_lead_to_goal=True,
+        actor_bbox_normalized=[0.0, 0.0, 100.0 / 300.0, 200.0 / 240.0],
+        pool_zone_hint="center",
+        cap_color_hint="white",
+        confidence=0.95,
+    )
+    from video_analyzer.pass2.cap_resolver import CapResolutionResult
+
+    outcome = LineupMatcher().resolve(
+        cand,
+        CapResolutionResult(
+            resolved_cap_number=7,
+            confidence=0.95,
+            candidate_scores={7: 0.95},
+            reasoning="Clear cap #7 in crop overlapping neighbor head",
+        ),
+        sample_snapshot,
+        min_cap_confidence=0.80,
+        cap_ambiguous=selected.has_ambiguous_cap,
+    )
+    assert outcome.match_lineup_id is None
+    assert outcome.resolved_cap_number is None
+    assert outcome.needs_review is True
+    assert "AMBIGUOUS_CAP_DETECTION" in outcome.review_reasons
+
+    # Positive contrast: when Player 2's cap is detected outside Player 1's padded crop,
+    # both players remain unambiguous.
+    clean_boxes = {
+        0: [
+            Detection((0.0, 0.0, 100.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((81.0, 0.0, 131.0, 200.0), 0.9, CanonicalRole.PLAYER, "White team"),
+            Detection((70.0, 10.0, 90.0, 30.0), 0.95, CanonicalRole.CAP, "cap"),
+            Detection((105.0, 10.0, 120.0, 30.0), 0.95, CanonicalRole.CAP, "cap"),
+        ]
+    }
+    clean_tracklets = BoTSortTracker().track_window(frames, SyntheticDetector(clean_boxes))
+    assert len(clean_tracklets) == 2
+    assert clean_tracklets[0].observations[0].cap_bbox_xyxy == (70.0, 10.0, 90.0, 30.0)
+    assert clean_tracklets[0].observations[0].cap_ambiguous is False
+    assert clean_tracklets[1].observations[0].cap_bbox_xyxy == (105.0, 10.0, 120.0, 30.0)
+    assert clean_tracklets[1].observations[0].cap_ambiguous is False

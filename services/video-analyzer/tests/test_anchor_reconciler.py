@@ -341,3 +341,102 @@ def test_anchor_reconciler_preserves_cross_chunk_unpaired_stoppage_pairs(
         (TimeAnchorType.STOPPAGE_START, 12.0),
         (TimeAnchorType.STOPPAGE_END, 13.0),
     ]
+
+
+def test_anchor_reconciler_preserves_split_stoppage_when_chunk_misses_middle_end(
+    tmp_path: Path,
+) -> None:
+    # Case 1: Chunk 0 has starts at 10 and 12 plus end at 13; overlapping chunk 1 has end at 11.
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=30.0, path=tmp_path / "c0.mp4")
+    chunk1 = VideoChunk(index=1, start_sec=5.0, end_sec=20.0, path=tmp_path / "c1.mp4")
+
+    res0 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=2.0, period_number=1, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=10.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.90
+            ),
+            Pass1RawAnchor(
+                time_sec=12.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.90
+            ),
+            Pass1RawAnchor(
+                time_sec=13.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.90
+            ),
+            Pass1RawAnchor(
+                time_sec=28.0, period_number=1, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+        ]
+    )
+    res1 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=6.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.92
+            ),
+        ]
+    )
+
+    reconciled, warnings = AnchorReconciler(merge_window_sec=3.0).reconcile(
+        chunk_results=[(chunk0, res0), (chunk1, res1)],
+        total_duration_sec=40.0,
+    )
+    assert warnings == []
+    stoppages = [
+        (a.type, a.video_time_sec)
+        for a in reconciled
+        if a.type in (TimeAnchorType.STOPPAGE_START, TimeAnchorType.STOPPAGE_END)
+    ]
+    assert stoppages == [
+        (TimeAnchorType.STOPPAGE_START, 10.0),
+        (TimeAnchorType.STOPPAGE_END, 11.0),
+        (TimeAnchorType.STOPPAGE_START, 12.0),
+        (TimeAnchorType.STOPPAGE_END, 13.0),
+    ]
+
+    # Case 2: Chunk 0 only sees outer [10, 13] while chunk 1 sees inner [11 (end), 12 (start)].
+    split_chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=30.0, path=tmp_path / "sc0.mp4")
+    split_chunk1 = VideoChunk(index=1, start_sec=5.0, end_sec=20.0, path=tmp_path / "sc1.mp4")
+    split_res0 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=2.0, period_number=1, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=10.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.90
+            ),
+            Pass1RawAnchor(
+                time_sec=13.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.90
+            ),
+            Pass1RawAnchor(
+                time_sec=28.0, period_number=1, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+        ]
+    )
+    split_res1 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=6.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.92
+            ),
+            Pass1RawAnchor(
+                time_sec=7.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.92
+            ),
+        ]
+    )
+
+    split_reconciled, split_warnings = AnchorReconciler(merge_window_sec=3.0).reconcile(
+        chunk_results=[(split_chunk0, split_res0), (split_chunk1, split_res1)],
+        total_duration_sec=40.0,
+    )
+    assert split_warnings == []
+    split_stoppages = [
+        (a.type, a.video_time_sec)
+        for a in split_reconciled
+        if a.type in (TimeAnchorType.STOPPAGE_START, TimeAnchorType.STOPPAGE_END)
+    ]
+    assert split_stoppages == [
+        (TimeAnchorType.STOPPAGE_START, 10.0),
+        (TimeAnchorType.STOPPAGE_END, 11.0),
+        (TimeAnchorType.STOPPAGE_START, 12.0),
+        (TimeAnchorType.STOPPAGE_END, 13.0),
+    ]
