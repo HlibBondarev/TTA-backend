@@ -360,12 +360,28 @@ class AnchorReconciler:
             [*resolved_intervals, *cross_chunk_intervals],
             key=lambda iv: (iv.start.video_time_sec, iv.end.video_time_sec),
         )
+        self._flag_touching_stoppages(period_num, all_intervals, warnings)
 
         paired: list[Pass1AnchorCandidate] = []
         for iv in all_intervals:
             paired.append(iv.start)
             paired.append(iv.end)
         return paired
+
+    @staticmethod
+    def _flag_touching_stoppages(
+        period_num: int,
+        intervals: list[_StoppageInterval],
+        warnings: list[str],
+    ) -> None:
+        for prev_iv, curr_iv in zip(intervals, intervals[1:], strict=False):
+            if curr_iv.start.video_time_sec == prev_iv.end.video_time_sec:
+                prev_iv.end.needs_review = True
+                curr_iv.start.needs_review = True
+                warnings.append(
+                    f"Period {period_num}: adjacent stoppages share boundary timestamp "
+                    f"{curr_iv.start.video_time_sec}s; flagged for review."
+                )
 
     @staticmethod
     def _interval_contains_split(
@@ -403,7 +419,7 @@ class AnchorReconciler:
         last_end_time = float("-inf")
 
         for start in starts:
-            if start.video_time_sec <= last_end_time:
+            if start.video_time_sec < last_end_time:
                 continue
             while end_idx < len(ends) and ends[end_idx].video_time_sec <= start.video_time_sec:
                 end_idx += 1
@@ -516,7 +532,7 @@ class AnchorReconciler:
         )
         accepted: list[_StoppageInterval] = []
         for iv in ordered:
-            if accepted and iv.start.video_time_sec <= accepted[-1].end.video_time_sec:
+            if accepted and iv.start.video_time_sec < accepted[-1].end.video_time_sec:
                 if iv.combined_confidence > accepted[-1].combined_confidence:
                     accepted[-1] = iv
                 continue
@@ -569,7 +585,7 @@ class AnchorReconciler:
 
         for start_anchor in ordered_starts:
             occupied = any(
-                iv.start.video_time_sec <= start_anchor.video_time_sec <= iv.end.video_time_sec
+                iv.start.video_time_sec <= start_anchor.video_time_sec < iv.end.video_time_sec
                 for iv in [*existing_intervals, *paired]
             )
             if occupied:
@@ -588,7 +604,7 @@ class AnchorReconciler:
             end_anchor = ordered_ends[end_idx]
             conflicts = any(
                 max(iv.start.video_time_sec, start_anchor.video_time_sec)
-                <= min(iv.end.video_time_sec, end_anchor.video_time_sec)
+                < min(iv.end.video_time_sec, end_anchor.video_time_sec)
                 for iv in [*existing_intervals, *paired]
             )
             if conflicts:

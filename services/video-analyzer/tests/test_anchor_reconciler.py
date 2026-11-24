@@ -440,3 +440,107 @@ def test_anchor_reconciler_preserves_split_stoppage_when_chunk_misses_middle_end
         (TimeAnchorType.STOPPAGE_START, 12.0),
         (TimeAnchorType.STOPPAGE_END, 13.0),
     ]
+
+
+def test_anchor_reconciler_preserves_and_flags_touching_stoppage_endpoints(
+    tmp_path: Path,
+) -> None:
+    # Case 1: Single chunk reports touching stoppages [10, 11] and [11, 13]
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=30.0, path=tmp_path / "c0.mp4")
+    res0 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=2.0, period_number=1, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=10.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=11.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=11.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=13.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=28.0, period_number=1, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+        ]
+    )
+
+    reconciled, warnings = AnchorReconciler(merge_window_sec=3.0).reconcile(
+        chunk_results=[(chunk0, res0)],
+        total_duration_sec=30.0,
+    )
+    stoppages = [
+        a
+        for a in reconciled
+        if a.type in (TimeAnchorType.STOPPAGE_START, TimeAnchorType.STOPPAGE_END)
+    ]
+    assert [(a.type, a.video_time_sec) for a in stoppages] == [
+        (TimeAnchorType.STOPPAGE_START, 10.0),
+        (TimeAnchorType.STOPPAGE_END, 11.0),
+        (TimeAnchorType.STOPPAGE_START, 11.0),
+        (TimeAnchorType.STOPPAGE_END, 13.0),
+    ]
+    assert stoppages[0].needs_review is False
+    assert stoppages[1].needs_review is True
+    assert stoppages[2].needs_review is True
+    assert stoppages[3].needs_review is False
+    assert any("share boundary timestamp 11.0s" in w for w in warnings)
+
+    # Case 2: Cross-chunk touching endpoints across overlapping chunks
+    cc0 = VideoChunk(index=0, start_sec=0.0, end_sec=30.0, path=tmp_path / "cc0.mp4")
+    cc1 = VideoChunk(index=1, start_sec=5.0, end_sec=20.0, path=tmp_path / "cc1.mp4")
+    cc2 = VideoChunk(index=2, start_sec=8.0, end_sec=35.0, path=tmp_path / "cc2.mp4")
+    cr0 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=2.0, period_number=1, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=10.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.95
+            ),
+        ]
+    )
+    cr1 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=6.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=6.0, period_number=1, type=TimeAnchorType.STOPPAGE_START, confidence=0.95
+            ),
+        ]
+    )
+    cr2 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=5.0, period_number=1, type=TimeAnchorType.STOPPAGE_END, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=20.0, period_number=1, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+        ]
+    )
+
+    cross_reconciled, cross_warnings = AnchorReconciler(merge_window_sec=3.0).reconcile(
+        chunk_results=[(cc0, cr0), (cc1, cr1), (cc2, cr2)],
+        total_duration_sec=35.0,
+    )
+    cross_stoppages = [
+        a
+        for a in cross_reconciled
+        if a.type in (TimeAnchorType.STOPPAGE_START, TimeAnchorType.STOPPAGE_END)
+    ]
+    assert [(a.type, a.video_time_sec) for a in cross_stoppages] == [
+        (TimeAnchorType.STOPPAGE_START, 10.0),
+        (TimeAnchorType.STOPPAGE_END, 11.0),
+        (TimeAnchorType.STOPPAGE_START, 11.0),
+        (TimeAnchorType.STOPPAGE_END, 13.0),
+    ]
+    assert cross_stoppages[1].needs_review is True
+    assert cross_stoppages[2].needs_review is True
+    assert any("share boundary timestamp 11.0s" in w for w in cross_warnings)
