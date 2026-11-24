@@ -133,6 +133,47 @@ class DraftPlayerPresence(CamelCaseModel):
         return self
 
 
+class GeminiTokenUsage(CamelCaseModel):
+    """Aggregated Gemini API token counters across one or more generate_content calls."""
+
+    call_count: int = Field(default=0, ge=0)
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    candidates_tokens: int | None = Field(default=None, ge=0)
+    thoughts_tokens: int | None = Field(default=None, ge=0)
+    cached_content_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    has_unaccounted_tokens: bool = Field(default=False, exclude=True)
+
+
+class GeminiCostEstimate(CamelCaseModel):
+    """Estimated USD cost breakdown derived from Gemini token counters and configured pricing."""
+
+    currency: Literal["USD"] = "USD"
+    is_estimate: bool = True
+    pricing_configured: bool = True
+    input_cost_usd: float | None = Field(default=None, ge=0.0)
+    output_cost_usd: float | None = Field(default=None, ge=0.0)
+    total_cost_usd: float | None = Field(default=None, ge=0.0)
+    note: str | None = None
+
+
+class GeminiStageUsageDiagnostics(CamelCaseModel):
+    """Per-stage Gemini model identifier, token usage, and estimated USD cost."""
+
+    model: str | None = None
+    usage: GeminiTokenUsage = Field(default_factory=GeminiTokenUsage)
+    estimated_cost: GeminiCostEstimate | None = None
+
+
+class GeminiUsageDiagnostics(CamelCaseModel):
+    """Combined Pass 1, Pass 2, and total Gemini token usage and estimated USD cost."""
+
+    pass1: GeminiStageUsageDiagnostics = Field(default_factory=GeminiStageUsageDiagnostics)
+    pass2: GeminiStageUsageDiagnostics = Field(default_factory=GeminiStageUsageDiagnostics)
+    total: GeminiTokenUsage = Field(default_factory=GeminiTokenUsage)
+    estimated_cost: GeminiCostEstimate | None = None
+
+
 class PipelineDiagnostics(CamelCaseModel):
     """Execution telemetry and warnings for observability and debugging."""
 
@@ -144,6 +185,7 @@ class PipelineDiagnostics(CamelCaseModel):
     unresolved_actor_count: int = 0
     warnings: list[str] = Field(default_factory=list)
     timings_sec: dict[str, float] = Field(default_factory=dict)
+    gemini_usage: GeminiUsageDiagnostics = Field(default_factory=GeminiUsageDiagnostics)
 
 
 class VideoAnalysisDraft(CamelCaseModel):

@@ -50,6 +50,8 @@ Copy-Item .env.example .env
 # GEMINI_API_KEY, and ROBOFLOW_API_KEY
 ```
 
+Both Pass 1 (`GEMINI_PASS1_MODEL`) and Pass 2 (`GEMINI_PASS2_MODEL`) default to `gemini-4-hydrogen` and can be overridden independently. Each completed draft includes aggregated Gemini token counters (`promptTokens`, `candidatesTokens`, `thoughtsTokens`, `cachedContentTokens`, `totalTokens`) and an estimated USD cost breakdown (`diagnostics.geminiUsage`). You can override or extend per-1M-token USD pricing estimates via `GEMINI_MODEL_PRICING_USD_PER_1M` (JSON object or path to a JSON file).
+
 ### Run CLI Analysis on a Local 4K Match Video
 
 ```powershell

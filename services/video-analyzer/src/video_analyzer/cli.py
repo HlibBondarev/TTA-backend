@@ -15,6 +15,7 @@ import uvicorn
 from video_analyzer.config import Settings
 from video_analyzer.logging_utils import configure_safe_http_logging
 from video_analyzer.pipeline.factory import build_default_orchestrator
+from video_analyzer.schemas.draft import GeminiUsageDiagnostics
 from video_analyzer.schemas.request import (
     AnalysisOptions,
     AnalyzeJobRequest,
@@ -187,7 +188,34 @@ def _run_analyze(args: argparse.Namespace, settings: Settings) -> int:
         f"resolved={draft.diagnostics.resolved_actor_count}, "
         f"unresolved={draft.diagnostics.unresolved_actor_count})."
     )
+    usage_summary = _format_gemini_usage_summary(draft.diagnostics.gemini_usage)
+    if usage_summary is not None:
+        print(usage_summary)
     return 0
+
+
+def _format_gemini_usage_summary(gemini_usage: GeminiUsageDiagnostics) -> str | None:
+    """Format a concise one-line CLI summary of Gemini token usage and estimated USD cost."""
+    total = gemini_usage.total
+    if total.call_count <= 0:
+        return None
+    cost = gemini_usage.estimated_cost
+    if cost is not None and cost.total_cost_usd is not None:
+        cost_text = f"~${cost.total_cost_usd:.6f} USD"
+    elif cost is not None and not cost.pricing_configured:
+        cost_text = "unconfigured"
+    else:
+        cost_text = "unavailable"
+    prompt_text = str(total.prompt_tokens) if total.prompt_tokens is not None else "n/a"
+    output_text = str(total.candidates_tokens) if total.candidates_tokens is not None else "n/a"
+    thoughts_text = str(total.thoughts_tokens) if total.thoughts_tokens is not None else "n/a"
+    total_text = str(total.total_tokens) if total.total_tokens is not None else "n/a"
+    return (
+        f"Gemini usage: calls={total.call_count}, "
+        f"prompt={prompt_text}, output={output_text}, "
+        f"thoughts={thoughts_text}, total={total_text} tokens, "
+        f"est_cost={cost_text}."
+    )
 
 
 if __name__ == "__main__":
