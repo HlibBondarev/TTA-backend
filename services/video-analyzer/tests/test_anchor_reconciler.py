@@ -544,3 +544,51 @@ def test_anchor_reconciler_preserves_and_flags_touching_stoppage_endpoints(
     assert cross_stoppages[1].needs_review is True
     assert cross_stoppages[2].needs_review is True
     assert any("share boundary timestamp 11.0s" in w for w in cross_warnings)
+
+
+def test_anchor_reconciler_retains_latest_prior_period_end_across_shorter_period(
+    tmp_path: Path,
+) -> None:
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=220.0, path=tmp_path / "c0.mp4")
+    res0 = Pass1ChunkResult(
+        time_anchors=[
+            Pass1RawAnchor(
+                time_sec=10.0, period_number=1, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=150.0, period_number=1, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=110.0, period_number=2, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=120.0, period_number=2, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=130.0, period_number=3, type=TimeAnchorType.PERIOD_START, confidence=0.95
+            ),
+            Pass1RawAnchor(
+                time_sec=200.0, period_number=3, type=TimeAnchorType.PERIOD_END, confidence=0.95
+            ),
+        ]
+    )
+
+    reconciled, warnings = AnchorReconciler().reconcile(
+        chunk_results=[(chunk0, res0)],
+        total_duration_sec=220.0,
+    )
+
+    expected_msg = "Period 3: PeriodStart (130.0s) precedes Period 1 PeriodEnd (150.0s)"
+    assert any(expected_msg in w for w in warnings)
+    p1_end = next(
+        a for a in reconciled if a.period_number == 1 and a.type == TimeAnchorType.PERIOD_END
+    )
+    p3_start = next(
+        a for a in reconciled if a.period_number == 3 and a.type == TimeAnchorType.PERIOD_START
+    )
+    p3_end = next(
+        a for a in reconciled if a.period_number == 3 and a.type == TimeAnchorType.PERIOD_END
+    )
+    assert p1_end.needs_review is True
+    assert p3_start.needs_review is True
+    assert p3_end.needs_review is False

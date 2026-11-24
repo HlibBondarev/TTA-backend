@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -414,6 +415,32 @@ class JobStore:
             logger.warning(
                 "Failed posting callback for job %s to %s: %s",
                 job_id,
-                callback_url,
-                exc,
+                _sanitize_callback_url(callback_url),
+                _summarize_callback_error(exc),
             )
+
+
+def _sanitize_callback_url(callback_url: str) -> str:
+    """Return scheme://host[:port]/path with userinfo, query, and fragment stripped."""
+    stripped = callback_url.strip()
+    if not stripped:
+        return "<invalid-callback-url>"
+    try:
+        parsed = urlsplit(stripped)
+        scheme = parsed.scheme.lower()
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return "<invalid-callback-url>"
+    if not scheme or not hostname:
+        return "<invalid-callback-url>"
+    formatted_host = f"[{hostname}]" if ":" in hostname else hostname
+    port_part = f":{port}" if port is not None else ""
+    return f"{scheme}://{formatted_host}{port_part}{parsed.path}"
+
+
+def _summarize_callback_error(exc: Exception) -> str:
+    """Return a concise error summary without leaking raw URLs or credentials."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTPStatusError (HTTP {exc.response.status_code})"
+    return type(exc).__name__

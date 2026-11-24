@@ -45,6 +45,24 @@ def test_resolve_video_start_utc_prevents_future_timestamps() -> None:
     assert warnings3 == []
     assert kept == historical
 
+    # Extreme future start timestamp must clamp without OverflowError
+    max_future = datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)
+    clamped_max, source4, warnings4 = resolve_video_start_utc(
+        max_future, duration_sec=3600.0, now_utc=now
+    )
+    assert source4 == "clamped_from_future"
+    assert len(warnings4) == 1
+    assert clamped_max + timedelta(seconds=3600.0) <= now
+
+    # Exact boundary (requested + duration == now) remains provided
+    exact_boundary = now - timedelta(seconds=3600.0)
+    kept_boundary, source5, warnings5 = resolve_video_start_utc(
+        exact_boundary, duration_sec=3600.0, now_utc=now
+    )
+    assert source5 == "provided"
+    assert warnings5 == []
+    assert kept_boundary == exact_boundary
+
 
 def test_synthesize_closed_presences_defaults_empty_and_enforces_timeout_gt_timein() -> None:
     t0 = datetime(2026, 11, 23, 15, 0, 0, tzinfo=UTC)

@@ -70,8 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze_cmd.add_argument(
         "--env-file",
-        default=".env",
-        help="Path to .env configuration file (default: .env in current directory).",
+        default=None,
+        help="Path to .env configuration file (default: .env in current directory if present).",
     )
 
     serve_cmd = subparsers.add_parser(
@@ -82,7 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve_cmd.add_argument(
         "--port", type=int, default=None, help="Bind port (overrides SERVICE_PORT)."
     )
-    serve_cmd.add_argument("--env-file", default=".env", help="Path to .env configuration file.")
+    serve_cmd.add_argument(
+        "--env-file",
+        default=None,
+        help="Path to .env configuration file (default: .env in current directory if present).",
+    )
 
     return parser
 
@@ -91,8 +95,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    env_path = Path(args.env_file) if args.env_file else None
-    settings = Settings(_env_file=env_path) if env_path and env_path.is_file() else Settings()
+    if args.env_file is not None:
+        raw_env = args.env_file.strip()
+        env_path = Path(raw_env)
+        if not raw_env or not env_path.is_file():
+            print(f"Error: env file not found: {args.env_file}", file=sys.stderr)
+            return 2
+        settings = Settings(_env_file=env_path)
+    else:
+        default_env = Path(".env")
+        settings = Settings(_env_file=default_env) if default_env.is_file() else Settings()
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),

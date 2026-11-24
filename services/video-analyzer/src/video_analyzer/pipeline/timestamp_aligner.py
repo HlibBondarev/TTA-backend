@@ -35,7 +35,8 @@ def resolve_video_start_utc(
         return latest_valid_start, "derived_safe_past", []
 
     normalized = _ensure_utc(requested_start_utc)
-    if normalized + timedelta(seconds=safe_duration) > current_utc:
+    duration_delta = timedelta(seconds=safe_duration)
+    if normalized >= current_utc or duration_delta > (current_utc - normalized):
         return (
             latest_valid_start,
             "clamped_from_future",

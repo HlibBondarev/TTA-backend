@@ -2,6 +2,7 @@
 
 from video_analyzer.media.ffmpeg_client import (
     ExtractedFrame,
+    FFmpegCancelledError,
     FFmpegClient,
     VideoChunk,
     VideoProbeResult,
@@ -9,6 +10,7 @@ from video_analyzer.media.ffmpeg_client import (
 
 __all__ = [
     "ExtractedFrame",
+    "FFmpegCancelledError",
     "FFmpegClient",
     "VideoChunk",
     "VideoProbeResult",

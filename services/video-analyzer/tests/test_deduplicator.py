@@ -651,3 +651,56 @@ def test_deduplicator_flags_cross_chunk_shots_with_matching_hints_for_review(
     )
     assert outcome.needs_review is True
     assert "AMBIGUOUS_OVERLAP_MERGE" in outcome.review_reasons
+
+
+def test_deduplicator_rejects_bboxes_collapsing_to_zero_after_rounding(
+    sample_snapshot: MatchSnapshot,
+    tmp_path: Path,
+) -> None:
+    chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
+    res0 = Pass1ChunkResult(
+        period_events=[
+            Pass1RawEvent(
+                time_sec=10.0,
+                prompt_code="EVT_02_ST_POS",
+                period_number=1,
+                actor_bbox_normalized=[0.50000, 0.20000, 0.50004, 0.60000],
+                confidence=0.90,
+            ),
+            Pass1RawEvent(
+                time_sec=20.0,
+                prompt_code="EVT_02_ST_POS",
+                period_number=1,
+                actor_bbox_normalized=[0.20000, 0.50000, 0.60000, 0.50004],
+                confidence=0.90,
+            ),
+            Pass1RawEvent(
+                time_sec=30.0,
+                prompt_code="EVT_02_ST_POS",
+                period_number=1,
+                actor_bbox_normalized=[0.50000, 0.20000, 0.50010, 0.60000],
+                confidence=0.90,
+            ),
+            Pass1RawEvent(
+                time_sec=40.0,
+                prompt_code="EVT_02_ST_POS",
+                period_number=1,
+                actor_bbox_normalized=[0.1, 0.2, float("nan"), 0.5],
+                confidence=0.90,
+            ),
+        ]
+    )
+
+    events, _, warnings = EventDeduplicator().process(
+        chunk_results=[(chunk0, res0)],
+        event_definitions=sample_snapshot.event_definitions,
+        total_duration_sec=120.0,
+        min_confidence=0.65,
+    )
+
+    assert warnings == []
+    assert len(events) == 4
+    assert events[0].actor_bbox_normalized is None
+    assert events[1].actor_bbox_normalized is None
+    assert events[2].actor_bbox_normalized == [0.5, 0.2, 0.5001, 0.6]
+    assert events[3].actor_bbox_normalized is None

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from math import hypot
+from math import hypot, isfinite
 
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.models import Pass1ChunkResult, Pass1EventCandidate
@@ -261,10 +261,13 @@ class EventDeduplicator:
     def _normalize_bbox(bbox: list[float] | None) -> list[float] | None:
         if bbox is None or len(bbox) != 4:
             return None
-        x1, y1, x2, y2 = (max(0.0, min(1.0, float(v))) for v in bbox)
+        vals = [float(v) for v in bbox]
+        if not all(isfinite(v) for v in vals):
+            return None
+        x1, y1, x2, y2 = (round(max(0.0, min(1.0, v)), 4) for v in vals)
         if x2 <= x1 or y2 <= y1:
             return None
-        return [round(x1, 4), round(y1, 4), round(x2, 4), round(y2, 4)]
+        return [x1, y1, x2, y2]
 
 
 def _normalize_hint(value: str | None) -> str:

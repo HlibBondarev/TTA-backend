@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -17,6 +19,13 @@ import numpy as np
 from video_analyzer.schemas.request import VideoSource
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_FFPROBE_TIMEOUT_SEC: float = 60.0
+DEFAULT_FFMPEG_TIMEOUT_SEC: float = 600.0
+
+
+class FFmpegCancelledError(RuntimeError):
+    """Raised when an FFmpeg or FFprobe subprocess is cancelled cooperatively."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,9 +62,21 @@ class ExtractedFrame:
 class FFmpegClient:
     """Cross-platform (Windows/Linux) FFmpeg and FFprobe media processor."""
 
-    def __init__(self, ffmpeg_bin: str = "ffmpeg", ffprobe_bin: str = "ffprobe") -> None:
+    def __init__(
+        self,
+        ffmpeg_bin: str = "ffmpeg",
+        ffprobe_bin: str = "ffprobe",
+        ffprobe_timeout_sec: float = DEFAULT_FFPROBE_TIMEOUT_SEC,
+        ffmpeg_timeout_sec: float = DEFAULT_FFMPEG_TIMEOUT_SEC,
+    ) -> None:
+        if ffprobe_timeout_sec <= 0:
+            raise ValueError("ffprobe_timeout_sec must be positive.")
+        if ffmpeg_timeout_sec <= 0:
+            raise ValueError("ffmpeg_timeout_sec must be positive.")
         self._ffmpeg_bin = ffmpeg_bin
         self._ffprobe_bin = ffprobe_bin
+        self._ffprobe_timeout_sec = ffprobe_timeout_sec
+        self._ffmpeg_timeout_sec = ffmpeg_timeout_sec
 
     def resolve_source_path(self, source: VideoSource, work_dir: Path) -> Path:
         """Resolve a local path or download a presigned URL once into the working directory."""
@@ -76,7 +97,11 @@ class FFmpegClient:
                     handle.write(chunk)
         return dest_path
 
-    def probe(self, video_path: Path) -> VideoProbeResult:
+    def probe(
+        self,
+        video_path: Path,
+        cancel_event: threading.Event | None = None,
+    ) -> VideoProbeResult:
         """Inspect video resolution, frame rate, duration, and audio presence using ffprobe."""
         cmd = [
             self._ffprobe_bin,
@@ -88,7 +113,12 @@ class FFmpegClient:
             "-show_streams",
             str(video_path),
         ]
-        completed = self._run_command(cmd, "ffprobe")
+        completed = self._run_command(
+            cmd,
+            "ffprobe",
+            timeout_sec=self._ffprobe_timeout_sec,
+            cancel_event=cancel_event,
+        )
         payload: dict[str, Any] = json.loads(completed.stdout or "{}")
         streams = payload.get("streams", [])
         fmt = payload.get("format", {})
@@ -124,8 +154,11 @@ class FFmpegClient:
         overlap_sec: int = 15,
         target_height: int = 720,
         fps: float = 2.0,
+        cancel_event: threading.Event | None = None,
     ) -> list[VideoChunk]:
         """Transcode downscaled overlapping chunks (preserving audio) for Gemini Pass 1."""
+        if target_height < 2:
+            raise ValueError("target_height must be at least 2 pixels for yuv420p encoding.")
         output_dir.mkdir(parents=True, exist_ok=True)
         windows = self.compute_chunk_windows(
             total_duration_sec=probe.duration_sec,
@@ -134,7 +167,9 @@ class FFmpegClient:
         )
 
         chunks: list[VideoChunk] = []
-        scale_filter = f"scale=-2:{target_height},fps={fps}"
+        # yuv420p requires even width and height; keep valid even heights unchanged.
+        effective_height = target_height - (target_height % 2)
+        scale_filter = f"scale=-2:{effective_height},fps={fps}"
         for idx, (start_sec, end_sec) in enumerate(windows):
             chunk_len = max(0.5, end_sec - start_sec)
             chunk_path = output_dir / f"pass1_chunk_{idx:04d}.mp4"
@@ -164,7 +199,12 @@ class FFmpegClient:
                 cmd.append("-an")
             cmd.extend(["-movflags", "+faststart", str(chunk_path)])
 
-            self._run_command(cmd, "ffmpeg pass1 chunking")
+            self._run_command(
+                cmd,
+                "ffmpeg pass1 chunking",
+                timeout_sec=self._ffmpeg_timeout_sec,
+                cancel_event=cancel_event,
+            )
             chunks.append(
                 VideoChunk(index=idx, start_sec=start_sec, end_sec=end_sec, path=chunk_path)
             )
@@ -179,6 +219,7 @@ class FFmpegClient:
         total_duration_sec: float,
         sample_fps: float,
         work_dir: Path,
+        cancel_event: threading.Event | None = None,
     ) -> list[ExtractedFrame]:
         """Extract native-resolution frames in a narrow [t - d, t + d] window around an event."""
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -202,7 +243,12 @@ class FFmpegClient:
             "2",
             str(frame_pattern),
         ]
-        self._run_command(cmd, "ffmpeg pass2 window extraction")
+        self._run_command(
+            cmd,
+            "ffmpeg pass2 window extraction",
+            timeout_sec=self._ffmpeg_timeout_sec,
+            cancel_event=cancel_event,
+        )
 
         extracted: list[ExtractedFrame] = []
         for idx, frame_path in enumerate(sorted(work_dir.glob("frame_*.jpg"))):
@@ -262,15 +308,77 @@ class FFmpegClient:
         raise RuntimeError("Unable to determine positive video duration from ffprobe metadata.")
 
     @staticmethod
-    def _run_command(cmd: list[str], stage_name: str) -> subprocess.CompletedProcess[str]:
+    def _run_command(
+        cmd: list[str],
+        stage_name: str,
+        *,
+        timeout_sec: float = DEFAULT_FFMPEG_TIMEOUT_SEC,
+        cancel_event: threading.Event | None = None,
+        poll_interval_sec: float = 0.1,
+    ) -> subprocess.CompletedProcess[str]:
+        if cancel_event is not None and cancel_event.is_set():
+            raise FFmpegCancelledError(f"{stage_name} cancelled before subprocess start.")
         try:
-            return subprocess.run(cmd, check=True, capture_output=True, text=True)
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
         except FileNotFoundError as exc:
             raise RuntimeError(
                 f"Required binary '{cmd[0]}' for {stage_name} was not found on PATH."
             ) from exc
-        except subprocess.CalledProcessError as exc:
-            stderr_tail = (exc.stderr or "").strip()[-600:]
+
+        deadline = time.monotonic() + timeout_sec
+        stdout = ""
+        stderr = ""
+        with proc:
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    FFmpegClient._terminate_process(proc)
+                    raise FFmpegCancelledError(f"{stage_name} cancelled while running.")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    FFmpegClient._terminate_process(proc)
+                    raise TimeoutError(f"{stage_name} timed out after {timeout_sec:.1f}s.")
+                slice_timeout = (
+                    min(remaining, poll_interval_sec) if cancel_event is not None else remaining
+                )
+                try:
+                    out, err = proc.communicate(timeout=slice_timeout)
+                    stdout = out or ""
+                    stderr = err or ""
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+
+        if proc.returncode != 0:
+            stderr_tail = stderr.strip()[-600:]
             raise RuntimeError(
-                f"{stage_name} failed (exit {exc.returncode}): {stderr_tail}"
-            ) from exc
+                f"{stage_name} failed (exit {proc.returncode}): {stderr_tail}"
+            )
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=proc.returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    @staticmethod
+    def _terminate_process(proc: subprocess.Popen[str]) -> None:
+        if proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+            proc.communicate(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.communicate(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                pass
+        except OSError:
+            pass

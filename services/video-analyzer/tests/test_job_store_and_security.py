@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from datetime import timedelta
@@ -575,3 +576,128 @@ def test_job_store_shutdown_signals_active_jobs_to_cancel(
     assert rec.cancel_event.is_set()
     assert rec.status == "cancelled"
     assert rec.stage == "cancelled"
+
+
+def test_job_store_sanitizes_callback_failure_logs_without_altering_delivery_url(
+    sample_job_request: AnalyzeJobRequest,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret_token = "super-secret-callback-token"
+    secret_password = "super-secret-password"
+    delivered_urls: list[str] = []
+
+    def fail_status_handler(request: httpx.Request) -> httpx.Response:
+        delivered_urls.append(str(request.url))
+        return httpx.Response(500, request=request, text=f"upstream leak token={secret_token}")
+
+    client_500 = httpx.Client(transport=httpx.MockTransport(fail_status_handler))
+    store_500 = JobStore(
+        orchestrator=_build_mock_orchestrator(),
+        callback_allowed_origins=["https://backend.tta.local"],
+        http_client=client_500,
+    )
+    try:
+        callback_url = f"https://backend.tta.local/api/hook?token={secret_token}"
+        with caplog.at_level(logging.WARNING, logger="video_analyzer.api.job_store"):
+            req = sample_job_request.model_copy(
+                update={"job_id": uuid4(), "callback_url": callback_url}
+            )
+            store_500.submit(req)
+            for _ in range(40):
+                rec = store_500.get(req.job_id)
+                if rec is not None and rec.finalized:
+                    break
+                time.sleep(0.05)
+
+        assert delivered_urls == [callback_url]
+        assert "https://backend.tta.local/api/hook" in caplog.text
+        assert "HTTPStatusError (HTTP 500)" in caplog.text
+        assert secret_token not in caplog.text
+
+        caplog.clear()
+
+        def fail_connect_handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError(f"failed connecting to {request.url}", request=request)
+
+        client_conn = httpx.Client(transport=httpx.MockTransport(fail_connect_handler))
+        store_conn = JobStore(
+            orchestrator=_build_mock_orchestrator(),
+            callback_allowed_origins=["https://backend.tta.local"],
+            http_client=client_conn,
+        )
+        try:
+            with caplog.at_level(logging.WARNING, logger="video_analyzer.api.job_store"):
+                store_conn._dispatch_callback(
+                    f"https://backend.tta.local/api/cb?token={secret_token}",
+                    {"status": "completed"},
+                    uuid4(),
+                )
+                store_conn._dispatch_callback(
+                    f"https://user:{secret_password}@backend.tta.local/api/cb"
+                    f"?token={secret_token}#frag",
+                    {"status": "completed"},
+                    uuid4(),
+                )
+            assert "ConnectError" in caplog.text
+            assert "ValueError" in caplog.text
+            assert "https://backend.tta.local/api/cb" in caplog.text
+            assert secret_token not in caplog.text
+            assert secret_password not in caplog.text
+            assert "#frag" not in caplog.text
+        finally:
+            store_conn.shutdown()
+            client_conn.close()
+    finally:
+        store_500.shutdown()
+        client_500.close()
+
+
+def test_cli_fails_on_missing_explicit_env_file_and_keeps_default_env_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing_env = tmp_path / "does_not_exist.env"
+    exit_serve = cli_main(["serve", "--env-file", str(missing_env)])
+    assert exit_serve == 2
+    assert "env file not found" in capsys.readouterr().err
+
+    video = tmp_path / "sample.mp4"
+    video.write_bytes(b"video")
+    snapshot_file = (
+        Path(__file__).resolve().parents[1]
+        / "sample_snapshots"
+        / "waterpolo_default_snapshot.json"
+    )
+    exit_analyze = cli_main(
+        [
+            "analyze",
+            "--video",
+            str(video),
+            "--snapshot",
+            str(snapshot_file),
+            "--out",
+            str(tmp_path / "out.json"),
+            "--env-file",
+            str(missing_env),
+        ]
+    )
+    assert exit_analyze == 2
+    assert "env file not found" in capsys.readouterr().err
+
+    # Without --env-file and with no .env in cwd, default Settings() still applies
+    no_env_dir = tmp_path / "empty_cwd"
+    no_env_dir.mkdir()
+    monkeypatch.chdir(no_env_dir)
+    monkeypatch.setenv("INTERNAL_API_KEY", "from-process-env-secret")
+    monkeypatch.setattr(
+        "video_analyzer.api.app.build_default_orchestrator",
+        lambda settings: _build_mock_orchestrator(work_dir=tmp_path),
+    )
+    served: dict[str, object] = {}
+    monkeypatch.setattr(
+        "video_analyzer.cli.uvicorn.run",
+        lambda app, host, port: served.update({"app": app, "host": host, "port": port}),
+    )
+    assert cli_main(["serve"]) == 0
+    assert isinstance(served["app"], FastAPI)

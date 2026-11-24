@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import tempfile
 import threading
@@ -14,7 +15,12 @@ from uuid import uuid4
 
 from video_analyzer.config import Settings
 from video_analyzer.detectors.base import BaseObjectDetector
-from video_analyzer.media.ffmpeg_client import FFmpegClient, VideoChunk, VideoProbeResult
+from video_analyzer.media.ffmpeg_client import (
+    FFmpegCancelledError,
+    FFmpegClient,
+    VideoChunk,
+    VideoProbeResult,
+)
 from video_analyzer.pass1.anchor_reconciler import AnchorReconciler
 from video_analyzer.pass1.deduplicator import EventDeduplicator
 from video_analyzer.pass1.gemini_client import BasePass1Analyzer
@@ -40,6 +46,7 @@ from video_analyzer.schemas.draft import (
 from video_analyzer.schemas.request import AnalyzeJobRequest
 
 logger = logging.getLogger(__name__)
+_CAP_COLOR_HINT_MISMATCH_REASON = "CAP_COLOR_HINT_MISMATCH"
 
 
 class JobCancelledError(RuntimeError):
@@ -103,85 +110,89 @@ class VideoAnalysisOrchestrator:
             ignore_cleanup_errors=True,
         ) as tmp_root:
             work_dir = Path(tmp_root)
-            self._report(progress_callback, "probing_video", 5)
-            self._check_cancelled(cancel_event)
+            try:
+                self._report(progress_callback, "probing_video", 5)
+                self._check_cancelled(cancel_event)
 
-            t_probe = time.monotonic()
-            video_path = self._ffmpeg.resolve_source_path(request.video_source, work_dir)
-            probe = self._ffmpeg.probe(video_path)
-            timings["probe"] = round(time.monotonic() - t_probe, 3)
+                t_probe = time.monotonic()
+                video_path = self._ffmpeg.resolve_source_path(request.video_source, work_dir)
+                probe = self._ffmpeg.probe(video_path, cancel_event=cancel_event)
+                timings["probe"] = round(time.monotonic() - t_probe, 3)
 
-            video_start_utc, start_source, start_warnings = resolve_video_start_utc(
-                requested_start_utc=request.video_start_utc,
-                duration_sec=probe.duration_sec,
-            )
-            warnings.extend(start_warnings)
-
-            chunk_results, pass1_timings = self._run_pass1(
-                video_path=video_path,
-                probe=probe,
-                request=request,
-                work_dir=work_dir,
-                cancel_event=cancel_event,
-                progress_callback=progress_callback,
-            )
-            timings.update(pass1_timings)
-
-            events_cand, raw_count, dedup_warnings = self._deduplicator.process(
-                chunk_results=chunk_results,
-                event_definitions=request.match_snapshot.event_definitions,
-                total_duration_sec=probe.duration_sec,
-                min_confidence=request.analysis_options.min_event_confidence,
-            )
-            warnings.extend(dedup_warnings)
-
-            anchor_cands, anchor_warnings = self._anchor_reconciler.reconcile(
-                chunk_results=chunk_results,
-                total_duration_sec=probe.duration_sec,
-            )
-            warnings.extend(anchor_warnings)
-
-            draft_anchors = [
-                DraftTimeAnchor(
-                    id=uuid4(),
-                    period_number=a.period_number,
-                    type=a.type,
-                    video_time_sec=a.video_time_sec,
-                    timestamp=to_utc_timestamp(video_start_utc, a.video_time_sec),
-                    confidence=round(a.confidence, 4),
-                    needs_review=a.needs_review,
-                    evidence=a.evidence,
+                video_start_utc, start_source, start_warnings = resolve_video_start_utc(
+                    requested_start_utc=request.video_start_utc,
+                    duration_sec=probe.duration_sec,
                 )
-                for a in anchor_cands
-            ]
+                warnings.extend(start_warnings)
 
-            draft_events, pass2_windows, resolved_count, unresolved_count, pass2_timings = (
-                self._run_pass2(
+                chunk_results, pass1_timings = self._run_pass1(
                     video_path=video_path,
                     probe=probe,
                     request=request,
-                    candidates=events_cand,
-                    video_start_utc=video_start_utc,
                     work_dir=work_dir,
                     cancel_event=cancel_event,
                     progress_callback=progress_callback,
-                    debug_dir=debug_dir,
-                    warnings=warnings,
                 )
-            )
-            timings.update(pass2_timings)
+                timings.update(pass1_timings)
 
-            presences = synthesize_closed_presences(
-                events=draft_events,
-                anchors=draft_anchors,
-                video_start_utc=video_start_utc,
-                enabled=request.analysis_options.generate_player_presences,
-            )
+                events_cand, raw_count, dedup_warnings = self._deduplicator.process(
+                    chunk_results=chunk_results,
+                    event_definitions=request.match_snapshot.event_definitions,
+                    total_duration_sec=probe.duration_sec,
+                    min_confidence=request.analysis_options.min_event_confidence,
+                )
+                warnings.extend(dedup_warnings)
 
-            timings["total"] = round(time.monotonic() - t_start, 3)
-            detector_info = self._detector.provider_info()
+                anchor_cands, anchor_warnings = self._anchor_reconciler.reconcile(
+                    chunk_results=chunk_results,
+                    total_duration_sec=probe.duration_sec,
+                )
+                warnings.extend(anchor_warnings)
 
-            self._report(progress_callback, "completed", 100)
+                draft_anchors = [
+                    DraftTimeAnchor(
+                        id=uuid4(),
+                        period_number=a.period_number,
+                        type=a.type,
+                        video_time_sec=a.video_time_sec,
+                        timestamp=to_utc_timestamp(video_start_utc, a.video_time_sec),
+                        confidence=round(a.confidence, 4),
+                        needs_review=a.needs_review,
+                        evidence=a.evidence,
+                    )
+                    for a in anchor_cands
+                ]
+
+                draft_events, pass2_windows, resolved_count, unresolved_count, pass2_timings = (
+                    self._run_pass2(
+                        video_path=video_path,
+                        probe=probe,
+                        request=request,
+                        candidates=events_cand,
+                        video_start_utc=video_start_utc,
+                        work_dir=work_dir,
+                        cancel_event=cancel_event,
+                        progress_callback=progress_callback,
+                        debug_dir=debug_dir,
+                        warnings=warnings,
+                    )
+                )
+                timings.update(pass2_timings)
+
+                presences = synthesize_closed_presences(
+                    events=draft_events,
+                    anchors=draft_anchors,
+                    video_start_utc=video_start_utc,
+                    enabled=request.analysis_options.generate_player_presences,
+                )
+
+                timings["total"] = round(time.monotonic() - t_start, 3)
+                detector_info = self._detector.provider_info()
+
+                self._check_cancelled(cancel_event)
+                self._report(progress_callback, "completed", 100)
+            except FFmpegCancelledError as exc:
+                raise JobCancelledError(str(exc)) from exc
             return VideoAnalysisDraft(
                 schema_version="1.0",
                 job_id=request.job_id,
@@ -247,6 +258,7 @@ class VideoAnalysisOrchestrator:
             overlap_sec=opts.pass1_overlap_sec,
             target_height=opts.pass1_target_height,
             fps=opts.pass1_fps,
+            cancel_event=cancel_event,
         )
         chunk_sec = round(time.monotonic() - t_chunk, 3)
 
@@ -317,6 +329,7 @@ class VideoAnalysisOrchestrator:
                     allowed_caps=allowed_caps,
                     cap_color_hint=cap_color_hint,
                     work_dir=work_dir,
+                    cancel_event=cancel_event,
                     debug_dir=debug_dir,
                     warnings=warnings,
                 )
@@ -336,7 +349,18 @@ class VideoAnalysisOrchestrator:
                 actor_match_tied=actor_match_tied,
                 cap_ambiguous=cap_ambiguous,
             )
-            if outcome.match_lineup_id is not None:
+            match_lineup_id = outcome.match_lineup_id
+            resolved_cap_number = outcome.resolved_cap_number
+            needs_review = outcome.needs_review
+            review_reasons = list(outcome.review_reasons)
+            if self._has_cap_color_hint_mismatch(cand.cap_color_hint, cap_color_hint):
+                match_lineup_id = None
+                resolved_cap_number = None
+                needs_review = True
+                if _CAP_COLOR_HINT_MISMATCH_REASON not in review_reasons:
+                    review_reasons.append(_CAP_COLOR_HINT_MISMATCH_REASON)
+
+            if match_lineup_id is not None:
                 resolved_count += 1
             else:
                 unresolved_count += 1
@@ -353,15 +377,15 @@ class VideoAnalysisOrchestrator:
                     video_time_sec=cand.video_time_sec,
                     event_timestamp=to_utc_timestamp(video_start_utc, cand.video_time_sec),
                     is_lead_to_goal=cand.is_lead_to_goal,
-                    match_lineup_id=outcome.match_lineup_id,
-                    resolved_cap_number=outcome.resolved_cap_number,
+                    match_lineup_id=match_lineup_id,
+                    resolved_cap_number=resolved_cap_number,
                     candidate_lineup_ids=outcome.candidate_lineup_ids,
                     actor_bbox_normalized=cand.actor_bbox_normalized,
                     pool_zone_hint=cand.pool_zone_hint,
                     event_confidence=round(cand.confidence, 4),
                     cap_confidence=outcome.cap_confidence,
-                    needs_review=outcome.needs_review,
-                    review_reasons=outcome.review_reasons,
+                    needs_review=needs_review,
+                    review_reasons=review_reasons,
                 )
             )
 
@@ -386,6 +410,7 @@ class VideoAnalysisOrchestrator:
         allowed_caps: list[int],
         cap_color_hint: str | None,
         work_dir: Path,
+        cancel_event: threading.Event | None,
         debug_dir: Path | None,
         warnings: list[str],
     ) -> _Pass2WindowOutcome:
@@ -401,6 +426,7 @@ class VideoAnalysisOrchestrator:
                 total_duration_sec=probe.duration_sec,
                 sample_fps=opts.pass2_sample_fps,
                 work_dir=win_dir,
+                cancel_event=cancel_event,
             )
             if not frames:
                 warnings.append(
@@ -466,7 +492,7 @@ class VideoAnalysisOrchestrator:
                 cap_result = self._cap_resolver.resolve(
                     selected_crops=selected_crops,
                     allowed_cap_numbers=allowed_caps,
-                    cap_color_hint=candidate.cap_color_hint or cap_color_hint,
+                    cap_color_hint=cap_color_hint or candidate.cap_color_hint,
                 )
             except Exception as exc:
                 logger.warning("Cap resolution failed for event #%d: %s", event_index, exc)
@@ -484,6 +510,20 @@ class VideoAnalysisOrchestrator:
             )
         finally:
             shutil.rmtree(win_dir, ignore_errors=True)
+
+    @staticmethod
+    def _normalize_cap_color_hint(value: str | None) -> str:
+        return " ".join(re.sub(r"[-_]+", " ", (value or "").strip().lower()).split())
+
+    @classmethod
+    def _has_cap_color_hint_mismatch(
+        cls,
+        candidate_hint: str | None,
+        tracked_team_hint: str | None,
+    ) -> bool:
+        norm_candidate = cls._normalize_cap_color_hint(candidate_hint)
+        norm_tracked = cls._normalize_cap_color_hint(tracked_team_hint)
+        return bool(norm_candidate and norm_tracked and norm_candidate != norm_tracked)
 
     @staticmethod
     def _check_cancelled(cancel_event: threading.Event | None) -> None:

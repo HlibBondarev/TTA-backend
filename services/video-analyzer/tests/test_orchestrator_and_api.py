@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import tempfile
+import threading
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -20,8 +22,12 @@ from video_analyzer.detectors.base import BaseObjectDetector, CanonicalRole, Det
 from video_analyzer.media.ffmpeg_client import ExtractedFrame, VideoChunk, VideoProbeResult
 from video_analyzer.pass1.gemini_client import BasePass1Analyzer
 from video_analyzer.pass1.models import Pass1ChunkResult, Pass1RawAnchor, Pass1RawEvent
-from video_analyzer.pass2.cap_resolver import BaseCapResolver, CapResolutionResult
-from video_analyzer.pipeline.orchestrator import VideoAnalysisOrchestrator
+from video_analyzer.pass2.cap_resolver import (
+    BaseCapResolver,
+    CapResolutionResult,
+    LocalOcrCapResolver,
+)
+from video_analyzer.pipeline.orchestrator import JobCancelledError, VideoAnalysisOrchestrator
 from video_analyzer.schemas.draft import TimeAnchorType
 from video_analyzer.schemas.request import AnalyzeJobRequest, MatchSnapshot
 
@@ -30,7 +36,7 @@ class MockFFmpegClient:
     def resolve_source_path(self, source, work_dir: Path) -> Path:
         return Path(source.local_path or "dummy.mp4")
 
-    def probe(self, video_path: Path) -> VideoProbeResult:
+    def probe(self, video_path: Path, cancel_event=None) -> VideoProbeResult:
         return VideoProbeResult(
             duration_sec=240.0,
             width=3840,
@@ -136,11 +142,14 @@ class MockCapResolver(BaseCapResolver):
         )
 
 
-def _build_mock_orchestrator() -> VideoAnalysisOrchestrator:
+def _build_mock_orchestrator(work_dir: Path | None = None) -> VideoAnalysisOrchestrator:
+    resolved_work_dir = str(work_dir) if work_dir is not None else tempfile.gettempdir()
     settings = Settings(
+        _env_file=None,
         detector_provider="roboflow",
         detector_model_path_or_id="waterpolo-salvasc/5",
         internal_api_key="secret-test-key",
+        work_dir=resolved_work_dir,
     )
     return VideoAnalysisOrchestrator(
         settings=settings,
@@ -161,8 +170,11 @@ def test_sample_snapshot_contains_all_34_seeded_waterpolo_definitions(
     assert len({g.event_definition_id for g in goals}) == 2
 
 
-def test_orchestrator_end_to_end_draft_contract(sample_job_request: AnalyzeJobRequest) -> None:
-    orchestrator = _build_mock_orchestrator()
+def test_orchestrator_end_to_end_draft_contract(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    orchestrator = _build_mock_orchestrator(work_dir=tmp_path)
     draft = orchestrator.run(sample_job_request)
     payload = draft.model_dump(mode="json", by_alias=True)
 
@@ -191,9 +203,10 @@ def test_orchestrator_end_to_end_draft_contract(sample_job_request: AnalyzeJobRe
 
 def test_fastapi_endpoints_auth_and_job_lifecycle(
     sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
 ) -> None:
-    settings = Settings(internal_api_key="secret-test-key")
-    app = create_app(settings=settings, orchestrator=_build_mock_orchestrator())
+    settings = Settings(_env_file=None, internal_api_key="secret-test-key")
+    app = create_app(settings=settings, orchestrator=_build_mock_orchestrator(work_dir=tmp_path))
 
     with TestClient(app) as client:
         health_resp = client.get("/health")
@@ -250,7 +263,7 @@ def test_cli_analyze_writes_draft_json(
 
     monkeypatch.setattr(
         "video_analyzer.cli.build_default_orchestrator",
-        lambda settings: _build_mock_orchestrator(),
+        lambda settings: _build_mock_orchestrator(work_dir=tmp_path),
     )
 
     exit_code = cli_main(
@@ -346,3 +359,162 @@ def test_orchestrator_cleans_up_per_window_temp_dirs_and_propagates_tied_tracks(
     assert all(evt.match_lineup_id is None for evt in draft.events)
     assert all(evt.needs_review is True for evt in draft.events)
     assert all("TIED_ACTOR_TRACKLET_MATCH" in evt.review_reasons for evt in draft.events)
+
+
+def test_build_mock_orchestrator_ignores_operator_env_and_work_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sample_job_request: AnalyzeJobRequest,
+) -> None:
+    bad_dir = tmp_path / "nonexistent_env_work_dir"
+    (tmp_path / ".env").write_text(f"WORK_DIR={bad_dir}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WORK_DIR", str(bad_dir))
+
+    orchestrator = _build_mock_orchestrator()
+    assert orchestrator._settings.work_dir == tempfile.gettempdir()
+    draft = orchestrator.run(sample_job_request)
+    assert len(draft.events) == 2
+
+
+def test_orchestrator_flags_cap_color_hint_mismatch_across_resolution_paths(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    class ColorHintPass1Analyzer(BasePass1Analyzer):
+        def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+            return Pass1ChunkResult(
+                time_anchors=[
+                    Pass1RawAnchor(
+                        time_sec=5.0,
+                        period_number=1,
+                        type=TimeAnchorType.PERIOD_START,
+                        confidence=0.95,
+                    ),
+                    Pass1RawAnchor(
+                        time_sec=220.0,
+                        period_number=1,
+                        type=TimeAnchorType.PERIOD_END,
+                        confidence=0.95,
+                    ),
+                ],
+                period_events=[
+                    Pass1RawEvent(
+                        time_sec=40.0,
+                        prompt_code="EVT_01_G_POS",
+                        period_number=1,
+                        actor_bbox_normalized=[0.45, 0.35, 0.55, 0.65],
+                        cap_color_hint="Blue",
+                        confidence=0.94,
+                    ),
+                    Pass1RawEvent(
+                        time_sec=90.0,
+                        prompt_code="EVT_02_ST_POS",
+                        period_number=1,
+                        actor_bbox_normalized=[0.45, 0.35, 0.55, 0.65],
+                        cap_color_hint="  WHITE ",
+                        confidence=0.94,
+                    ),
+                ],
+            )
+
+    seen_color_hints: list[str | None] = []
+
+    class RecordingCapResolver(BaseCapResolver):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            seen_color_hints.append(cap_color_hint)
+            return CapResolutionResult(
+                resolved_cap_number=7,
+                confidence=0.95,
+                candidate_scores={7: 0.95},
+                reasoning="Sharp cap #7",
+            )
+
+    settings = Settings(_env_file=None, internal_api_key="test-key", work_dir=str(tmp_path))
+
+    # 1. Gemini/mock resolver path: mismatch blocks auto-confirm, normalized match succeeds
+    orch_mock = VideoAnalysisOrchestrator(
+        settings=settings,
+        ffmpeg_client=MockFFmpegClient(),  # type: ignore[arg-type]
+        pass1_analyzer=ColorHintPass1Analyzer(),
+        detector=MockDetector(),
+        cap_resolver=RecordingCapResolver(),
+    )
+    draft_mock = orch_mock.run(sample_job_request)
+    assert seen_color_hints == ["white", "white"]
+    mismatch_evt, matched_evt = draft_mock.events
+    assert mismatch_evt.match_lineup_id is None
+    assert mismatch_evt.resolved_cap_number is None
+    assert mismatch_evt.needs_review is True
+    assert "CAP_COLOR_HINT_MISMATCH" in mismatch_evt.review_reasons
+    assert [c.cap_number for c in mismatch_evt.candidate_lineup_ids] == [7]
+    assert matched_evt.match_lineup_id is not None
+    assert matched_evt.resolved_cap_number == 7
+    assert matched_evt.needs_review is False
+    assert draft_mock.diagnostics.resolved_actor_count == 1
+    assert draft_mock.diagnostics.unresolved_actor_count == 1
+
+    # 2. LocalOcrCapResolver path: mismatch still blocks auto-confirm
+    class FakeOcrReader:
+        @staticmethod
+        def readtext(image, allowlist: str = ""):
+            return [([], "7", 0.98)]
+
+    orch_ocr = VideoAnalysisOrchestrator(
+        settings=settings,
+        ffmpeg_client=MockFFmpegClient(),  # type: ignore[arg-type]
+        pass1_analyzer=ColorHintPass1Analyzer(),
+        detector=MockDetector(),
+        cap_resolver=LocalOcrCapResolver(reader=FakeOcrReader()),
+    )
+    draft_ocr = orch_ocr.run(sample_job_request)
+    assert draft_ocr.events[0].match_lineup_id is None
+    assert draft_ocr.events[0].resolved_cap_number is None
+    assert draft_ocr.events[0].needs_review is True
+    assert "CAP_COLOR_HINT_MISMATCH" in draft_ocr.events[0].review_reasons
+    assert draft_ocr.events[1].resolved_cap_number == 7
+    assert draft_ocr.events[1].needs_review is False
+
+    # 3. skip_pass2=True path: mismatch is also flagged in review_reasons
+    skip_req = sample_job_request.model_copy(
+        update={
+            "analysis_options": sample_job_request.analysis_options.model_copy(
+                update={"skip_pass2": True}
+            )
+        }
+    )
+    draft_skip = orch_mock.run(skip_req)
+    assert draft_skip.events[0].match_lineup_id is None
+    assert draft_skip.events[0].needs_review is True
+    assert "CAP_COLOR_HINT_MISMATCH" in draft_skip.events[0].review_reasons
+    assert "CAP_COLOR_HINT_MISMATCH" not in draft_skip.events[1].review_reasons
+
+
+def test_orchestrator_checks_cancellation_before_reporting_completed(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    cancel_event = threading.Event()
+    reported: list[tuple[str, int]] = []
+
+    class LateCancellingDetector(MockDetector):
+        def provider_info(self) -> dict[str, str]:
+            cancel_event.set()
+            return super().provider_info()
+
+    orchestrator = VideoAnalysisOrchestrator(
+        settings=Settings(_env_file=None, internal_api_key="test-key", work_dir=str(tmp_path)),
+        ffmpeg_client=MockFFmpegClient(),  # type: ignore[arg-type]
+        pass1_analyzer=MockPass1Analyzer(),
+        detector=LateCancellingDetector(),
+        cap_resolver=MockCapResolver(),
+    )
+
+    with pytest.raises(JobCancelledError):
+        orchestrator.run(
+            sample_job_request,
+            cancel_event=cancel_event,
+            progress_callback=lambda stage, pct: reported.append((stage, pct)),
+        )
+
+    assert ("completed", 100) not in reported

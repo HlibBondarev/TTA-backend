@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import threading
 from typing import Any, Literal
 
 import cv2
@@ -33,6 +34,7 @@ class OnnxDetector(BaseObjectDetector):
         self._input_size = input_size
         self._output_layout = output_layout
         self._session = session
+        self._load_lock = threading.Lock()
         self._input_name: str | None = None
         self._output_shape: tuple[Any, ...] | None = None
         self._class_names: dict[int, str] = {}
@@ -268,27 +270,39 @@ class OnnxDetector(BaseObjectDetector):
         return nchw, scale, float(pad_x), float(pad_y)
 
     def _ensure_loaded(self) -> Any:
-        if self._session is None:
-            try:
-                import onnxruntime as ort
-            except ImportError as exc:
-                raise RuntimeError(
-                    "onnxruntime is required for DETECTOR_PROVIDER=onnx. "
-                    "Install it with: pip install '.[onnx]'"
-                ) from exc
-            self._session = ort.InferenceSession(
-                self._model_path,
-                providers=["CPUExecutionProvider"],
-            )
-        if self._input_name is None:
-            self._input_name = self._session.get_inputs()[0].name
-            outputs = self._session.get_outputs()
-            if outputs:
-                raw_shape = getattr(outputs[0], "shape", None)
-                if raw_shape is not None:
-                    self._output_shape = tuple(raw_shape)
-            self._class_names = self._extract_metadata_names(self._session)
-        return self._session
+        if self._session is not None and self._input_name is not None:
+            return self._session
+        with self._load_lock:
+            session = self._session
+            if session is None:
+                try:
+                    import onnxruntime as ort
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "onnxruntime is required for DETECTOR_PROVIDER=onnx. "
+                        "Install it with: pip install '.[onnx]'"
+                    ) from exc
+                session = ort.InferenceSession(
+                    self._model_path,
+                    providers=["CPUExecutionProvider"],
+                )
+            if self._input_name is None:
+                input_name = session.get_inputs()[0].name
+                outputs = session.get_outputs()
+                output_shape: tuple[Any, ...] | None = None
+                if outputs:
+                    raw_shape = getattr(outputs[0], "shape", None)
+                    if raw_shape is not None:
+                        output_shape = tuple(raw_shape)
+                class_names = self._extract_metadata_names(session)
+                self._output_shape = output_shape
+                self._class_names = class_names
+                self._session = session
+                # Publish _input_name last so fast-path callers never see partial init state.
+                self._input_name = input_name
+            elif self._session is None:
+                self._session = session
+            return self._session
 
     @staticmethod
     def _extract_metadata_names(session: Any) -> dict[int, str]:

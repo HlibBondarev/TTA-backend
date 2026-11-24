@@ -676,8 +676,10 @@ class AnchorReconciler:
                     if anchor.video_time_sec < prev_end.video_time_sec:
                         anchor.needs_review = True
 
-            prev_period = period_num
-            prev_end = next(
+            curr_end = next(
                 (a for a in reversed(curr_anchors) if a.type == TimeAnchorType.PERIOD_END),
                 curr_anchors[-1],
             )
+            if prev_end is None or curr_end.video_time_sec >= prev_end.video_time_sec:
+                prev_period = period_num
+                prev_end = curr_end

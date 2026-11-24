@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -458,3 +461,62 @@ def test_roboflow_redacts_api_key_in_httpx_logs_and_errors(
         err_detector.detect(frame)
     assert secret_key not in str(exc_info.value)
     assert "[REDACTED]" in str(exc_info.value)
+
+
+def test_onnx_detector_serializes_lazy_initialization_across_concurrent_threads() -> None:
+    first_entered_get_inputs = threading.Event()
+    release_get_inputs = threading.Event()
+
+    class SlowMetadataSession:
+        def __init__(self) -> None:
+            self.get_inputs_calls = 0
+
+        def get_inputs(self):
+            self.get_inputs_calls += 1
+            first_entered_get_inputs.set()
+            assert release_get_inputs.wait(timeout=3.0)
+            return [SimpleNamespace(name="images")]
+
+        def get_outputs(self):
+            time.sleep(0.05)
+            return [SimpleNamespace(shape=(1, 6, 84))]
+
+        def get_modelmeta(self):
+            time.sleep(0.05)
+            return SimpleNamespace(custom_metadata_map={"names": '{"0": "ball", "1": "player"}'})
+
+        def run(self, output_names, input_feed):
+            assert "images" in input_feed
+            # Tensor shape [1, 6, 6] is ambiguous without _output_shape and _class_names
+            tensor = np.zeros((1, 6, 6), dtype=np.float32)
+            tensor[0, :4, 0] = [320.0, 320.0, 80.0, 120.0]
+            tensor[0, 4, 0] = 0.90  # class 0 -> ball from metadata
+            return [tensor]
+
+    session = SlowMetadataSession()
+    detector = OnnxDetector(
+        model_path="dummy.onnx",
+        confidence=0.3,
+        iou=0.45,
+        class_map=ClassMapAdapter({"ball": "ball", "player": "player"}),
+        input_size=640,
+        session=session,
+    )
+    frame = np.zeros((640, 640, 3), dtype=np.uint8)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        future_a = pool.submit(detector.detect, frame)
+        assert first_entered_get_inputs.wait(timeout=3.0)
+        future_b = pool.submit(detector.detect, frame)
+        time.sleep(0.05)
+        release_get_inputs.set()
+        dets_a = future_a.result(timeout=5.0)
+        dets_b = future_b.result(timeout=5.0)
+
+    assert session.get_inputs_calls == 1
+    assert detector._output_shape == (1, 6, 84)
+    assert detector._class_names == {0: "ball", 1: "player"}
+    for dets in (dets_a, dets_b):
+        assert len(dets) == 1
+        assert dets[0].role == CanonicalRole.BALL
+        assert dets[0].raw_class_name == "ball"

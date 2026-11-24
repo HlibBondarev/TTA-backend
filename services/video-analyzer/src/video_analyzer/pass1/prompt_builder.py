@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.schemas.request import MatchSnapshot
 
@@ -17,6 +19,11 @@ class Pass1PromptBuilder:
 
         tracked_caps = tracked.cap_color_hint or "unknown"
         opponent_caps = opponent.cap_color_hint or "unknown"
+        chunk_duration = max(
+            Decimal("0.0"),
+            Decimal(str(chunk.end_sec)) - Decimal(str(chunk.start_sec)),
+        )
+        chunk_duration_str = f"{chunk_duration:f}"
 
         definitions_lines = [
             (
@@ -44,10 +51,10 @@ class Pass1PromptBuilder:
             f"- Opponent Team ({opponent.side}): {opponent.name} "
             f"(cap color hint: {opponent_caps})\n"
             f"- Chunk Timeline Window: {chunk.start_sec:.2f}s to {chunk.end_sec:.2f}s "
-            f"(duration {chunk.end_sec - chunk.start_sec:.2f}s)\n\n"
+            f"(duration {chunk_duration_str}s)\n\n"
             "### Critical Rules\n"
             "1. ALWAYS return `time_sec` relative to the START of THIS chunk (0.0 to "
-            f"{chunk.end_sec - chunk.start_sec:.2f}).\n"
+            f"{chunk_duration_str}).\n"
             "2. ALWAYS identify actions using the exact `promptCode` from the catalog below. "
             "NEVER invent codes or confuse positive vs negative definitions with the same name "
             "(for example, positive Goal vs negative Goal Conceded).\n"

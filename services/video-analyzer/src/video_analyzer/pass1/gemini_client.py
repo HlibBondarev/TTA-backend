@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from abc import ABC, abstractmethod
 from typing import Any
+
+from pydantic import ValidationError
 
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.models import Pass1ChunkResult
@@ -14,6 +17,7 @@ from video_analyzer.schemas.draft import TimeAnchorType
 from video_analyzer.schemas.request import MatchSnapshot
 
 logger = logging.getLogger(__name__)
+_REQUIRED_PASS1_KEYS: frozenset[str] = frozenset({"period_events", "time_anchors"})
 
 
 def _build_pass1_response_schema(types_module: Any) -> Any:
@@ -116,7 +120,7 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
         uploaded_file = client.files.upload(file=str(chunk.path))
         try:
             active_file = self._wait_until_active(client, uploaded_file)
-            response = self._generate_with_retry(
+            return self._generate_with_retry(
                 client=client,
                 uploaded_file=active_file,
                 prompt=prompt,
@@ -125,18 +129,8 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
                     response_schema=_build_pass1_response_schema(types),
                     temperature=0.1,
                 ),
+                chunk_index=chunk.index,
             )
-            parsed = getattr(response, "parsed", None)
-            if isinstance(parsed, Pass1ChunkResult):
-                return parsed
-            if isinstance(parsed, dict):
-                return Pass1ChunkResult.model_validate(parsed)
-            raw_text = getattr(response, "text", None)
-            if not isinstance(raw_text, str) or not raw_text.strip():
-                raise RuntimeError(
-                    f"Gemini Pass 1 returned an empty response for chunk {chunk.index}."
-                )
-            return Pass1ChunkResult.model_validate_json(raw_text)
         finally:
             self._safe_delete_file(client, uploaded_file)
 
@@ -177,16 +171,18 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
         uploaded_file: Any,
         prompt: str,
         config: Any,
+        chunk_index: int,
         max_attempts: int = 3,
-    ) -> Any:
+    ) -> Pass1ChunkResult:
         last_exc: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
-                return client.models.generate_content(
+                response = client.models.generate_content(
                     model=self._model_name,
                     contents=[uploaded_file, prompt],
                     config=config,
                 )
+                return self._parse_response(response, chunk_index)
             except Exception as exc:
                 last_exc = exc
                 if attempt == max_attempts:
@@ -201,7 +197,52 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
                 )
                 time.sleep(sleep_sec)
         assert last_exc is not None
-        raise last_exc
+        if isinstance(last_exc, RuntimeError):
+            raise last_exc
+        raise RuntimeError(
+            f"Gemini Pass 1 failed for chunk {chunk_index} after {max_attempts} attempts: "
+            f"{last_exc}"
+        ) from last_exc
+
+    @classmethod
+    def _parse_response(cls, response: Any, chunk_index: int) -> Pass1ChunkResult:
+        parsed = getattr(response, "parsed", None)
+        if isinstance(parsed, Pass1ChunkResult):
+            return parsed
+        if isinstance(parsed, dict):
+            return cls._validate_payload_dict(parsed, chunk_index)
+
+        raw_text = getattr(response, "text", None)
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            raise RuntimeError(
+                f"Gemini Pass 1 returned an empty response for chunk {chunk_index}."
+            )
+        try:
+            payload = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Gemini Pass 1 returned invalid JSON for chunk {chunk_index}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                f"Gemini Pass 1 returned a non-object JSON payload for chunk {chunk_index}."
+            )
+        return cls._validate_payload_dict(payload, chunk_index)
+
+    @staticmethod
+    def _validate_payload_dict(payload: dict[str, Any], chunk_index: int) -> Pass1ChunkResult:
+        missing_keys = sorted(_REQUIRED_PASS1_KEYS - payload.keys())
+        if missing_keys:
+            raise RuntimeError(
+                f"Gemini Pass 1 response for chunk {chunk_index} is missing required keys: "
+                f"{', '.join(missing_keys)}."
+            )
+        try:
+            return Pass1ChunkResult.model_validate(payload)
+        except ValidationError as exc:
+            raise RuntimeError(
+                f"Gemini Pass 1 response failed schema validation for chunk {chunk_index}: {exc}"
+            ) from exc
 
     @staticmethod
     def _safe_delete_file(client: Any, uploaded_file: Any) -> None:
