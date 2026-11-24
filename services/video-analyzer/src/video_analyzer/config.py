@@ -13,6 +13,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 INSECURE_PLACEHOLDER_API_KEYS: frozenset[str] = frozenset({"change-me-local-dev-key"})
 
+DEFAULT_GEMINI_MODEL: str = "gemini-4-hydrogen"
+
+# Default estimated USD pricing per 1,000,000 tokens (thinking tokens billed at output rate).
+# Override or extend via GEMINI_MODEL_PRICING_USD_PER_1M.
+DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M: dict[str, dict[str, float]] = {
+    "gemini-4-hydrogen": {"input": 0.50, "output": 3.00},
+    "gemini-3.8-flash": {"input": 0.50, "output": 3.00},
+    "gemini-3.6-flash": {"input": 0.30, "output": 2.50},
+    "gemini-3.5-flash-lite": {"input": 0.10, "output": 0.40},
+}
+
 DEFAULT_CLASS_MAP: dict[str, str] = {
     "White team": "player",
     "Blue team": "player",
@@ -43,9 +54,12 @@ class Settings(BaseSettings):
 
     # Gemini API
     gemini_api_key: str = Field(default="")
-    gemini_pass1_model: str = Field(default="gemini-2.5-flash")
-    gemini_pass2_model: str = Field(default="gemini-2.5-flash")
+    gemini_pass1_model: str = Field(default=DEFAULT_GEMINI_MODEL)
+    gemini_pass2_model: str = Field(default=DEFAULT_GEMINI_MODEL)
     gemini_request_timeout_sec: float = Field(default=180.0, gt=0)
+    gemini_model_pricing_usd_per_1m: dict[str, dict[str, float]] | str = Field(
+        default_factory=lambda: _default_gemini_pricing_table()
+    )
 
     # Pluggable Object Detector
     detector_provider: Literal["roboflow", "local_yolo", "onnx"] = Field(default="roboflow")
@@ -100,6 +114,11 @@ class Settings(BaseSettings):
             return value.strip().lower()
         return value
 
+    @field_validator("gemini_model_pricing_usd_per_1m", mode="before")
+    @classmethod
+    def _parse_gemini_model_pricing(cls, value: Any) -> dict[str, dict[str, float]]:
+        return parse_gemini_model_pricing(value)
+
     @field_validator("detector_class_map", mode="before")
     @classmethod
     def _parse_class_map(cls, value: Any) -> dict[str, str]:
@@ -152,6 +171,13 @@ class Settings(BaseSettings):
             if origin not in normalized:
                 normalized.append(origin)
         return normalized
+
+    @property
+    def resolved_gemini_model_pricing(self) -> dict[str, dict[str, float]]:
+        """Return the normalized per-1M-token USD pricing table for Gemini models."""
+        if isinstance(self.gemini_model_pricing_usd_per_1m, dict):
+            return self.gemini_model_pricing_usd_per_1m
+        return parse_gemini_model_pricing(self.gemini_model_pricing_usd_per_1m)
 
     @property
     def resolved_class_map(self) -> dict[str, str]:
@@ -268,3 +294,73 @@ def _parse_origin(raw_url: str, *, allow_path_and_query: bool) -> str:
     port = parsed.port if parsed.port is not None else (80 if scheme == "http" else 443)
     formatted_host = f"[{hostname}]" if ":" in hostname else hostname
     return f"{scheme}://{formatted_host}:{port}"
+
+
+def normalize_gemini_model_name(model_name: str) -> str:
+    """Normalize a Gemini model identifier by stripping whitespace and optional 'models/' prefix."""
+    normalized = model_name.strip().lower()
+    if normalized.startswith("models/"):
+        normalized = normalized[len("models/") :].strip()
+    return normalized
+
+
+def _default_gemini_pricing_table() -> dict[str, dict[str, float]]:
+    return {
+        normalize_gemini_model_name(model): {"input": rates["input"], "output": rates["output"]}
+        for model, rates in DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M.items()
+    }
+
+
+def _load_pricing_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        raise ValueError("Unsupported type for GEMINI_MODEL_PRICING_USD_PER_1M.")
+    stripped = value.strip()
+    if not stripped:
+        return {}
+    candidate_path = Path(stripped)
+    if not stripped.startswith("{") and candidate_path.is_file():
+        loaded = json.loads(candidate_path.read_text(encoding="utf-8"))
+    else:
+        loaded = json.loads(stripped)
+    if not isinstance(loaded, dict):
+        raise ValueError(
+            "GEMINI_MODEL_PRICING_USD_PER_1M must be a JSON object or path to a JSON file."
+        )
+    return loaded
+
+
+def _validate_model_rate_entry(model_key: str, raw_rates: Any) -> dict[str, float]:
+    if not isinstance(raw_rates, dict):
+        raise ValueError(
+            f"Pricing entry for model '{model_key}' must be an object with 'input' and 'output'."
+        )
+    validated: dict[str, float] = {}
+    for rate_key in ("input", "output"):
+        raw_val = raw_rates.get(rate_key)
+        if isinstance(raw_val, bool) or not isinstance(raw_val, (int, float)):
+            raise ValueError(
+                f"Pricing entry for model '{model_key}' must include numeric '{rate_key}' rate."
+            )
+        rate = float(raw_val)
+        if rate < 0.0:
+            raise ValueError(
+                f"Pricing '{rate_key}' rate for model '{model_key}' cannot be negative."
+            )
+        validated[rate_key] = rate
+    return validated
+
+
+def parse_gemini_model_pricing(value: Any) -> dict[str, dict[str, float]]:
+    """Parse and merge Gemini per-1M-token USD pricing overrides onto default model rates."""
+    merged = _default_gemini_pricing_table()
+    if value is None or value == "":
+        return merged
+    raw_mapping = _load_pricing_mapping(value)
+    for raw_model, raw_rates in raw_mapping.items():
+        normalized_model = normalize_gemini_model_name(str(raw_model))
+        if not normalized_model:
+            raise ValueError("GEMINI_MODEL_PRICING_USD_PER_1M cannot contain an empty model name.")
+        merged[normalized_model] = _validate_model_rate_entry(normalized_model, raw_rates)
+    return merged

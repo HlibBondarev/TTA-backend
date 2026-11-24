@@ -10,8 +10,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from video_analyzer.config import Settings
+from video_analyzer.config import DEFAULT_GEMINI_MODEL, Settings
 from video_analyzer.pass2.crop_selector import SelectedCrops
+from video_analyzer.schemas.draft import GeminiTokenUsage
+from video_analyzer.usage import extract_usage_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,7 @@ class CapResolutionResult(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     candidate_scores: dict[int, float] = Field(default_factory=dict)
     reasoning: str = ""
+    token_usage: GeminiTokenUsage | None = Field(default=None, exclude=True)
 
 
 class _GeminiTileReading(BaseModel):
@@ -112,7 +115,7 @@ class GeminiCropGridCapResolver(BaseCapResolver):
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-2.5-flash",
+        model_name: str = DEFAULT_GEMINI_MODEL,
         timeout_sec: float = 180.0,
         client: Any = None,
     ) -> None:
@@ -175,7 +178,9 @@ class GeminiCropGridCapResolver(BaseCapResolver):
                 raise RuntimeError("Gemini Pass 2 cap resolver returned an empty response.")
             parsed = _GeminiCapGridResponse.model_validate_json(raw_text)
 
-        return self._to_result(parsed, set(allowed_cap_numbers))
+        usage = extract_usage_metadata(response)
+        result = self._to_result(parsed, set(allowed_cap_numbers))
+        return result.model_copy(update={"token_usage": usage})
 
     def _get_client(self) -> Any:
         if self._client is None:

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Annotated
 
 from pydantic import BaseModel, Field
+from pydantic.json_schema import SkipJsonSchema
 
-from video_analyzer.schemas.draft import TimeAnchorType
+from video_analyzer.schemas.draft import GeminiTokenUsage, TimeAnchorType
 from video_analyzer.schemas.request import EventDefinitionSnapshot
 
 
@@ -72,6 +74,10 @@ class Pass1ChunkResult(BaseModel):
 
     period_events: list[Pass1RawEvent] = Field(default_factory=list)
     time_anchors: list[Pass1RawAnchor] = Field(default_factory=list)
+    token_usage: Annotated[GeminiTokenUsage | None, SkipJsonSchema()] = Field(
+        default=None,
+        exclude=True,
+    )
 
 
 @dataclass(slots=True)

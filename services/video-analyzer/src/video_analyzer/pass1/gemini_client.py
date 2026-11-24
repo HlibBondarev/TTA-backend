@@ -10,11 +10,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from video_analyzer.config import DEFAULT_GEMINI_MODEL
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.models import Pass1ChunkResult
 from video_analyzer.pass1.prompt_builder import Pass1PromptBuilder
 from video_analyzer.schemas.draft import TimeAnchorType
 from video_analyzer.schemas.request import MatchSnapshot
+from video_analyzer.usage import extract_usage_metadata
 
 logger = logging.getLogger(__name__)
 _REQUIRED_PASS1_KEYS: frozenset[str] = frozenset({"period_events", "time_anchors"})
@@ -97,7 +99,7 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-2.5-flash",
+        model_name: str = DEFAULT_GEMINI_MODEL,
         timeout_sec: float = 180.0,
         prompt_builder: Pass1PromptBuilder | None = None,
         client: Any = None,
@@ -206,11 +208,14 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
 
     @classmethod
     def _parse_response(cls, response: Any, chunk_index: int) -> Pass1ChunkResult:
+        usage = extract_usage_metadata(response)
         parsed = getattr(response, "parsed", None)
         if isinstance(parsed, Pass1ChunkResult):
-            return parsed
+            return parsed.model_copy(update={"token_usage": usage})
         if isinstance(parsed, dict):
-            return cls._validate_payload_dict(parsed, chunk_index)
+            return cls._validate_payload_dict(parsed, chunk_index).model_copy(
+                update={"token_usage": usage}
+            )
 
         raw_text = getattr(response, "text", None)
         if not isinstance(raw_text, str) or not raw_text.strip():
@@ -227,7 +232,9 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
             raise RuntimeError(
                 f"Gemini Pass 1 returned a non-object JSON payload for chunk {chunk_index}."
             )
-        return cls._validate_payload_dict(payload, chunk_index)
+        return cls._validate_payload_dict(payload, chunk_index).model_copy(
+            update={"token_usage": usage}
+        )
 
     @staticmethod
     def _validate_payload_dict(payload: dict[str, Any], chunk_index: int) -> Pass1ChunkResult:

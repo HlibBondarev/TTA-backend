@@ -38,12 +38,14 @@ from video_analyzer.pipeline.timestamp_aligner import (
 from video_analyzer.schemas.draft import (
     DraftEvent,
     DraftTimeAnchor,
+    GeminiTokenUsage,
     ModelMetadata,
     PipelineDiagnostics,
     VideoAnalysisDraft,
     VideoMetadata,
 )
 from video_analyzer.schemas.request import AnalyzeJobRequest
+from video_analyzer.usage import build_gemini_usage_diagnostics
 
 logger = logging.getLogger(__name__)
 _CAP_COLOR_HINT_MISMATCH_REASON = "CAP_COLOR_HINT_MISMATCH"
@@ -167,21 +169,34 @@ class VideoAnalysisOrchestrator:
                     for a in anchor_cands
                 ]
 
-                draft_events, pass2_windows, resolved_count, unresolved_count, pass2_timings = (
-                    self._run_pass2(
-                        video_path=video_path,
-                        probe=probe,
-                        request=request,
-                        candidates=events_cand,
-                        video_start_utc=video_start_utc,
-                        work_dir=work_dir,
-                        cancel_event=cancel_event,
-                        progress_callback=progress_callback,
-                        debug_dir=debug_dir,
-                        warnings=warnings,
-                    )
+                (
+                    draft_events,
+                    pass2_windows,
+                    resolved_count,
+                    unresolved_count,
+                    pass2_timings,
+                    pass2_usages,
+                ) = self._run_pass2(
+                    video_path=video_path,
+                    probe=probe,
+                    request=request,
+                    candidates=events_cand,
+                    video_start_utc=video_start_utc,
+                    work_dir=work_dir,
+                    cancel_event=cancel_event,
+                    progress_callback=progress_callback,
+                    debug_dir=debug_dir,
+                    warnings=warnings,
                 )
                 timings.update(pass2_timings)
+
+                gemini_usage = build_gemini_usage_diagnostics(
+                    pass1_model=self._settings.gemini_pass1_model,
+                    pass1_usages=[res.token_usage for _, res in chunk_results],
+                    pass2_model=self._settings.gemini_pass2_model,
+                    pass2_usages=pass2_usages,
+                    pricing_table=self._settings.resolved_gemini_model_pricing,
+                )
 
                 presences = synthesize_closed_presences(
                     events=draft_events,
@@ -239,6 +254,7 @@ class VideoAnalysisOrchestrator:
                     unresolved_actor_count=unresolved_count,
                     warnings=warnings,
                     timings_sec=timings,
+                    gemini_usage=gemini_usage,
                 ),
             )
 
@@ -294,7 +310,14 @@ class VideoAnalysisOrchestrator:
         progress_callback: Callable[[str, int], None] | None,
         debug_dir: Path | None,
         warnings: list[str],
-    ) -> tuple[list[DraftEvent], int, int, int, dict[str, float]]:
+    ) -> tuple[
+        list[DraftEvent],
+        int,
+        int,
+        int,
+        dict[str, float],
+        list[GeminiTokenUsage | None],
+    ]:
         opts = request.analysis_options
         allowed_caps = sorted(
             {
@@ -306,6 +329,7 @@ class VideoAnalysisOrchestrator:
         cap_color_hint = request.match_snapshot.tracked_team.cap_color_hint
 
         draft_events: list[DraftEvent] = []
+        pass2_usages: list[GeminiTokenUsage | None] = []
         windows_processed = 0
         resolved_count = 0
         unresolved_count = 0
@@ -338,6 +362,8 @@ class VideoAnalysisOrchestrator:
                     warnings=warnings,
                 )
                 cap_result = win_outcome.cap_result
+                if cap_result is not None and cap_result.token_usage is not None:
+                    pass2_usages.append(cap_result.token_usage)
                 track_elapsed += win_outcome.track_elapsed_sec
                 cap_elapsed += win_outcome.cap_elapsed_sec
                 has_spatial_hint = win_outcome.has_spatial_hint
@@ -402,6 +428,7 @@ class VideoAnalysisOrchestrator:
                 "pass2ExtractAndTrack": round(track_elapsed, 3),
                 "pass2CapResolution": round(cap_elapsed, 3),
             },
+            pass2_usages,
         )
 
     def _inspect_event_window(

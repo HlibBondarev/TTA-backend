@@ -28,7 +28,7 @@ from video_analyzer.pass2.cap_resolver import (
     LocalOcrCapResolver,
 )
 from video_analyzer.pipeline.orchestrator import JobCancelledError, VideoAnalysisOrchestrator
-from video_analyzer.schemas.draft import TimeAnchorType
+from video_analyzer.schemas.draft import GeminiTokenUsage, TimeAnchorType
 from video_analyzer.schemas.request import AnalyzeJobRequest, MatchSnapshot
 
 
@@ -518,3 +518,116 @@ def test_orchestrator_checks_cancellation_before_reporting_completed(
         )
 
     assert ("completed", 100) not in reported
+
+
+def test_orchestrator_aggregates_gemini_usage_and_cost_in_diagnostics_and_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    class UsagePass1Analyzer(MockPass1Analyzer):
+        def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+            base = super().analyze_chunk(snapshot, chunk)
+            return base.model_copy(
+                update={
+                    "token_usage": GeminiTokenUsage(
+                        call_count=1,
+                        prompt_tokens=200_000,
+                        candidates_tokens=10_000,
+                        thoughts_tokens=5_000,
+                        cached_content_tokens=20_000,
+                        total_tokens=215_000,
+                    )
+                }
+            )
+
+    class UsageCapResolver(MockCapResolver):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            base = super().resolve(selected_crops, allowed_cap_numbers, cap_color_hint)
+            return base.model_copy(
+                update={
+                    "token_usage": GeminiTokenUsage(
+                        call_count=1,
+                        prompt_tokens=50_000,
+                        candidates_tokens=2_000,
+                        thoughts_tokens=1_000,
+                        cached_content_tokens=0,
+                        total_tokens=53_000,
+                    )
+                }
+            )
+
+    settings = Settings(
+        _env_file=None,
+        internal_api_key="test-key",
+        work_dir=str(tmp_path),
+        gemini_pass1_model="gemini-4-hydrogen",
+        gemini_pass2_model="gemini-4-hydrogen",
+    )
+    orchestrator = VideoAnalysisOrchestrator(
+        settings=settings,
+        ffmpeg_client=MockFFmpegClient(),  # type: ignore[arg-type]
+        pass1_analyzer=UsagePass1Analyzer(),
+        detector=MockDetector(),
+        cap_resolver=UsageCapResolver(),
+    )
+
+    draft = orchestrator.run(sample_job_request)
+    payload = draft.model_dump(mode="json", by_alias=True)
+    gemini_usage = payload["diagnostics"]["geminiUsage"]
+
+    assert payload["modelMetadata"]["pass1VlmModel"] == "gemini-4-hydrogen"
+    assert gemini_usage["pass1"]["model"] == "gemini-4-hydrogen"
+    assert gemini_usage["pass1"]["usage"]["callCount"] == 1
+    assert gemini_usage["pass1"]["usage"]["promptTokens"] == 200_000
+    assert gemini_usage["pass2"]["usage"]["callCount"] == 2
+    assert gemini_usage["pass2"]["usage"]["promptTokens"] == 100_000
+    assert gemini_usage["total"]["callCount"] == 3
+    assert gemini_usage["total"]["promptTokens"] == 300_000
+    assert gemini_usage["total"]["candidatesTokens"] == 14_000
+    assert gemini_usage["total"]["thoughtsTokens"] == 7_000
+    assert gemini_usage["total"]["cachedContentTokens"] == 20_000
+    assert gemini_usage["total"]["totalTokens"] == 321_000
+
+    # 300k * $0.50 / 1M = $0.15; (14k + 7k) * $3.00 / 1M = $0.063; total = $0.213
+    est_cost = gemini_usage["estimatedCost"]
+    assert est_cost["isEstimate"] is True
+    assert est_cost["pricingConfigured"] is True
+    assert est_cost["inputCostUsd"] == pytest.approx(0.15)
+    assert est_cost["outputCostUsd"] == pytest.approx(0.063)
+    assert est_cost["totalCostUsd"] == pytest.approx(0.213)
+
+    video = tmp_path / "sample.mp4"
+    video.write_bytes(b"video")
+    out_file = tmp_path / "out" / "draft_usage.json"
+    snapshot_file = (
+        Path(__file__).resolve().parents[1]
+        / "sample_snapshots"
+        / "waterpolo_default_snapshot.json"
+    )
+    monkeypatch.setattr(
+        "video_analyzer.cli.build_default_orchestrator",
+        lambda _settings: VideoAnalysisOrchestrator(
+            settings=settings,
+            ffmpeg_client=MockFFmpegClient(),  # type: ignore[arg-type]
+            pass1_analyzer=UsagePass1Analyzer(),
+            detector=MockDetector(),
+            cap_resolver=UsageCapResolver(),
+        ),
+    )
+    exit_code = cli_main(
+        [
+            "analyze",
+            "--video",
+            str(video),
+            "--snapshot",
+            str(snapshot_file),
+            "--out",
+            str(out_file),
+        ]
+    )
+    assert exit_code == 0
+    stdout = capsys.readouterr().out
+    assert "Gemini usage: calls=3" in stdout
+    assert "~$0.213000 USD" in stdout

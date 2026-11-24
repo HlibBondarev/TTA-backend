@@ -237,3 +237,69 @@ def test_pass1_prompt_builder_uses_full_unrounded_chunk_duration(
     prompt_sub = builder.build_chunk_prompt(sample_snapshot, chunk_sub)
     assert "(duration 15.2s)" in prompt_sub
     assert "(0.0 to 15.2)" in prompt_sub
+
+
+def test_gemini_clients_extract_usage_metadata_from_responses(
+    sample_snapshot: MatchSnapshot,
+    tmp_path: Path,
+) -> None:
+    chunk = VideoChunk(index=0, start_sec=0.0, end_sec=60.0, path=tmp_path / "c0.mp4")
+    pass1_usage_meta = SimpleNamespace(
+        prompt_token_count=4000,
+        candidates_token_count=350,
+        thoughts_token_count=150,
+        cached_content_token_count=500,
+        total_token_count=4500,
+    )
+    analyzer = _build_analyzer_with_response(
+        SimpleNamespace(
+            parsed=None,
+            text='{"period_events": [], "time_anchors": []}',
+            usage_metadata=pass1_usage_meta,
+        )
+    )
+    pass1_res = analyzer.analyze_chunk(sample_snapshot, chunk)
+    assert pass1_res.token_usage is not None
+    assert pass1_res.token_usage.call_count == 1
+    assert pass1_res.token_usage.prompt_tokens == 4000
+    assert pass1_res.token_usage.candidates_tokens == 350
+    assert pass1_res.token_usage.thoughts_tokens == 150
+    assert pass1_res.token_usage.cached_content_tokens == 500
+    assert pass1_res.token_usage.total_tokens == 4500
+
+    pass2_usage_meta = SimpleNamespace(
+        prompt_token_count=800,
+        candidates_token_count=90,
+        thoughts_token_count=30,
+        cached_content_token_count=0,
+        total_token_count=920,
+    )
+    fake_pass2_client = SimpleNamespace(
+        models=SimpleNamespace(
+            generate_content=lambda **kwargs: SimpleNamespace(
+                parsed=None,
+                text=(
+                    '{"tile_readings": [{"tile_index": 1, "cap_number": 7, "confidence": 0.95}], '
+                    '"consensus_cap_number": 7, "confidence": 0.95, '
+                    '"candidate_numbers": [{"cap_number": 7, "score": 0.95}], '
+                    '"reasoning": "Clear cap #7"}'
+                ),
+                usage_metadata=pass2_usage_meta,
+            )
+        )
+    )
+    resolver = GeminiCropGridCapResolver(api_key="test-key", client=fake_pass2_client)
+    crop = np.zeros((32, 32, 3), dtype=np.uint8)
+    selected = SelectedCrops(
+        crops=[CropCandidate(0, 5.0, crop, 100.0)],
+        contact_sheet_jpeg=b"jpeg",
+        contact_sheet_bgr=crop,
+    )
+    cap_res = resolver.resolve(selected, allowed_cap_numbers=[7, 9])
+    assert cap_res.resolved_cap_number == 7
+    assert cap_res.token_usage is not None
+    assert cap_res.token_usage.call_count == 1
+    assert cap_res.token_usage.prompt_tokens == 800
+    assert cap_res.token_usage.candidates_tokens == 90
+    assert cap_res.token_usage.thoughts_tokens == 30
+    assert cap_res.token_usage.total_tokens == 920
