@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import random
+import time
+from collections.abc import Callable
 from typing import Any
 
 import cv2
@@ -16,9 +19,20 @@ from video_analyzer.logging_utils import configure_safe_http_logging, redact_sen
 
 logger = logging.getLogger(__name__)
 
+_HTTP_TOO_MANY_REQUESTS = 429
+_HTTP_SERVER_ERROR_MIN = 500
+_MAX_BACKOFF_SEC = 30.0
+
 
 class RoboflowDetector(BaseObjectDetector):
-    """Object detector calling Roboflow Inference API (hosted or local Inference server)."""
+    """Object detector calling Roboflow Inference API (hosted or local Inference server).
+
+    Transient failures (timeouts, transport errors, HTTP 429 and 5xx) are retried with jittered
+    exponential backoff; other HTTP errors fail immediately. Calls are thread-safe, so the
+    orchestrator may overlap them up to ``DETECTOR_MAX_CONCURRENCY``.
+    """
+
+    supports_concurrent_inference = True
 
     def __init__(
         self,
@@ -31,7 +45,14 @@ class RoboflowDetector(BaseObjectDetector):
         timeout_sec: float = 30.0,
         allow_insecure_local_http: bool = False,
         http_client: httpx.Client | None = None,
+        max_retries: int = 3,
+        retry_base_sec: float = 1.0,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        if max_retries < 0:
+            raise ValueError("max_retries must be non-negative.")
+        if retry_base_sec <= 0:
+            raise ValueError("retry_base_sec must be positive.")
         configure_safe_http_logging()
         self._model_id = model_id.strip("/")
         self._api_key = api_key.strip()
@@ -43,6 +64,9 @@ class RoboflowDetector(BaseObjectDetector):
         self._iou = iou
         self._class_map = class_map
         self._timeout_sec = timeout_sec
+        self._max_retries = max_retries
+        self._retry_base_sec = retry_base_sec
+        self._sleep = sleep
         self._owns_client = http_client is None
         self._client = http_client or httpx.Client(timeout=timeout_sec, follow_redirects=False)
 
@@ -74,20 +98,56 @@ class RoboflowDetector(BaseObjectDetector):
             "overlap": round(self._iou * 100.0, 2),
         }
         files = {"file": ("frame.jpg", encoded.tobytes(), "image/jpeg")}
-        try:
-            response = self._client.post(
-                endpoint,
-                params=params,
-                files=files,
-                follow_redirects=False,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise RuntimeError(
-                f"Roboflow inference request failed: {redact_sensitive_text(str(exc))}"
-            ) from None
+        response = self._post_with_retry(endpoint, params, files)
         payload = response.json()
         return self.parse_predictions(payload, frame_width=width, frame_height=height)
+
+    def _post_with_retry(
+        self,
+        endpoint: str,
+        params: dict[str, Any],
+        files: dict[str, Any],
+    ) -> httpx.Response:
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = self._client.post(
+                    endpoint,
+                    params=params,
+                    files=files,
+                    follow_redirects=False,
+                )
+                response.raise_for_status()
+                return response
+            except httpx.HTTPError as exc:
+                if attempt >= self._max_retries or not self._is_retriable(exc):
+                    raise RuntimeError(
+                        f"Roboflow inference request failed: {redact_sensitive_text(str(exc))}"
+                    ) from None
+                delay = self._backoff_delay(attempt, exc)
+                logger.warning(
+                    "Roboflow request failed (%s); retry %d/%d in %.1fs.",
+                    type(exc).__name__,
+                    attempt + 1,
+                    self._max_retries,
+                    delay,
+                )
+                self._sleep(delay)
+        raise AssertionError("unreachable: retry loop always returns or raises")
+
+    @staticmethod
+    def _is_retriable(exc: httpx.HTTPError) -> bool:
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code
+            return status == _HTTP_TOO_MANY_REQUESTS or status >= _HTTP_SERVER_ERROR_MIN
+        return isinstance(exc, httpx.TransportError)
+
+    def _backoff_delay(self, attempt: int, exc: httpx.HTTPError) -> float:
+        if isinstance(exc, httpx.HTTPStatusError):
+            retry_after = exc.response.headers.get("retry-after", "")
+            if retry_after.strip().isdigit():
+                return min(_MAX_BACKOFF_SEC, float(retry_after))
+        exponential = min(_MAX_BACKOFF_SEC, self._retry_base_sec * (2.0**attempt))
+        return exponential * (0.5 + 0.5 * random.random())
 
     def parse_predictions(
         self,

@@ -21,28 +21,133 @@ from video_analyzer.schemas.draft import GeminiTokenUsage
 from video_analyzer.usage import (
     aggregate_token_usage,
     build_gemini_usage_diagnostics,
+    estimate_call_cost_usd,
     estimate_stage_cost,
     extract_usage_metadata,
 )
 
 
 def test_default_gemini_models_and_independent_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GEMINI_PASS1_MODEL", raising=False)
-    monkeypatch.delenv("GEMINI_PASS2_MODEL", raising=False)
-    monkeypatch.delenv("GEMINI_MODEL_PRICING_USD_PER_1M", raising=False)
+    for name in (
+        "GEMINI_PASS1_MODEL",
+        "GEMINI_VERIFIER_MODEL",
+        "GEMINI_PASS2_MODEL",
+        "GEMINI_MODEL_PRICING_USD_PER_1M",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
     defaults = Settings(_env_file=None)
     assert defaults.gemini_pass1_model == "gemini-4-hydrogen"
-    assert defaults.gemini_pass2_model == "gemini-4-hydrogen"
+    assert defaults.gemini_verifier_model == "gemini-4-hydrogen"
+    assert defaults.gemini_pass2_model == "gemini-3.5-flash-lite"
     assert DEFAULT_GEMINI_MODEL == "gemini-4-hydrogen"
     assert GeminiPass1Analyzer(api_key="test-key")._model_name == "gemini-4-hydrogen"
-    assert GeminiCropGridCapResolver(api_key="test-key")._model_name == "gemini-4-hydrogen"
+    assert GeminiCropGridCapResolver(api_key="test-key")._model_name == "gemini-3.5-flash-lite"
 
     monkeypatch.setenv("GEMINI_PASS1_MODEL", "gemini-3.8-flash")
-    monkeypatch.setenv("GEMINI_PASS2_MODEL", "gemini-3.5-flash-lite")
+    monkeypatch.setenv("GEMINI_VERIFIER_MODEL", "gemini-4-neon")
+    monkeypatch.setenv("GEMINI_PASS2_MODEL", "gemini-4-hydrogen")
     overridden = Settings(_env_file=None)
     assert overridden.gemini_pass1_model == "gemini-3.8-flash"
-    assert overridden.gemini_pass2_model == "gemini-3.5-flash-lite"
+    assert overridden.gemini_verifier_model == "gemini-4-neon"
+    assert overridden.gemini_pass2_model == "gemini-4-hydrogen"
+
+
+def test_thinking_level_defaults_and_unset_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "GEMINI_PASS1_THINKING_LEVEL",
+        "GEMINI_VERIFIER_THINKING_LEVEL",
+        "GEMINI_PASS2_THINKING_LEVEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    defaults = Settings(_env_file=None)
+    assert defaults.gemini_pass1_thinking_level == "LOW"
+    assert defaults.gemini_verifier_thinking_level is None
+    assert defaults.gemini_pass2_thinking_level is None
+
+    monkeypatch.setenv("GEMINI_PASS1_THINKING_LEVEL", "none")
+    monkeypatch.setenv("GEMINI_VERIFIER_THINKING_LEVEL", "medium")
+    monkeypatch.setenv("GEMINI_PASS2_THINKING_LEVEL", "")
+    overridden = Settings(_env_file=None)
+    assert overridden.gemini_pass1_thinking_level is None
+    assert overridden.gemini_verifier_thinking_level == "MEDIUM"
+    assert overridden.gemini_pass2_thinking_level is None
+
+    monkeypatch.setenv("GEMINI_PASS1_THINKING_LEVEL", "extreme")
+    with pytest.raises(ValueError):
+        Settings(_env_file=None)
+
+
+def test_pricing_table_covers_all_three_default_model_slots() -> None:
+    table = Settings(_env_file=None).resolved_gemini_model_pricing
+    for model in ("gemini-4-hydrogen", "gemini-4-neon", "gemini-3.5-flash-lite"):
+        assert model in DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M
+        assert table[model]["input"] > 0
+        assert table[model]["output"] > 0
+
+
+def test_budget_settings_default_and_unlimited_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_MAX_CALLS_PER_JOB", raising=False)
+    monkeypatch.delenv("GEMINI_MAX_ESTIMATED_COST_USD", raising=False)
+    defaults = Settings(_env_file=None)
+    assert defaults.gemini_max_calls_per_job == 120
+    assert defaults.gemini_max_estimated_cost_usd == 3.0
+
+    monkeypatch.setenv("GEMINI_MAX_CALLS_PER_JOB", "")
+    monkeypatch.setenv("GEMINI_MAX_ESTIMATED_COST_USD", "none")
+    unlimited = Settings(_env_file=None)
+    assert unlimited.gemini_max_calls_per_job is None
+    assert unlimited.gemini_max_estimated_cost_usd is None
+
+
+def test_usage_diagnostics_include_verifier_slot_and_pass2_model() -> None:
+    pricing = Settings(_env_file=None).resolved_gemini_model_pricing
+    usage = GeminiTokenUsage(
+        call_count=1,
+        prompt_tokens=1_000_000,
+        candidates_tokens=100_000,
+        thoughts_tokens=0,
+        total_tokens=1_100_000,
+    )
+    diagnostics = build_gemini_usage_diagnostics(
+        pass1_model="gemini-4-hydrogen",
+        pass1_usages=[usage],
+        pass2_model="gemini-3.5-flash-lite",
+        pass2_usages=[usage],
+        pricing_table=pricing,
+        verifier_model="gemini-4-neon",
+        verifier_usages=[usage],
+    )
+    assert diagnostics.pass2.model == "gemini-3.5-flash-lite"
+    assert diagnostics.verifier.model == "gemini-4-neon"
+    assert diagnostics.verifier.usage.call_count == 1
+    assert diagnostics.total.call_count == 3
+    # neon: $3.00 in + 0.1M * $15.00 out = $4.50
+    assert diagnostics.verifier.estimated_cost is not None
+    assert diagnostics.verifier.estimated_cost.total_cost_usd == pytest.approx(4.5)
+
+    unused = build_gemini_usage_diagnostics(
+        pass1_model="gemini-4-hydrogen",
+        pass1_usages=[usage],
+        pass2_model="gemini-3.5-flash-lite",
+        pass2_usages=[],
+        pricing_table=pricing,
+        verifier_model="gemini-4-hydrogen",
+    )
+    assert unused.verifier.model == "gemini-4-hydrogen"
+    assert unused.verifier.usage.call_count == 0
+    assert unused.verifier.estimated_cost is None
+
+
+def test_estimate_call_cost_usd_is_zero_without_pricing_or_metadata() -> None:
+    pricing = Settings(_env_file=None).resolved_gemini_model_pricing
+    usage = GeminiTokenUsage(
+        call_count=1, prompt_tokens=1_000_000, candidates_tokens=0, total_tokens=1_000_000
+    )
+    assert estimate_call_cost_usd("gemini-4-hydrogen", usage, pricing) == pytest.approx(0.5)
+    assert estimate_call_cost_usd("unpriced-model", usage, pricing) == 0.0
+    assert estimate_call_cost_usd("gemini-4-hydrogen", GeminiTokenUsage(), pricing) == 0.0
 
 
 def test_pass1_chunk_result_json_schema_excludes_token_usage() -> None:

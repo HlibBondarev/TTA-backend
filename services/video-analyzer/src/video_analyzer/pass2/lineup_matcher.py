@@ -37,7 +37,15 @@ class LineupMatcher:
         has_spatial_hint: bool = True,
         actor_match_tied: bool = False,
         cap_ambiguous: bool = False,
+        pass2_failure_reason: str | None = None,
     ) -> LineupMatchOutcome:
+        """Resolve a candidate to a lineup entry, or explain why it stays unresolved.
+
+        Args:
+            pass2_failure_reason: Specific reason Pass 2 produced no cap reading (see
+                ``Pass2FailureReason``). When omitted and ``cap_result`` is None, the legacy
+                ``NO_PLAYER_TRACKLET_MATCHED`` reason is used.
+        """
         team_lineup = [
             entry for entry in snapshot.lineup if entry.team_id == snapshot.tracked_team.id
         ]
@@ -55,8 +63,9 @@ class LineupMatcher:
             review_reasons.append("AMBIGUOUS_CAP_DETECTION")
 
         if cap_result is None:
-            if "NO_PLAYER_TRACKLET_MATCHED" not in review_reasons:
-                review_reasons.append("NO_PLAYER_TRACKLET_MATCHED")
+            failure_reason = pass2_failure_reason or "NO_PLAYER_TRACKLET_MATCHED"
+            if failure_reason not in review_reasons:
+                review_reasons.append(failure_reason)
             if missing_spatial_hint and "MISSING_ACTOR_SPATIAL_HINT" not in review_reasons:
                 review_reasons.append("MISSING_ACTOR_SPATIAL_HINT")
             return LineupMatchOutcome(

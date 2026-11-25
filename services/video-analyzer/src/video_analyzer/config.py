@@ -15,11 +15,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 INSECURE_PLACEHOLDER_API_KEYS: frozenset[str] = frozenset({"change-me-local-dev-key"})
 
 DEFAULT_GEMINI_MODEL: str = "gemini-4-hydrogen"
+DEFAULT_GEMINI_PASS2_MODEL: str = "gemini-3.5-flash-lite"
+
+ThinkingLevelName = Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"]
+_UNSET_TEXT_VALUES: frozenset[str] = frozenset({"", "none", "null", "unset", "off"})
 
 # Default estimated USD pricing per 1,000,000 tokens (thinking tokens billed at output rate).
 # Override or extend via GEMINI_MODEL_PRICING_USD_PER_1M.
+# The gemini-4-neon rates are taken from secondary reports of the public paid-tier price list;
+# verify them against the official pricing page and override via the env var if they differ.
 DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M: dict[str, dict[str, float]] = {
     "gemini-4-hydrogen": {"input": 0.50, "output": 3.00},
+    "gemini-4-neon": {"input": 3.00, "output": 15.00},
     "gemini-3.8-flash": {"input": 0.50, "output": 3.00},
     "gemini-3.6-flash": {"input": 0.30, "output": 2.50},
     "gemini-3.5-flash-lite": {"input": 0.10, "output": 0.40},
@@ -55,12 +62,31 @@ class Settings(BaseSettings):
 
     # Gemini API
     gemini_api_key: str = Field(default="")
+    # Three model slots. The verifier slot is reserved for the Pass 1 verifier clip (#158).
     gemini_pass1_model: str = Field(default=DEFAULT_GEMINI_MODEL)
-    gemini_pass2_model: str = Field(default=DEFAULT_GEMINI_MODEL)
+    gemini_verifier_model: str = Field(default=DEFAULT_GEMINI_MODEL)
+    gemini_pass2_model: str = Field(default=DEFAULT_GEMINI_PASS2_MODEL)
+    # Per-slot thinking level; unset (None) omits thinking_config from the request entirely.
+    gemini_pass1_thinking_level: ThinkingLevelName | None = Field(default="LOW")
+    gemini_verifier_thinking_level: ThinkingLevelName | None = Field(default=None)
+    gemini_pass2_thinking_level: ThinkingLevelName | None = Field(default=None)
     gemini_request_timeout_sec: float = Field(default=180.0, gt=0)
     gemini_model_pricing_usd_per_1m: dict[str, dict[str, float]] | str = Field(
         default_factory=lambda: _default_gemini_pricing_table()
     )
+
+    # Gemini resilience: per-model RPM pacing, retries, and per-job budget breaker
+    gemini_pass1_rpm: int = Field(default=60, ge=1)
+    gemini_pass2_rpm: int = Field(default=120, ge=1)
+    gemini_max_retries: int = Field(default=3, ge=0, le=10)
+    gemini_retry_base_sec: float = Field(default=2.0, gt=0)
+    gemini_max_calls_per_job: int | None = Field(default=120, ge=1)
+    gemini_max_estimated_cost_usd: float | None = Field(default=3.0, ge=0.0)
+
+    # Pipeline parallelism
+    pass1_max_concurrency: int = Field(default=3, ge=1, le=16)
+    pass2_phase_a_max_concurrency: int = Field(default=4, ge=1, le=16)
+    pass2_phase_b_max_concurrency: int = Field(default=4, ge=1, le=16)
 
     # Pluggable Object Detector
     detector_provider: Literal["roboflow", "local_yolo", "onnx"] = Field(default="roboflow")
@@ -71,6 +97,10 @@ class Settings(BaseSettings):
     detector_class_map: dict[str, str] | str = Field(
         default_factory=lambda: dict(DEFAULT_CLASS_MAP)
     )
+    # Global cap on simultaneous remote detector calls across all Phase A tasks.
+    detector_max_concurrency: int = Field(default=4, ge=1, le=32)
+    # Frames are downscaled to this width for detection; boxes are rescaled to native pixels.
+    detector_input_width: int = Field(default=1280, ge=320)
     detector_onnx_input_size: int = Field(default=640, ge=32)
     detector_onnx_output_layout: Literal["auto", "channels_first", "channels_last", "nms"] = Field(
         default="auto"
@@ -81,6 +111,8 @@ class Settings(BaseSettings):
     roboflow_api_url: str = Field(default="https://detect.roboflow.com")
     roboflow_allow_insecure_local_http: bool = Field(default=False)
     roboflow_timeout_sec: float = Field(default=30.0, gt=0)
+    roboflow_max_retries: int = Field(default=3, ge=0, le=10)
+    roboflow_retry_base_sec: float = Field(default=1.0, gt=0)
 
     # Pass 2 Tracking & Cap Number Resolution
     tracker_type: Literal["botsort"] = Field(default="botsort")
@@ -92,7 +124,40 @@ class Settings(BaseSettings):
     # Media binaries & working storage
     ffmpeg_bin: str = Field(default="ffmpeg")
     ffprobe_bin: str = Field(default="ffprobe")
+    # "auto" lets ffmpeg pick a decoder backend; "none" disables hardware decoding (CI default).
+    ffmpeg_hwaccel: str = Field(default="auto")
+    # "auto" probes `ffmpeg -encoders` (nvenc -> qsv -> amf -> libx264); or name an encoder.
+    ffmpeg_video_encoder: str = Field(default="auto")
     work_dir: str | None = Field(default=None)
+
+    @field_validator(
+        "gemini_pass1_thinking_level",
+        "gemini_verifier_thinking_level",
+        "gemini_pass2_thinking_level",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_thinking_level(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return None if stripped.lower() in _UNSET_TEXT_VALUES else stripped.upper()
+        return value
+
+    @field_validator("gemini_max_calls_per_job", "gemini_max_estimated_cost_usd", mode="before")
+    @classmethod
+    def _empty_budget_means_unlimited(cls, value: Any) -> Any:
+        if isinstance(value, str) and value.strip().lower() in _UNSET_TEXT_VALUES:
+            return None
+        return value
+
+    @field_validator("ffmpeg_hwaccel", "ffmpeg_video_encoder", mode="before")
+    @classmethod
+    def _normalize_ffmpeg_choice(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip().lower() or "auto"
+        return value
 
     @field_validator("detector_provider", mode="before")
     @classmethod

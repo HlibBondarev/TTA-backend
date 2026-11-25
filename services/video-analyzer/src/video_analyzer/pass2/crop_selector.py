@@ -1,4 +1,8 @@
-"""Native-resolution 4K cap crop extraction, sharpness ranking, and contact sheet builder."""
+"""Native-resolution 4K cap crop extraction, sharpness ranking, and contact sheet builder.
+
+Crops are cut from each frame's native pixels (decoded on demand from the compact in-memory
+copy), even though detection ran on a downscaled image.
+"""
 
 from __future__ import annotations
 
@@ -59,7 +63,7 @@ class CropSelector:
             frame = frame_by_idx.get(obs.frame_index)
             if frame is None:
                 continue
-            crop = self._extract_cap_region(frame.image_bgr, obs)
+            crop = self._extract_cap_region(frame.native_bgr(), obs)
             if crop is None:
                 continue
             score = self._score_crop_sharpness(crop)
@@ -108,7 +112,7 @@ class CropSelector:
 
         frame = next((f for f in frames if f.index == obs.frame_index), None)
         if frame is not None:
-            annotated = frame.image_bgr.copy()
+            annotated = frame.native_bgr().copy()
             x1, y1, x2, y2 = (int(round(v)) for v in obs.bbox_xyxy)
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 4)
             label = f"{obs.raw_class_name} ({obs.confidence:.2f})"

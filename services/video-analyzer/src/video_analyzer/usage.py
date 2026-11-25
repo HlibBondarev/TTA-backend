@@ -195,6 +195,20 @@ def estimate_stage_cost(
     )
 
 
+def estimate_call_cost_usd(
+    model_name: str,
+    usage: GeminiTokenUsage,
+    pricing_table: Mapping[str, Mapping[str, float]],
+) -> float:
+    """Estimate the USD cost of one call for budget enforcement.
+
+    Returns ``0.0`` when pricing or token metadata is unavailable, so an unpriced model never
+    trips the cost breaker (the call-count limit still applies).
+    """
+    estimate = estimate_stage_cost(model_name, usage, pricing_table)
+    return estimate.total_cost_usd or 0.0
+
+
 def _combine_stage_costs(
     stages: Iterable[GeminiStageUsageDiagnostics],
 ) -> GeminiCostEstimate | None:
@@ -271,38 +285,34 @@ def build_gemini_usage_diagnostics(
     pass2_model: str,
     pass2_usages: Iterable[GeminiTokenUsage | None],
     pricing_table: Mapping[str, Mapping[str, float]],
+    verifier_model: str | None = None,
+    verifier_usages: Iterable[GeminiTokenUsage | None] = (),
 ) -> GeminiUsageDiagnostics:
-    """Aggregate Pass 1 and Pass 2 Gemini token usage and compute estimated USD costs."""
-    p1_usage = aggregate_token_usage(pass1_usages)
-    p2_usage = aggregate_token_usage(pass2_usages)
-    total_usage = aggregate_token_usage((p1_usage, p2_usage))
-
-    p1_cost = (
-        estimate_stage_cost(pass1_model, p1_usage, pricing_table)
-        if p1_usage.call_count > 0
-        else None
-    )
-    p2_cost = (
-        estimate_stage_cost(pass2_model, p2_usage, pricing_table)
-        if p2_usage.call_count > 0
-        else None
-    )
-
-    pass1_stage = GeminiStageUsageDiagnostics(
-        model=pass1_model,
-        usage=p1_usage,
-        estimated_cost=p1_cost,
-    )
-    pass2_stage = GeminiStageUsageDiagnostics(
-        model=pass2_model,
-        usage=p2_usage,
-        estimated_cost=p2_cost,
-    )
-    total_cost = _combine_stage_costs((pass1_stage, pass2_stage))
+    """Aggregate per-slot Gemini token usage (Pass 1, verifier, Pass 2) and estimated USD cost."""
+    pass1_stage = _build_stage_diagnostics(pass1_model, pass1_usages, pricing_table)
+    pass2_stage = _build_stage_diagnostics(pass2_model, pass2_usages, pricing_table)
+    verifier_stage = _build_stage_diagnostics(verifier_model, verifier_usages, pricing_table)
+    stages = (pass1_stage, verifier_stage, pass2_stage)
+    total_usage = aggregate_token_usage(stage.usage for stage in stages)
 
     return GeminiUsageDiagnostics(
         pass1=pass1_stage,
+        verifier=verifier_stage,
         pass2=pass2_stage,
         total=total_usage,
-        estimated_cost=total_cost,
+        estimated_cost=_combine_stage_costs(stages),
     )
+
+
+def _build_stage_diagnostics(
+    model_name: str | None,
+    usages: Iterable[GeminiTokenUsage | None],
+    pricing_table: Mapping[str, Mapping[str, float]],
+) -> GeminiStageUsageDiagnostics:
+    usage = aggregate_token_usage(usages)
+    cost = (
+        estimate_stage_cost(model_name, usage, pricing_table)
+        if model_name is not None and usage.call_count > 0
+        else None
+    )
+    return GeminiStageUsageDiagnostics(model=model_name, usage=usage, estimated_cost=cost)

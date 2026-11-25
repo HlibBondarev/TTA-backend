@@ -68,6 +68,8 @@ class ModelMetadata(CamelCaseModel):
     detector_model: str
     tracker: str
     cap_resolver: str
+    pass2_cap_model: str | None = None
+    verifier_model: str | None = None
 
 
 class DraftTimeAnchor(CamelCaseModel):
@@ -166,9 +168,10 @@ class GeminiStageUsageDiagnostics(CamelCaseModel):
 
 
 class GeminiUsageDiagnostics(CamelCaseModel):
-    """Combined Pass 1, Pass 2, and total Gemini token usage and estimated USD cost."""
+    """Combined Pass 1, verifier, Pass 2, and total Gemini token usage and estimated USD cost."""
 
     pass1: GeminiStageUsageDiagnostics = Field(default_factory=GeminiStageUsageDiagnostics)
+    verifier: GeminiStageUsageDiagnostics = Field(default_factory=GeminiStageUsageDiagnostics)
     pass2: GeminiStageUsageDiagnostics = Field(default_factory=GeminiStageUsageDiagnostics)
     total: GeminiTokenUsage = Field(default_factory=GeminiTokenUsage)
     estimated_cost: GeminiCostEstimate | None = None

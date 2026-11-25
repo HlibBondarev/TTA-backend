@@ -1,0 +1,4 @@
+# Real coach-provided ground-truth labels (Clip 1 dev / Clip 2 holdout) must never be committed.
+# Only the documented template and this ignore file are tracked in eval_labels/.
+eval_labels/*
+!eval_labels/sample_labels.example.json

@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import cv2
@@ -19,6 +20,11 @@ from video_analyzer.api.app import create_app
 from video_analyzer.cli import main as cli_main
 from video_analyzer.config import Settings
 from video_analyzer.detectors.base import BaseObjectDetector, CanonicalRole, Detection
+from video_analyzer.gemini.resilience import (
+    BreakerReason,
+    GeminiCallBlockedError,
+    GeminiResilience,
+)
 from video_analyzer.media.ffmpeg_client import ExtractedFrame, VideoChunk, VideoProbeResult
 from video_analyzer.pass1.gemini_client import BasePass1Analyzer
 from video_analyzer.pass1.models import Pass1ChunkResult, Pass1RawAnchor, Pass1RawEvent
@@ -308,25 +314,20 @@ def test_request_schemas_validate_unique_definition_ids_and_team_consistency(
         AnalyzeJobRequest.model_validate(mismatched_payload)
 
 
-def test_orchestrator_cleans_up_per_window_temp_dirs_and_propagates_tied_tracks(
+def test_orchestrator_streams_pass2_frames_without_temp_dirs_and_propagates_tied_tracks(
     sample_job_request: AnalyzeJobRequest,
     tmp_path: Path,
 ) -> None:
     work_root = tmp_path / "work"
     work_root.mkdir()
-    created_win_dirs: list[Path] = []
+    extract_kwargs: list[dict] = []
+    leaked_dirs: list[Path] = []
 
-    class TrackingFFmpeg(MockFFmpegClient):
-        def extract_window_frames(self, video_path, center_sec, work_dir, **kwargs):
-            work_dir.mkdir(parents=True, exist_ok=True)
-            (work_dir / "frame_0.jpg").write_bytes(b"jpg")
-            created_win_dirs.append(work_dir)
-            return super().extract_window_frames(
-                video_path,
-                center_sec,
-                work_dir=work_dir,
-                **kwargs,
-            )
+    class StreamingFFmpeg(MockFFmpegClient):
+        def extract_window_frames(self, video_path, center_sec, **kwargs):
+            extract_kwargs.append(kwargs)
+            leaked_dirs.extend(work_root.rglob("pass2_win_*"))
+            return super().extract_window_frames(video_path, center_sec, **kwargs)
 
     class TiedDetector(BaseObjectDetector):
         def provider_info(self) -> dict[str, str]:
@@ -346,15 +347,16 @@ def test_orchestrator_cleans_up_per_window_temp_dirs_and_propagates_tied_tracks(
             internal_api_key="test-key",
             work_dir=str(work_root),
         ),
-        ffmpeg_client=TrackingFFmpeg(),  # type: ignore[arg-type]
+        ffmpeg_client=StreamingFFmpeg(),  # type: ignore[arg-type]
         pass1_analyzer=MockPass1Analyzer(),
         detector=TiedDetector(),
         cap_resolver=MockCapResolver(),
     )
 
     draft = orchestrator.run(sample_job_request)
-    assert len(created_win_dirs) == 2
-    assert all(not win_dir.exists() for win_dir in created_win_dirs)
+    assert len(extract_kwargs) == 2
+    assert all("work_dir" not in kwargs for kwargs in extract_kwargs)
+    assert leaked_dirs == []
     assert all(evt.match_lineup_id is None for evt in draft.events)
     assert all(evt.needs_review is True for evt in draft.events)
     assert all("TIED_ACTOR_TRACKLET_MATCH" in evt.review_reasons for evt in draft.events)
@@ -697,3 +699,609 @@ def test_orchestrator_records_pass2_usage_once_on_recovered_parse_failure(
     assert draft.diagnostics.gemini_usage.total.call_count == 2
     assert draft.diagnostics.gemini_usage.estimated_cost is not None
     assert draft.diagnostics.gemini_usage.estimated_cost.total_cost_usd == pytest.approx(0.07)
+
+
+# ---------------------------------------------------------------------------------------------
+# Issue #157: parallel Pass 1, decoupled Pass 2 phases, breaker handling, failure taxonomy
+# ---------------------------------------------------------------------------------------------
+
+_EVENT_TIMES_SEC = (20.0, 45.0, 70.0, 95.0, 120.0, 145.0)
+
+
+class _ManyEventsPass1Analyzer(BasePass1Analyzer):
+    """Returns one confident goal event per entry in ``_EVENT_TIMES_SEC`` (single chunk)."""
+
+    def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+        return Pass1ChunkResult(
+            time_anchors=[],
+            period_events=[
+                Pass1RawEvent(
+                    time_sec=time_sec,
+                    prompt_code="EVT_01_G_POS",
+                    period_number=1,
+                    actor_bbox_normalized=[0.45, 0.35, 0.55, 0.65],
+                    confidence=0.93,
+                )
+                for time_sec in _EVENT_TIMES_SEC
+            ],
+        )
+
+
+class _CountingFFmpeg(MockFFmpegClient):
+    """Mock ffmpeg that records Pass 2 extraction concurrency and the kwargs it receives."""
+
+    def __init__(self, delay_sec: float = 0.0, frames_enabled: bool = True) -> None:
+        self._lock = threading.Lock()
+        self._active = 0
+        self.max_active = 0
+        self.extract_calls: list[dict] = []
+        self._delay_sec = delay_sec
+        self._frames_enabled = frames_enabled
+
+    def extract_window_frames(self, video_path, center_sec, **kwargs):
+        with self._lock:
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+            self.extract_calls.append({"center_sec": center_sec, **kwargs})
+        try:
+            time.sleep(self._delay_sec)
+            if not self._frames_enabled:
+                return []
+            return super().extract_window_frames(video_path, center_sec, **kwargs)
+        finally:
+            with self._lock:
+                self._active -= 1
+
+
+class _ConcurrencyProbeDetector(MockDetector):
+    """Detector that measures simultaneous ``detect`` calls."""
+
+    def __init__(self, concurrent: bool, delay_sec: float = 0.02) -> None:
+        self.supports_concurrent_inference = concurrent
+        self._lock = threading.Lock()
+        self._active = 0
+        self.max_active = 0
+        self._delay_sec = delay_sec
+
+    def detect(self, frame_bgr: np.ndarray) -> list[Detection]:
+        with self._lock:
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+        try:
+            time.sleep(self._delay_sec)
+            return super().detect(frame_bgr)
+        finally:
+            with self._lock:
+                self._active -= 1
+
+
+class _AlwaysSevenCapResolver(BaseCapResolver):
+    """Thread-safe resolver returning cap #7 and tracking its own concurrency."""
+
+    def __init__(self, delay_sec: float = 0.0) -> None:
+        self._lock = threading.Lock()
+        self._active = 0
+        self.max_active = 0
+        self.calls = 0
+        self._delay_sec = delay_sec
+
+    def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        with self._lock:
+            self.calls += 1
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+        try:
+            time.sleep(self._delay_sec)
+            return CapResolutionResult(
+                resolved_cap_number=7,
+                confidence=0.95,
+                candidate_scores={7: 0.95},
+                reasoning="Cap #7",
+            )
+        finally:
+            with self._lock:
+                self._active -= 1
+
+
+def _orchestrator_with(
+    tmp_path: Path,
+    *,
+    ffmpeg=None,
+    detector=None,
+    cap_resolver=None,
+    pass1=None,
+    fallback_cap_resolver=None,
+    crop_selector=None,
+    **settings_overrides,
+) -> VideoAnalysisOrchestrator:
+    settings_overrides.setdefault("work_dir", str(tmp_path))
+    settings = Settings(_env_file=None, internal_api_key="test-key", **settings_overrides)
+    return VideoAnalysisOrchestrator(
+        settings=settings,
+        ffmpeg_client=ffmpeg or MockFFmpegClient(),  # type: ignore[arg-type]
+        pass1_analyzer=pass1 or _ManyEventsPass1Analyzer(),
+        detector=detector or MockDetector(),
+        cap_resolver=cap_resolver or _AlwaysSevenCapResolver(),
+        fallback_cap_resolver=fallback_cap_resolver,
+        crop_selector=crop_selector,
+    )
+
+
+def test_pass1_parallel_merge_is_deterministic_and_concurrency_one_is_sequential(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    class FourChunkFFmpeg(MockFFmpegClient):
+        def create_pass1_chunks(self, video_path, probe, output_dir, **kwargs):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            chunks = []
+            for idx in range(4):
+                path = output_dir / f"chunk_{idx}.mp4"
+                path.write_bytes(b"mp4")
+                chunks.append(VideoChunk(idx, idx * 50.0, idx * 50.0 + 60.0, path))
+            return chunks
+
+    class StaggeredAnalyzer(BasePass1Analyzer):
+        """Earlier chunks finish LAST, so completion order differs from chunk order."""
+
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+            self.completion_order: list[int] = []
+
+        def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            time.sleep(0.05 * (4 - chunk.index))
+            with self.lock:
+                self.active -= 1
+                self.completion_order.append(chunk.index)
+            return Pass1ChunkResult(
+                time_anchors=[],
+                period_events=[
+                    Pass1RawEvent(
+                        time_sec=5.0,
+                        prompt_code="EVT_01_G_POS",
+                        period_number=1,
+                        confidence=0.9,
+                    )
+                ],
+            )
+
+    request = sample_job_request.model_copy(
+        update={
+            "analysis_options": sample_job_request.analysis_options.model_copy(
+                update={"skip_pass2": True}
+            )
+        }
+    )
+
+    sequential = StaggeredAnalyzer()
+    seq_draft = _orchestrator_with(
+        tmp_path,
+        ffmpeg=FourChunkFFmpeg(),
+        pass1=sequential,
+        pass1_max_concurrency=1,
+    ).run(request)
+    assert sequential.max_active == 1
+    assert sequential.completion_order == [0, 1, 2, 3]
+
+    parallel = StaggeredAnalyzer()
+    par_draft = _orchestrator_with(
+        tmp_path,
+        ffmpeg=FourChunkFFmpeg(),
+        pass1=parallel,
+        pass1_max_concurrency=3,
+    ).run(request)
+    assert 2 <= parallel.max_active <= 3
+    assert parallel.completion_order != [0, 1, 2, 3], "tasks really completed out of order"
+
+    def summarize(draft):
+        return [(round(e.video_time_sec, 3), e.prompt_code) for e in draft.events]
+
+    assert (
+        summarize(par_draft)
+        == summarize(seq_draft)
+        == [
+            (5.0, "EVT_01_G_POS"),
+            (55.0, "EVT_01_G_POS"),
+            (105.0, "EVT_01_G_POS"),
+            (155.0, "EVT_01_G_POS"),
+        ]
+    )
+    assert par_draft.diagnostics.pass1_chunks_processed == 4
+
+
+def test_pass1_parallel_failure_and_cancellation_propagate_deterministically(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    class TwoChunkFFmpeg(MockFFmpegClient):
+        def create_pass1_chunks(self, video_path, probe, output_dir, **kwargs):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            return [
+                VideoChunk(i, i * 50.0, i * 50.0 + 60.0, output_dir / f"c{i}.mp4") for i in range(3)
+            ]
+
+    class FailingAnalyzer(BasePass1Analyzer):
+        def analyze_chunk(self, snapshot, chunk):
+            if chunk.index == 1:
+                raise RuntimeError("chunk 1 exploded")
+            time.sleep(0.05)
+            return Pass1ChunkResult(time_anchors=[], period_events=[])
+
+    orchestrator = _orchestrator_with(
+        tmp_path, ffmpeg=TwoChunkFFmpeg(), pass1=FailingAnalyzer(), pass1_max_concurrency=3
+    )
+    with pytest.raises(RuntimeError, match="chunk 1 exploded"):
+        orchestrator.run(sample_job_request)
+
+    cancel_event = threading.Event()
+
+    class CancellingAnalyzer(BasePass1Analyzer):
+        def analyze_chunk(self, snapshot, chunk):
+            cancel_event.set()
+            return Pass1ChunkResult(time_anchors=[], period_events=[])
+
+    cancelling = _orchestrator_with(
+        tmp_path, ffmpeg=TwoChunkFFmpeg(), pass1=CancellingAnalyzer(), pass1_max_concurrency=1
+    )
+    with pytest.raises(JobCancelledError):
+        cancelling.run(sample_job_request, cancel_event=cancel_event)
+
+
+def test_global_detector_semaphore_caps_concurrency_across_all_phase_a_tasks(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    remote = _ConcurrencyProbeDetector(concurrent=True)
+    ffmpeg = _CountingFFmpeg(delay_sec=0.02)
+    draft = _orchestrator_with(
+        tmp_path,
+        ffmpeg=ffmpeg,
+        detector=remote,
+        pass2_phase_a_max_concurrency=6,
+        detector_max_concurrency=2,
+    ).run(sample_job_request)
+
+    assert len(draft.events) == len(_EVENT_TIMES_SEC)
+    assert ffmpeg.max_active > 2, "Phase A tasks overlap more than the detector limit"
+    assert remote.max_active == 2, "...but detector calls never exceed the global semaphore"
+
+    local = _ConcurrencyProbeDetector(concurrent=False)
+    _orchestrator_with(
+        tmp_path,
+        ffmpeg=_CountingFFmpeg(),
+        detector=local,
+        pass2_phase_a_max_concurrency=6,
+        detector_max_concurrency=4,
+    ).run(sample_job_request)
+    assert local.max_active == 1, "local providers are always serialized"
+
+
+def test_phase_a_and_phase_b_concurrency_are_independently_configurable(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    ffmpeg = _CountingFFmpeg(delay_sec=0.03)
+    resolver = _AlwaysSevenCapResolver(delay_sec=0.03)
+    _orchestrator_with(
+        tmp_path,
+        ffmpeg=ffmpeg,
+        cap_resolver=resolver,
+        pass2_phase_a_max_concurrency=1,
+        pass2_phase_b_max_concurrency=3,
+    ).run(sample_job_request)
+    assert ffmpeg.max_active == 1
+    assert 2 <= resolver.max_active <= 3
+
+    ffmpeg = _CountingFFmpeg(delay_sec=0.03)
+    resolver = _AlwaysSevenCapResolver(delay_sec=0.03)
+    _orchestrator_with(
+        tmp_path,
+        ffmpeg=ffmpeg,
+        cap_resolver=resolver,
+        pass2_phase_a_max_concurrency=3,
+        pass2_phase_b_max_concurrency=1,
+    ).run(sample_job_request)
+    assert 2 <= ffmpeg.max_active <= 3
+    assert resolver.max_active == 1
+
+
+def test_breaker_trip_preserves_phase_a_and_marks_remaining_events_explicitly(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    class QuotaTrippingResolver(BaseCapResolver):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            self.calls += 1
+            if self.calls == 1:
+                return CapResolutionResult(
+                    resolved_cap_number=7,
+                    confidence=0.95,
+                    candidate_scores={7: 0.95},
+                    reasoning="ok",
+                )
+            raise GeminiCallBlockedError("pass2", BreakerReason.QUOTA_EXHAUSTED, "daily quota")
+
+    ffmpeg = _CountingFFmpeg()
+    resolver = QuotaTrippingResolver()
+    draft = _orchestrator_with(
+        tmp_path,
+        ffmpeg=ffmpeg,
+        cap_resolver=resolver,
+        pass2_phase_b_max_concurrency=1,
+    ).run(sample_job_request)
+
+    assert len(ffmpeg.extract_calls) == len(_EVENT_TIMES_SEC), "Phase A ran for every event"
+    assert resolver.calls == 2, "no Gemini calls are attempted once the breaker is open"
+    assert draft.events[0].resolved_cap_number == 7
+    for event in draft.events[1:]:
+        assert event.match_lineup_id is None
+        assert event.needs_review is True
+        assert "CAP_RESOLUTION_QUOTA_EXHAUSTED" in event.review_reasons
+        assert "NO_PLAYER_TRACKLET_MATCHED" not in event.review_reasons
+    assert any("left unresolved" in w for w in draft.diagnostics.warnings)
+    assert draft.diagnostics.pass2_windows_processed == len(_EVENT_TIMES_SEC)
+    assert draft.diagnostics.timings_sec["pass2ExtractAndTrack"] > 0
+
+
+def test_breaker_trip_falls_back_to_local_ocr_when_available(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    class BlockedResolver(BaseCapResolver):
+        calls = 0
+
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            BlockedResolver.calls += 1
+            raise GeminiCallBlockedError("pass2", BreakerReason.QUOTA_EXHAUSTED, "daily quota")
+
+    class FakeOcrReader:
+        @staticmethod
+        def readtext(image, allowlist: str = ""):
+            return [([], "7", 0.98)]
+
+    draft = _orchestrator_with(
+        tmp_path,
+        cap_resolver=BlockedResolver(),
+        fallback_cap_resolver=LocalOcrCapResolver(reader=FakeOcrReader()),
+        pass2_phase_b_max_concurrency=2,
+    ).run(sample_job_request)
+
+    assert BlockedResolver.calls == 1, "the blocked Gemini resolver is only probed once"
+    assert all(event.resolved_cap_number == 7 for event in draft.events)
+    assert all(event.match_lineup_id is not None for event in draft.events)
+    assert any("local OCR fallback" in w for w in draft.diagnostics.warnings)
+
+
+def test_all_six_pass2_failure_reasons_are_emitted_in_their_scenarios(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    def reasons_for(**kwargs) -> list[list[str]]:
+        draft = _orchestrator_with(tmp_path, pass2_phase_b_max_concurrency=1, **kwargs).run(
+            sample_job_request
+        )
+        return [event.review_reasons for event in draft.events]
+
+    class NoDetections(MockDetector):
+        def detect(self, frame_bgr):
+            return []
+
+    class NoCropSelector:
+        def select_and_build_sheet(self, **kwargs):
+            return None
+
+    class RaisingResolver(BaseCapResolver):
+        def __init__(self, error: Exception) -> None:
+            self._error = error
+
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            raise self._error
+
+    no_frames = reasons_for(ffmpeg=_CountingFFmpeg(frames_enabled=False))
+    assert all("NO_FRAMES_EXTRACTED" in r for r in no_frames)
+    assert all("NO_PLAYER_TRACKLET_MATCHED" not in r for r in no_frames)
+
+    no_tracklet = reasons_for(detector=NoDetections())
+    assert all("NO_PLAYER_TRACKLET_MATCHED" in r for r in no_tracklet)
+
+    no_crops = reasons_for(crop_selector=NoCropSelector())
+    assert all("NO_USABLE_CAP_CROPS" in r for r in no_crops)
+    assert all("NO_PLAYER_TRACKLET_MATCHED" not in r for r in no_crops)
+
+    api_error = reasons_for(cap_resolver=RaisingResolver(RuntimeError("HTTP 500 boom")))
+    assert all("CAP_RESOLUTION_API_ERROR" in r for r in api_error)
+
+    quota = reasons_for(
+        cap_resolver=RaisingResolver(
+            GeminiCallBlockedError("pass2", BreakerReason.QUOTA_EXHAUSTED, "PerDay")
+        )
+    )
+    assert all("CAP_RESOLUTION_QUOTA_EXHAUSTED" in r for r in quota)
+
+    budget = reasons_for(
+        cap_resolver=RaisingResolver(
+            GeminiCallBlockedError("pass2", BreakerReason.BUDGET_EXCEEDED, "120 calls")
+        )
+    )
+    assert all("CAP_RESOLUTION_BUDGET_EXCEEDED" in r for r in budget)
+
+    breaker_api = reasons_for(
+        cap_resolver=RaisingResolver(
+            GeminiCallBlockedError("pass2", BreakerReason.API_ERROR, "HTTP 403")
+        )
+    )
+    assert all("CAP_RESOLUTION_API_ERROR" in r for r in breaker_api)
+
+
+def test_downscaled_detection_boxes_are_rescaled_to_native_for_actor_matching(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    native_w, native_h, det_w, det_h = 1280, 720, 640, 360
+    native = np.zeros((native_h, native_w, 3), dtype=np.uint8)
+    cv2.putText(native, "7", (630, 310), cv2.FONT_HERSHEY_SIMPLEX, 3.0, (255, 255, 255), 6)
+    ok, encoded = cv2.imencode(".jpg", native)
+    assert ok
+    seen_shapes: list[tuple[int, ...]] = []
+
+    class DownscalingFFmpeg(MockFFmpegClient):
+        def extract_window_frames(self, video_path, center_sec, **kwargs):
+            return [
+                ExtractedFrame(
+                    index=i,
+                    video_time_sec=center_sec + 0.1 * i,
+                    image_bgr=cv2.resize(native, (det_w, det_h)),
+                    native_width=native_w,
+                    native_height=native_h,
+                    native_jpeg=encoded.tobytes(),
+                )
+                for i in range(3)
+            ]
+
+    class DetectionScaleDetector(MockDetector):
+        def detect(self, frame_bgr):
+            seen_shapes.append(frame_bgr.shape)
+            return super().detect(frame_bgr)  # boxes in detection-image pixels
+
+    crop_sizes: list[tuple[int, ...]] = []
+
+    class SpyResolver(_AlwaysSevenCapResolver):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            crop_sizes.append(selected_crops.crops[0].crop_bgr.shape)
+            return super().resolve(selected_crops, allowed_cap_numbers, cap_color_hint)
+
+    draft = _orchestrator_with(
+        tmp_path,
+        ffmpeg=DownscalingFFmpeg(),
+        detector=DetectionScaleDetector(),
+        cap_resolver=SpyResolver(),
+    ).run(sample_job_request)
+
+    assert all(shape == (det_h, det_w, 3) for shape in seen_shapes)
+    assert all(event.resolved_cap_number == 7 for event in draft.events)
+    # Crops come from native pixels: a 0.1*1280 wide player box (plus padding) is > 128 px wide.
+    assert all(shape[1] > 128 for shape in crop_sizes)
+
+
+def test_pass2_extraction_requests_streaming_args_and_no_work_dir(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    ffmpeg = _CountingFFmpeg()
+    work_root = tmp_path / "work"
+    work_root.mkdir()
+    _orchestrator_with(tmp_path, ffmpeg=ffmpeg, work_dir=str(work_root)).run(sample_job_request)
+
+    options = sample_job_request.analysis_options
+    assert options.pass2_window_half_sec == 2.5
+    assert options.pass2_sample_fps == 4.0
+    first = ffmpeg.extract_calls[0]
+    assert "work_dir" not in first
+    assert first["frame_width"] == 3840 and first["frame_height"] == 2160
+    assert first["detector_input_width"] == 1280
+    assert first["half_window_sec"] == 2.5 and first["sample_fps"] == 4.0
+    assert list(work_root.rglob("pass2_win_*")) == []
+
+
+def test_sub_stage_timers_are_added_and_existing_keys_are_preserved(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    draft = _orchestrator_with(tmp_path).run(sample_job_request)
+    timings = draft.diagnostics.timings_sec
+
+    legacy_keys = {
+        "probe",
+        "pass1TranscodeAndChunk",
+        "pass1Vlm",
+        "pass2ExtractAndTrack",
+        "pass2CapResolution",
+        "total",
+    }
+    new_keys = {
+        "pass1Mezzanine",
+        "pass1ChunkSlicing",
+        "pass2FrameExtraction",
+        "pass2DetectorInference",
+        "pass2Tracking",
+        "pass2CropSelection",
+        "pass2CapOcr",
+    }
+    assert legacy_keys <= set(timings)
+    assert new_keys <= set(timings)
+    assert all(timings[key] >= 0.0 for key in new_keys)
+
+    skipped = _orchestrator_with(tmp_path).run(
+        sample_job_request.model_copy(
+            update={
+                "analysis_options": sample_job_request.analysis_options.model_copy(
+                    update={"skip_pass2": True}
+                )
+            }
+        )
+    )
+    assert (legacy_keys | new_keys) <= set(skipped.diagnostics.timings_sec)
+    assert skipped.diagnostics.timings_sec["pass2FrameExtraction"] == 0.0
+
+
+def test_model_metadata_reports_all_three_slots_and_verifier_stays_unused(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    draft = _orchestrator_with(tmp_path).run(sample_job_request)
+    metadata = draft.model_metadata
+    assert metadata.pass1_vlm_model == "gemini-4-hydrogen"
+    assert metadata.pass2_cap_model == "gemini-3.5-flash-lite"
+    assert metadata.verifier_model == "gemini-4-hydrogen"
+    usage = draft.diagnostics.gemini_usage
+    assert usage.verifier.model == "gemini-4-hydrogen"
+    assert usage.verifier.usage.call_count == 0
+    assert usage.pass2.model == "gemini-3.5-flash-lite"
+
+
+def test_gemini_job_scope_budget_is_applied_per_job_through_worker_threads(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    """The per-job breaker/budget scope must be visible inside Phase B worker threads."""
+    resilience = GeminiResilience("pass2", "gemini-3.5-flash-lite", max_retries=0)
+
+    class BudgetedResolver(BaseCapResolver):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            resilience.call(lambda: SimpleNamespace(usage_metadata=None), paced=False)
+            return CapResolutionResult(
+                resolved_cap_number=7,
+                confidence=0.95,
+                candidate_scores={7: 0.95},
+                reasoning="ok",
+            )
+
+    draft = _orchestrator_with(
+        tmp_path,
+        cap_resolver=BudgetedResolver(),
+        gemini_max_calls_per_job=2,
+        pass2_phase_b_max_concurrency=3,
+    ).run(sample_job_request)
+
+    resolved = [e for e in draft.events if e.resolved_cap_number == 7]
+    blocked = [e for e in draft.events if "CAP_RESOLUTION_BUDGET_EXCEEDED" in e.review_reasons]
+    assert len(resolved) == 2
+    assert len(blocked) == len(_EVENT_TIMES_SEC) - 2
+    assert any("budget" in w and "circuit breaker" in w for w in draft.diagnostics.warnings)
+
+    # A second job starts with a fresh budget instead of inheriting the exhausted one.
+    second = _orchestrator_with(
+        tmp_path,
+        cap_resolver=BudgetedResolver(),
+        gemini_max_calls_per_job=2,
+        pass2_phase_b_max_concurrency=1,
+    ).run(sample_job_request)
+    assert len([e for e in second.events if e.resolved_cap_number == 7]) == 2

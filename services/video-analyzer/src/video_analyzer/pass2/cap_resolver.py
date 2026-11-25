@@ -10,7 +10,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from video_analyzer.config import DEFAULT_GEMINI_MODEL, Settings
+from video_analyzer.config import DEFAULT_GEMINI_PASS2_MODEL, Settings
+from video_analyzer.gemini.request_config import build_generate_content_config
+from video_analyzer.gemini.resilience import GeminiResilience
 from video_analyzer.pass2.crop_selector import SelectedCrops
 from video_analyzer.schemas.draft import GeminiTokenUsage
 from video_analyzer.usage import extract_usage_metadata
@@ -123,19 +125,28 @@ class BaseCapResolver(ABC):
 
 
 class GeminiCropGridCapResolver(BaseCapResolver):
-    """Default cap resolver sending a native-4K contact sheet to Gemini Vision."""
+    """Default cap resolver sending a native-4K contact sheet to Gemini Vision.
+
+    Requests go through a shared :class:`GeminiResilience` (RPM pacing, classified retries,
+    circuit and budget breakers). When a breaker is open, ``resolve`` raises
+    ``GeminiCallBlockedError`` without calling the API so callers can fall back or fail fast.
+    """
 
     def __init__(
         self,
         api_key: str,
-        model_name: str = DEFAULT_GEMINI_MODEL,
+        model_name: str = DEFAULT_GEMINI_PASS2_MODEL,
         timeout_sec: float = 180.0,
         client: Any = None,
+        thinking_level: str | None = None,
+        resilience: GeminiResilience | None = None,
     ) -> None:
         self._api_key = api_key.strip()
         self._model_name = model_name
         self._timeout_sec = timeout_sec
         self._client = client
+        self._thinking_level = thinking_level
+        self._resilience = resilience or GeminiResilience("pass2", model_name)
 
     def resolve(
         self,
@@ -170,14 +181,19 @@ class GeminiCropGridCapResolver(BaseCapResolver):
             data=selected_crops.contact_sheet_jpeg,
             mime_type="image/jpeg",
         )
-        response = client.models.generate_content(
-            model=self._model_name,
-            contents=[image_part, prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=_build_cap_grid_response_schema(types),
-                temperature=0.0,
-            ),
+        config = build_generate_content_config(
+            types,
+            thinking_level=self._thinking_level,
+            response_mime_type="application/json",
+            response_schema=_build_cap_grid_response_schema(types),
+            temperature=0.0,
+        )
+        response = self._resilience.call(
+            lambda: client.models.generate_content(
+                model=self._model_name,
+                contents=[image_part, prompt],
+                config=config,
+            )
         )
         usage = extract_usage_metadata(response)
         try:
@@ -345,13 +361,18 @@ class CapResolverFactory:
     """Factory creating the configured CapResolver strategy."""
 
     @staticmethod
-    def create(settings: Settings) -> BaseCapResolver:
+    def create(
+        settings: Settings,
+        resilience: GeminiResilience | None = None,
+    ) -> BaseCapResolver:
         provider = settings.cap_resolver_provider.strip().lower()
         if provider == "gemini_crop_grid":
             return GeminiCropGridCapResolver(
                 api_key=settings.gemini_api_key,
                 model_name=settings.gemini_pass2_model,
                 timeout_sec=settings.gemini_request_timeout_sec,
+                thinking_level=settings.gemini_pass2_thinking_level,
+                resilience=resilience or GeminiResilience.from_settings(settings, "pass2"),
             )
         if provider == "local_ocr":
             return LocalOcrCapResolver(languages=settings.ocr_languages)

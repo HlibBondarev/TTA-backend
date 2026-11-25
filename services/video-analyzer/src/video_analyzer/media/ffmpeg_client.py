@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import re
 import subprocess
 import threading
 import time
@@ -13,7 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
+from types import TracebackType
+from typing import Any, BinaryIO
 
 import cv2
 import httpx
@@ -27,6 +30,28 @@ DEFAULT_FFPROBE_TIMEOUT_SEC: float = 60.0
 DEFAULT_FFMPEG_TIMEOUT_SEC: float = 600.0
 DEFAULT_DOWNLOAD_READ_TIMEOUT_SEC: float = 10.0
 DEFAULT_DOWNLOAD_TOTAL_TIMEOUT_SEC: float = 300.0
+
+LIBX264_ENCODER: str = "libx264"
+# Hardware encoders are preferred in this order when FFMPEG_VIDEO_ENCODER=auto.
+ENCODER_PRIORITY: tuple[str, ...] = ("h264_nvenc", "h264_qsv", "h264_amf", LIBX264_ENCODER)
+HWACCEL_DISABLED: str = "none"
+MIN_KEYFRAME_INTERVAL_SEC: int = 1
+MAX_KEYFRAME_INTERVAL_SEC: int = 5
+MIN_TAIL_FRACTION: float = 0.5
+NATIVE_JPEG_QUALITY: int = 95
+_ENCODER_PROBE_TIMEOUT_SEC: float = 30.0
+_STREAM_POLL_INTERVAL_SEC: float = 0.1
+_STREAM_EXIT_TIMEOUT_SEC: float = 5.0
+_STDERR_TAIL_CHARS: int = 600
+_ENCODER_LINE_PATTERN = re.compile(r"^\s*V\S*\s+(\S+)")
+
+# Per-encoder constant-quality arguments (roughly equivalent to libx264 CRF 28).
+_ENCODER_QUALITY_ARGS: dict[str, list[str]] = {
+    LIBX264_ENCODER: ["-preset", "veryfast", "-crf", "28"],
+    "h264_nvenc": ["-preset", "p4", "-rc", "vbr", "-cq", "28", "-b:v", "0"],
+    "h264_qsv": ["-preset", "veryfast", "-global_quality", "28"],
+    "h264_amf": ["-quality", "speed", "-rc", "cqp", "-qp_i", "28", "-qp_p", "28"],
+}
 
 
 class FFmpegCancelledError(RuntimeError):
@@ -57,11 +82,185 @@ class VideoChunk:
 
 @dataclass(slots=True)
 class ExtractedFrame:
-    """A native-resolution frame extracted for Pass 2 tracking and cap cropping."""
+    """A Pass 2 frame: a detection-resolution image plus an optional compact native copy.
+
+    ``image_bgr`` is what detectors and the tracker see. When the source was downscaled for
+    detection, the original native pixels are kept only as JPEG bytes (``native_jpeg``) and are
+    decoded on demand by :meth:`native_bgr`, which keeps per-window memory far below that of
+    holding raw 4K frames. Without a native copy, ``image_bgr`` already is the native frame.
+    """
 
     index: int
     video_time_sec: float
     image_bgr: np.ndarray
+    native_width: int = 0
+    native_height: int = 0
+    native_jpeg: bytes | None = None
+
+    def __post_init__(self) -> None:
+        height, width = self.image_bgr.shape[:2]
+        if self.native_width <= 0:
+            self.native_width = width
+        if self.native_height <= 0:
+            self.native_height = height
+
+    @property
+    def scale_x(self) -> float:
+        """Horizontal factor mapping detection-image pixels to native pixels."""
+        return self.native_width / float(self.image_bgr.shape[1])
+
+    @property
+    def scale_y(self) -> float:
+        """Vertical factor mapping detection-image pixels to native pixels."""
+        return self.native_height / float(self.image_bgr.shape[0])
+
+    def native_bgr(self) -> np.ndarray:
+        """Return the native-resolution BGR frame, decoding the compact copy when present."""
+        if self.native_jpeg is None:
+            return self.image_bgr
+        decoded = cv2.imdecode(np.frombuffer(self.native_jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if decoded is None:
+            raise RuntimeError(f"Failed to decode native copy of Pass 2 frame {self.index}.")
+        return decoded
+
+
+def compute_keyframe_interval(chunk_duration_sec: int, overlap_sec: int) -> int:
+    """Return the largest keyframe interval (1-5 s) that evenly divides every chunk boundary.
+
+    The interval divides the chunk duration, the overlap, and therefore the chunk step, so each
+    overlapping chunk starts and ends on a keyframe and can be cut with ``-c copy`` cleanly.
+    """
+    common = math.gcd(max(1, int(chunk_duration_sec)), max(0, int(overlap_sec)))
+    for candidate in range(MAX_KEYFRAME_INTERVAL_SEC, MIN_KEYFRAME_INTERVAL_SEC - 1, -1):
+        if common % candidate == 0:
+            return candidate
+    return MIN_KEYFRAME_INTERVAL_SEC
+
+
+class _RawFrameStream:
+    """Context manager reading fixed-size raw frames from an ffmpeg stdout pipe.
+
+    A watchdog thread terminates the process on cancellation or timeout so blocking reads
+    return promptly. stderr is drained concurrently so ffmpeg can never block on a full pipe.
+    """
+
+    def __init__(
+        self,
+        cmd: list[str],
+        frame_bytes: int,
+        stage_name: str,
+        timeout_sec: float,
+        cancel_event: threading.Event | None,
+    ) -> None:
+        self._cmd = cmd
+        self._frame_bytes = frame_bytes
+        self._stage_name = stage_name
+        self._timeout_sec = timeout_sec
+        self._cancel_event = cancel_event
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._stop = threading.Event()
+        self._abort_reason: str | None = None
+        self._stderr_tail = ""
+        self._threads: list[threading.Thread] = []
+
+    def __enter__(self) -> _RawFrameStream:
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            raise FFmpegCancelledError(f"{self._stage_name} cancelled before subprocess start.")
+        try:
+            self._proc = subprocess.Popen(
+                self._cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Required binary '{self._cmd[0]}' for {self._stage_name} was not found on PATH."
+            ) from exc
+        deadline = time.monotonic() + self._timeout_sec
+        for target, args in (
+            (self._drain_stderr, ()),
+            (self._watch, (deadline,)),
+        ):
+            thread = threading.Thread(target=target, args=args, daemon=True)
+            thread.start()
+            self._threads.append(thread)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self._stop.set()
+        proc = self._proc
+        if proc is not None:
+            FFmpegClient._terminate_process(proc)  # type: ignore[arg-type]
+            for stream in (proc.stdout, proc.stderr):
+                self._close_quietly(stream)
+        for thread in self._threads:
+            thread.join(timeout=2.0)
+
+    def read_frame(self) -> bytes | None:
+        """Return the next complete frame, or None at end of stream (partial tails dropped)."""
+        assert self._proc is not None and self._proc.stdout is not None
+        chunks: list[bytes] = []
+        remaining = self._frame_bytes
+        while remaining > 0:
+            data = self._proc.stdout.read(remaining)
+            if not data:
+                return None
+            chunks.append(data)
+            remaining -= len(data)
+        return chunks[0] if len(chunks) == 1 else b"".join(chunks)
+
+    def finish(self) -> None:
+        """Validate how the process ended; raise for cancellation, timeout, or non-zero exit."""
+        assert self._proc is not None
+        try:
+            self._proc.wait(timeout=_STREAM_EXIT_TIMEOUT_SEC)
+        except subprocess.TimeoutExpired:
+            FFmpegClient._terminate_process(self._proc)  # type: ignore[arg-type]
+        self._stop.set()
+        for thread in self._threads:
+            thread.join(timeout=2.0)
+        if self._abort_reason == "cancelled":
+            raise FFmpegCancelledError(f"{self._stage_name} cancelled while running.")
+        if self._abort_reason == "timeout":
+            raise TimeoutError(f"{self._stage_name} timed out after {self._timeout_sec:.1f}s.")
+        if self._proc.returncode != 0:
+            raise RuntimeError(
+                f"{self._stage_name} failed (exit {self._proc.returncode}): {self._stderr_tail}"
+            )
+
+    def _drain_stderr(self) -> None:
+        assert self._proc is not None
+        try:
+            raw = self._proc.stderr.read() if self._proc.stderr is not None else b""
+        except (OSError, ValueError):
+            return
+        self._stderr_tail = raw.decode("utf-8", errors="replace").strip()[-_STDERR_TAIL_CHARS:]
+
+    def _watch(self, deadline: float) -> None:
+        assert self._proc is not None
+        while not self._stop.wait(_STREAM_POLL_INTERVAL_SEC):
+            if self._cancel_event is not None and self._cancel_event.is_set():
+                self._abort_reason = "cancelled"
+            elif time.monotonic() > deadline:
+                self._abort_reason = "timeout"
+            else:
+                continue
+            FFmpegClient._terminate_process(self._proc)  # type: ignore[arg-type]
+            return
+
+    @staticmethod
+    def _close_quietly(stream: BinaryIO | None) -> None:
+        if stream is None:
+            return
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
 
 
 class FFmpegClient:
@@ -76,6 +275,8 @@ class FFmpegClient:
         download_read_timeout_sec: float = DEFAULT_DOWNLOAD_READ_TIMEOUT_SEC,
         download_total_timeout_sec: float = DEFAULT_DOWNLOAD_TOTAL_TIMEOUT_SEC,
         http_client: httpx.AsyncClient | None = None,
+        hwaccel: str = "auto",
+        video_encoder: str = "auto",
     ) -> None:
         if ffprobe_timeout_sec <= 0:
             raise ValueError("ffprobe_timeout_sec must be positive.")
@@ -97,6 +298,10 @@ class FFmpegClient:
         self._download_read_timeout_sec = download_read_timeout_sec
         self._download_total_timeout_sec = download_total_timeout_sec
         self._http_client = http_client
+        self._hwaccel = (hwaccel or "auto").strip().lower()
+        self._video_encoder_setting = (video_encoder or "auto").strip().lower()
+        self._resolved_encoder: str | None = None
+        self._encoder_lock = threading.Lock()
 
     def resolve_source_path(
         self,
@@ -309,61 +514,199 @@ class FFmpegClient:
         target_height: int = 720,
         fps: float = 2.0,
         cancel_event: threading.Event | None = None,
+        timings: dict[str, float] | None = None,
     ) -> list[VideoChunk]:
-        """Transcode downscaled overlapping chunks (preserving audio) for Gemini Pass 1."""
+        """Build overlapping Pass 1 chunks from a single one-pass 720p mezzanine transcode.
+
+        The source (often 4K) is decoded exactly once into a keyframe-aligned mezzanine; each
+        chunk is then cut with ``-c copy``, so no chunk re-decodes the 4K source.
+
+        Args:
+            timings: Optional dict that receives ``pass1Mezzanine`` and ``pass1ChunkSlicing``
+                elapsed seconds.
+        """
         if target_height < 2:
             raise ValueError("target_height must be at least 2 pixels for yuv420p encoding.")
         output_dir.mkdir(parents=True, exist_ok=True)
+        keyframe_interval = compute_keyframe_interval(chunk_duration_sec, overlap_sec)
         windows = self.compute_chunk_windows(
             total_duration_sec=probe.duration_sec,
             chunk_duration_sec=chunk_duration_sec,
             overlap_sec=overlap_sec,
+            align_sec=float(keyframe_interval),
         )
 
+        t_mezzanine = time.monotonic()
+        mezzanine_path = self.create_mezzanine(
+            video_path=video_path,
+            probe=probe,
+            output_path=output_dir / "pass1_mezzanine.mp4",
+            target_height=target_height,
+            fps=fps,
+            keyframe_interval_sec=keyframe_interval,
+            cancel_event=cancel_event,
+        )
+        t_slicing = time.monotonic()
+        chunks = self.slice_chunks(mezzanine_path, windows, output_dir, cancel_event=cancel_event)
+        if timings is not None:
+            timings["pass1Mezzanine"] = round(t_slicing - t_mezzanine, 3)
+            timings["pass1ChunkSlicing"] = round(time.monotonic() - t_slicing, 3)
+        return chunks
+
+    def create_mezzanine(
+        self,
+        video_path: Path,
+        probe: VideoProbeResult,
+        output_path: Path,
+        target_height: int,
+        fps: float,
+        keyframe_interval_sec: int,
+        cancel_event: threading.Event | None = None,
+    ) -> Path:
+        """Transcode the source once into a downscaled H.264 mezzanine with regular keyframes.
+
+        Uses hardware decode (``-hwaccel``) and the best available encoder, falling back to
+        ``libx264`` automatically when a hardware encoder is missing or fails at runtime.
+        """
+        encoder = self._resolve_video_encoder(cancel_event)
+
+        def build(selected_encoder: str) -> list[str]:
+            return self._build_mezzanine_command(
+                video_path, probe, output_path, selected_encoder, target_height, fps,
+                keyframe_interval_sec,
+            )  # fmt: skip
+
+        try:
+            self._run_mezzanine(build(encoder), cancel_event)
+        except FFmpegCancelledError:
+            raise
+        except RuntimeError as exc:
+            if encoder == LIBX264_ENCODER:
+                raise
+            logger.warning(
+                "Video encoder '%s' failed (%s); falling back to %s.",
+                encoder,
+                exc,
+                LIBX264_ENCODER,
+            )
+            self._set_resolved_encoder(LIBX264_ENCODER)
+            self._run_mezzanine(build(LIBX264_ENCODER), cancel_event)
+        return output_path
+
+    def slice_chunks(
+        self,
+        mezzanine_path: Path,
+        windows: list[tuple[float, float]],
+        output_dir: Path,
+        cancel_event: threading.Event | None = None,
+    ) -> list[VideoChunk]:
+        """Cut overlapping chunks from the mezzanine with ``-c copy`` (no re-encode)."""
+        output_dir.mkdir(parents=True, exist_ok=True)
         chunks: list[VideoChunk] = []
-        # yuv420p requires even width and height; keep valid even heights unchanged.
-        effective_height = target_height - (target_height % 2)
-        scale_filter = f"scale=-2:{effective_height},fps={fps}"
         for idx, (start_sec, end_sec) in enumerate(windows):
-            chunk_len = max(0.5, end_sec - start_sec)
             chunk_path = output_dir / f"pass1_chunk_{idx:04d}.mp4"
             cmd = [
                 self._ffmpeg_bin,
                 "-y",
+                "-hide_banner",
                 "-ss",
                 f"{start_sec:.3f}",
                 "-i",
-                str(video_path),
+                str(mezzanine_path),
                 "-t",
-                f"{chunk_len:.3f}",
-                "-vf",
-                scale_filter,
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "28",
-                "-pix_fmt",
-                "yuv420p",
+                f"{max(0.5, end_sec - start_sec):.3f}",
+                "-c",
+                "copy",
+                "-avoid_negative_ts",
+                "make_zero",
+                "-movflags",
+                "+faststart",
+                str(chunk_path),
             ]
-            if probe.has_audio:
-                cmd.extend(["-c:a", "aac", "-ac", "1", "-b:a", "64k"])
-            else:
-                cmd.append("-an")
-            cmd.extend(["-movflags", "+faststart", str(chunk_path)])
-
             self._run_command(
                 cmd,
-                "ffmpeg pass1 chunking",
+                "ffmpeg pass1 chunk slicing",
                 timeout_sec=self._ffmpeg_timeout_sec,
                 cancel_event=cancel_event,
             )
             chunks.append(
                 VideoChunk(index=idx, start_sec=start_sec, end_sec=end_sec, path=chunk_path)
             )
-
         return chunks
+
+    def _run_mezzanine(self, cmd: list[str], cancel_event: threading.Event | None) -> None:
+        self._run_command(
+            cmd,
+            "ffmpeg pass1 mezzanine",
+            timeout_sec=self._ffmpeg_timeout_sec,
+            cancel_event=cancel_event,
+        )
+
+    def _build_mezzanine_command(
+        self,
+        video_path: Path,
+        probe: VideoProbeResult,
+        output_path: Path,
+        encoder: str,
+        target_height: int,
+        fps: float,
+        keyframe_interval_sec: int,
+    ) -> list[str]:
+        # yuv420p requires even width and height; keep valid even heights unchanged.
+        effective_height = target_height - (target_height % 2)
+        gop_frames = max(1, round(keyframe_interval_sec * fps))
+        cmd = [self._ffmpeg_bin, "-y", "-hide_banner", *self._hwaccel_args()]
+        cmd += ["-i", str(video_path), "-vf", f"scale=-2:{effective_height},fps={fps}"]
+        cmd += ["-c:v", encoder, *_ENCODER_QUALITY_ARGS.get(encoder, []), "-pix_fmt", "yuv420p"]
+        # No B-frames: at the low mezzanine fps a B-frame reorder delay (e.g. 2 x 0.5 s) would
+        # make `-c copy` chunks start late and drift against the audio track.
+        cmd += ["-bf", "0", "-g", str(gop_frames)]
+        cmd += ["-force_key_frames", f"expr:gte(t,n_forced*{keyframe_interval_sec})"]
+        if probe.has_audio:
+            cmd += ["-c:a", "aac", "-ac", "1", "-ar", "16000", "-b:a", "32k"]
+        else:
+            cmd.append("-an")
+        cmd += ["-movflags", "+faststart", str(output_path)]
+        return cmd
+
+    def _hwaccel_args(self) -> list[str]:
+        if self._hwaccel in ("", HWACCEL_DISABLED):
+            return []
+        return ["-hwaccel", self._hwaccel]
+
+    def _resolve_video_encoder(self, cancel_event: threading.Event | None) -> str:
+        with self._encoder_lock:
+            if self._resolved_encoder is None:
+                self._resolved_encoder = self._select_video_encoder(cancel_event)
+            return self._resolved_encoder
+
+    def _set_resolved_encoder(self, encoder: str) -> None:
+        with self._encoder_lock:
+            self._resolved_encoder = encoder
+
+    def _select_video_encoder(self, cancel_event: threading.Event | None) -> str:
+        if self._video_encoder_setting != "auto":
+            return self._video_encoder_setting
+        try:
+            completed = self._run_command(
+                [self._ffmpeg_bin, "-hide_banner", "-encoders"],
+                "ffmpeg encoder probe",
+                timeout_sec=_ENCODER_PROBE_TIMEOUT_SEC,
+                cancel_event=cancel_event,
+            )
+        except FFmpegCancelledError:
+            raise
+        except (RuntimeError, TimeoutError) as exc:
+            logger.warning("Encoder auto-detection failed (%s); using %s.", exc, LIBX264_ENCODER)
+            return LIBX264_ENCODER
+        available = {
+            match.group(1)
+            for line in (completed.stdout or "").splitlines()
+            if (match := _ENCODER_LINE_PATTERN.match(line))
+        }
+        selected = next((name for name in ENCODER_PRIORITY if name in available), LIBX264_ENCODER)
+        logger.info("Selected H.264 encoder '%s' for the Pass 1 mezzanine.", selected)
+        return selected
 
     def extract_window_frames(
         self,
@@ -372,71 +715,140 @@ class FFmpegClient:
         half_window_sec: float,
         total_duration_sec: float,
         sample_fps: float,
-        work_dir: Path,
+        frame_width: int,
+        frame_height: int,
+        detector_input_width: int | None = None,
         cancel_event: threading.Event | None = None,
     ) -> list[ExtractedFrame]:
-        """Extract native-resolution frames in a narrow [t - d, t + d] window around an event."""
-        work_dir.mkdir(parents=True, exist_ok=True)
+        """Stream frames in a narrow [t - d, t + d] window through an ffmpeg ``rawvideo`` pipe.
+
+        Nothing is written to disk. Each native frame is downscaled to ``detector_input_width``
+        for detection and kept only as a compact JPEG copy for later cap cropping, so peak RAM
+        per window stays far below holding every raw 4K frame.
+
+        Args:
+            frame_width: Native source width (from ffprobe), needed to slice the raw stream.
+            frame_height: Native source height (from ffprobe).
+            detector_input_width: Detection image width; ``None`` keeps native resolution.
+        """
+        if frame_width < 2 or frame_height < 2:
+            raise ValueError("frame_width and frame_height must be at least 2 pixels.")
         win_start = max(0.0, center_sec - half_window_sec)
         win_end = min(total_duration_sec, center_sec + half_window_sec)
         win_dur = max(0.25, win_end - win_start)
-
-        frame_pattern = work_dir / "frame_%05d.jpg"
-        cmd = [
-            self._ffmpeg_bin,
-            "-y",
-            "-ss",
-            f"{win_start:.3f}",
-            "-i",
-            str(video_path),
-            "-t",
-            f"{win_dur:.3f}",
-            "-vf",
-            f"fps={sample_fps}",
-            "-q:v",
-            "2",
-            str(frame_pattern),
-        ]
-        self._run_command(
-            cmd,
-            "ffmpeg pass2 window extraction",
-            timeout_sec=self._ffmpeg_timeout_sec,
-            cancel_event=cancel_event,
-        )
+        cmd = [self._ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-nostdin"]
+        cmd += self._hwaccel_args()
+        cmd += ["-ss", f"{win_start:.3f}", "-i", str(video_path), "-t", f"{win_dur:.3f}"]
+        cmd += ["-an", "-sn", "-vf", f"fps={sample_fps}"]
+        cmd += ["-f", "rawvideo", "-pix_fmt", "bgr24", "pipe:1"]
 
         extracted: list[ExtractedFrame] = []
-        for idx, frame_path in enumerate(sorted(work_dir.glob("frame_*.jpg"))):
-            image = cv2.imread(str(frame_path), cv2.IMREAD_COLOR)
-            if image is None:
-                logger.warning("Failed to decode extracted frame '%s'; skipping.", frame_path)
-                continue
-            video_time = min(total_duration_sec, win_start + (idx / sample_fps))
-            extracted.append(ExtractedFrame(index=idx, video_time_sec=video_time, image_bgr=image))
-
+        with _RawFrameStream(
+            cmd,
+            frame_bytes=frame_width * frame_height * 3,
+            stage_name="ffmpeg pass2 window extraction",
+            timeout_sec=self._ffmpeg_timeout_sec,
+            cancel_event=cancel_event,
+        ) as stream:
+            while (raw := stream.read_frame()) is not None:
+                idx = len(extracted)
+                native = np.frombuffer(raw, dtype=np.uint8).reshape(frame_height, frame_width, 3)
+                video_time = min(total_duration_sec, win_start + idx / sample_fps)
+                extracted.append(
+                    self._to_extracted_frame(idx, video_time, native, detector_input_width)
+                )
+            stream.finish()
         return extracted
+
+    @staticmethod
+    def _to_extracted_frame(
+        index: int,
+        video_time_sec: float,
+        native_bgr: np.ndarray,
+        detector_input_width: int | None,
+    ) -> ExtractedFrame:
+        height, width = native_bgr.shape[:2]
+        if detector_input_width is None or width <= detector_input_width:
+            return ExtractedFrame(
+                index=index, video_time_sec=video_time_sec, image_bgr=native_bgr.copy()
+            )
+        detection_height = max(2, round(height * detector_input_width / width))
+        detection_image = cv2.resize(
+            native_bgr,
+            (detector_input_width, detection_height),
+            interpolation=cv2.INTER_AREA,
+        )
+        ok, encoded = cv2.imencode(
+            ".jpg", native_bgr, [cv2.IMWRITE_JPEG_QUALITY, NATIVE_JPEG_QUALITY]
+        )
+        if not ok:
+            raise RuntimeError(f"Failed to compress native copy of Pass 2 frame {index}.")
+        return ExtractedFrame(
+            index=index,
+            video_time_sec=video_time_sec,
+            image_bgr=detection_image,
+            native_width=width,
+            native_height=height,
+            native_jpeg=encoded.tobytes(),
+        )
 
     @staticmethod
     def compute_chunk_windows(
         total_duration_sec: float,
         chunk_duration_sec: int,
         overlap_sec: int,
+        align_sec: float = 0.0,
     ) -> list[tuple[float, float]]:
-        """Compute deterministic overlapping [start, end] time ranges covering the full video."""
+        """Compute deterministic overlapping [start, end] time ranges covering the full video.
+
+        A trailing window shorter than half a chunk is backed up so it spans a full chunk (start
+        clamped to >= 0). Windows fully contained in the backed-up tail are dropped, so no
+        duplicate windows are emitted. A clip no longer than one chunk yields one window.
+
+        Args:
+            align_sec: When positive, the backed-up tail start is floored to a multiple of this
+                value (the keyframe interval) so ``-c copy`` slicing lands on a keyframe.
+        """
         if total_duration_sec <= 0:
             return []
         if total_duration_sec <= chunk_duration_sec:
-            return [(0.0, total_duration_sec)]
+            return [(0.0, round(total_duration_sec, 3))]
 
         step = max(1, chunk_duration_sec - overlap_sec)
         windows: list[tuple[float, float]] = []
         cursor = 0.0
-        while cursor < total_duration_sec:
+        while True:
             end_sec = min(total_duration_sec, cursor + chunk_duration_sec)
-            windows.append((round(cursor, 3), round(end_sec, 3)))
+            windows.append((cursor, end_sec))
             if end_sec >= total_duration_sec:
                 break
             cursor += step
-        return windows
+
+        windows = FFmpegClient._back_up_short_tail(
+            windows, total_duration_sec, chunk_duration_sec, align_sec
+        )
+        unique: list[tuple[float, float]] = []
+        for start_sec, end_sec in windows:
+            rounded = (round(start_sec, 3), round(end_sec, 3))
+            if rounded not in unique:
+                unique.append(rounded)
+        return unique
+
+    @staticmethod
+    def _back_up_short_tail(
+        windows: list[tuple[float, float]],
+        total_duration_sec: float,
+        chunk_duration_sec: int,
+        align_sec: float,
+    ) -> list[tuple[float, float]]:
+        tail_start, tail_end = windows[-1]
+        if tail_end - tail_start >= MIN_TAIL_FRACTION * chunk_duration_sec:
+            return windows
+        new_start = max(0.0, total_duration_sec - chunk_duration_sec)
+        if align_sec > 0.0:
+            new_start = math.floor(new_start / align_sec + 1e-9) * align_sec
+        kept = [window for window in windows[:-1] if window[0] < new_start]
+        return [*kept, (new_start, tail_end)]
 
     @staticmethod
     def _parse_frame_rate(raw_rate: str) -> float:

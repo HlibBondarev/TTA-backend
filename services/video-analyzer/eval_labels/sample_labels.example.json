@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1.0",
+  "clipId": "example-clip-REPLACE-ME",
+  "description": "TEMPLATE ONLY - placeholder values, not real match data. Copy to eval_labels/<your-clip>.json (git-ignored) and replace every value with the coach's labels. Field reference: events[].timeSec = event time in video seconds; events[].promptCode = TTA event promptCode from the match snapshot (e.g. EVT_01_G_POS); events[].periodNumber = optional match period; events[].capNumber = cap number of the acting tracked-team player, or null when the event has no tracked-team actor; events[].notes = free text; anchors[].type = PeriodStart | PeriodEnd | StoppageStart | StoppageEnd; anchors[].periodNumber = optional period. Time matching uses --tolerance-sec (default 3).",
+  "events": [
+    {
+      "timeSec": 12.0,
+      "promptCode": "EVT_01_G_POS",
+      "periodNumber": 1,
+      "capNumber": 7,
+      "notes": "placeholder: goal by cap 7"
+    },
+    {
+      "timeSec": 48.5,
+      "promptCode": "EVT_14_GC_NEG",
+      "periodNumber": 1,
+      "capNumber": null,
+      "notes": "placeholder: conceded goal, no tracked-team actor"
+    }
+  ],
+  "anchors": [
+    { "timeSec": 3.0, "type": "PeriodStart", "periodNumber": 1 },
+    { "timeSec": 230.0, "type": "PeriodEnd", "periodNumber": 1 }
+  ]
+}

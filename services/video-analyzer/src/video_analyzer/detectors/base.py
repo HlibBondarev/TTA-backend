@@ -33,6 +33,10 @@ class Detection:
 class BaseObjectDetector(ABC):
     """Strategy interface implemented by all object detection providers."""
 
+    # Remote providers whose calls may safely overlap set this to True; local providers
+    # (ONNX / YOLO) keep the default and are run serially by the orchestrator.
+    supports_concurrent_inference: bool = False
+
     @abstractmethod
     def detect(self, frame_bgr: np.ndarray) -> list[Detection]:
         """Run object detection on a BGR image frame and return canonical detections."""

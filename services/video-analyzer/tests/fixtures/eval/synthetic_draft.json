@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "1.0",
+  "jobId": "00000000-0000-0000-0000-000000000001",
+  "status": "completed",
+  "timeAnchors": [
+    { "type": "PeriodStart", "periodNumber": 1, "videoTimeSec": 3.0, "confidence": 0.9 },
+    { "type": "PeriodEnd", "periodNumber": 1, "videoTimeSec": 210.0, "confidence": 0.9 }
+  ],
+  "events": [
+    {
+      "id": "00000000-0000-0000-0000-0000000000a1",
+      "promptCode": "EVT_01_G_POS",
+      "periodNumber": 1,
+      "videoTimeSec": 11.5,
+      "resolvedCapNumber": 7,
+      "needsReview": false
+    },
+    {
+      "id": "00000000-0000-0000-0000-0000000000a2",
+      "promptCode": "EVT_02_ST_POS",
+      "periodNumber": 1,
+      "videoTimeSec": 41.0,
+      "resolvedCapNumber": null,
+      "needsReview": true
+    },
+    {
+      "id": "00000000-0000-0000-0000-0000000000a3",
+      "promptCode": "EVT_15_X_NEG",
+      "periodNumber": 1,
+      "videoTimeSec": 75.5,
+      "resolvedCapNumber": null,
+      "needsReview": true
+    },
+    {
+      "id": "00000000-0000-0000-0000-0000000000a4",
+      "promptCode": "EVT_01_G_POS",
+      "periodNumber": 2,
+      "videoTimeSec": 300.0,
+      "resolvedCapNumber": 5,
+      "needsReview": false
+    }
+  ]
+}

@@ -43,6 +43,30 @@ class Tracklet:
         return min(self.observations, key=lambda o: abs(o.video_time_sec - video_time_sec))
 
 
+@dataclass(frozen=True, slots=True)
+class FrameDetection:
+    """A non-player scene detection (ball or goal) in native pixel coordinates."""
+
+    frame_index: int
+    video_time_sec: float
+    bbox_xyxy: tuple[float, float, float, float]
+    confidence: float
+    raw_class_name: str
+
+
+@dataclass(slots=True)
+class TrackingResult:
+    """Tracker output: player/cap tracklets plus per-frame ball and goal detections.
+
+    Ball and goal detections are carried through unchanged so later stages (ball-proximity actor
+    scoring) can use them without another tracker refactor.
+    """
+
+    tracklets: list[Tracklet] = field(default_factory=list)
+    ball_detections: list[FrameDetection] = field(default_factory=list)
+    goal_detections: list[FrameDetection] = field(default_factory=list)
+
+
 class _TrackState:
     """Internal mutable tracker state with velocity and camera-motion warp support."""
 
@@ -149,9 +173,22 @@ class BoTSortTracker:
         frames: list[ExtractedFrame],
         detector: BaseObjectDetector,
     ) -> list[Tracklet]:
-        """Run object detection and multi-object tracking across all frames in a window."""
+        """Run detection and tracking across a window and return only the player tracklets."""
+        return self.track_window_with_scene(frames, detector).tracklets
+
+    def track_window_with_scene(
+        self,
+        frames: list[ExtractedFrame],
+        detector: BaseObjectDetector,
+    ) -> TrackingResult:
+        """Track players across a window and also preserve per-frame ball/goal detections.
+
+        Detection runs on each frame's (possibly downscaled) ``image_bgr``; every returned box,
+        including ball and goal boxes, is rescaled to native pixel coordinates.
+        """
+        result = TrackingResult()
         if not frames:
-            return []
+            return result
 
         gmc = SparseOpticalFlowGMC()
         active_tracks: list[_TrackState] = []
@@ -159,11 +196,12 @@ class BoTSortTracker:
         next_track_id = 1
 
         for frame in frames:
-            warp = gmc.compute_warp(frame.image_bgr)
+            warp = _scale_warp_translation(gmc.compute_warp(frame.image_bgr), frame)
             for track in active_tracks:
                 track.predict(warp)
 
-            detections = detector.detect(frame.image_bgr)
+            detections = _detect_in_native_coordinates(detector, frame)
+            _collect_scene_detections(result, frame, detections)
             player_dets = [d for d in detections if d.role == CanonicalRole.PLAYER]
             cap_dets = [d for d in detections if d.role == CanonicalRole.CAP]
             cap_assignments = _match_caps_to_players(player_dets, cap_dets)
@@ -190,14 +228,7 @@ class BoTSortTracker:
             for rel_idx in still_unmatched_rel:
                 remaining_tracks[rel_idx].missed_frames += 1
 
-            still_active: list[_TrackState] = []
-            for track in active_tracks:
-                if track.missed_frames > self._max_lost_frames:
-                    archived_tracks.append(
-                        Tracklet(track_id=track.track_id, observations=track.observations)
-                    )
-                else:
-                    still_active.append(track)
+            still_active = self._archive_expired_tracks(active_tracks, archived_tracks)
 
             for det in unmatched_high:
                 obs = self._build_observation(frame, det, cap_assignments)
@@ -212,7 +243,24 @@ class BoTSortTracker:
             )
 
         archived_tracks.sort(key=lambda t: t.track_id)
-        return archived_tracks
+        result.tracklets = archived_tracks
+        return result
+
+    def _archive_expired_tracks(
+        self,
+        active_tracks: list[_TrackState],
+        archived_tracks: list[Tracklet],
+    ) -> list[_TrackState]:
+        """Move tracks lost for too long into ``archived_tracks``; return the still-active ones."""
+        still_active: list[_TrackState] = []
+        for track in active_tracks:
+            if track.missed_frames > self._max_lost_frames:
+                archived_tracks.append(
+                    Tracklet(track_id=track.track_id, observations=track.observations)
+                )
+            else:
+                still_active.append(track)
+        return still_active
 
     def _associate(
         self,
@@ -261,6 +309,67 @@ class BoTSortTracker:
             raw_class_name=player_det.raw_class_name,
             cap_bbox_xyxy=cap_bbox,
             cap_ambiguous=cap_ambiguous,
+        )
+
+
+def _scale_warp_translation(warp: np.ndarray | None, frame: ExtractedFrame) -> np.ndarray | None:
+    """Convert a camera-motion warp from detection-image pixels to native pixels.
+
+    Only the translation column scales; the rotation/scale part is dimensionless.
+    """
+    if warp is None:
+        return None
+    scaled = warp.copy()
+    scaled[0, 2] *= frame.scale_x
+    scaled[1, 2] *= frame.scale_y
+    return scaled
+
+
+def _detect_in_native_coordinates(
+    detector: BaseObjectDetector,
+    frame: ExtractedFrame,
+) -> list[Detection]:
+    """Run the detector on the detection image and rescale its boxes to native coordinates."""
+    detections = detector.detect(frame.image_bgr)
+    scale_x, scale_y = frame.scale_x, frame.scale_y
+    if scale_x == 1.0 and scale_y == 1.0:
+        return detections
+    return [
+        Detection(
+            bbox_xyxy=(
+                det.bbox_xyxy[0] * scale_x,
+                det.bbox_xyxy[1] * scale_y,
+                det.bbox_xyxy[2] * scale_x,
+                det.bbox_xyxy[3] * scale_y,
+            ),
+            confidence=det.confidence,
+            role=det.role,
+            raw_class_name=det.raw_class_name,
+        )
+        for det in detections
+    ]
+
+
+def _collect_scene_detections(
+    result: TrackingResult,
+    frame: ExtractedFrame,
+    detections: list[Detection],
+) -> None:
+    for det in detections:
+        if det.role == CanonicalRole.BALL:
+            target = result.ball_detections
+        elif det.role == CanonicalRole.GOAL:
+            target = result.goal_detections
+        else:
+            continue
+        target.append(
+            FrameDetection(
+                frame_index=frame.index,
+                video_time_sec=frame.video_time_sec,
+                bbox_xyxy=det.bbox_xyxy,
+                confidence=det.confidence,
+                raw_class_name=det.raw_class_name,
+            )
         )
 
 

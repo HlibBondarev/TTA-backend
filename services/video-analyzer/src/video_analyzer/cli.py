@@ -11,8 +11,11 @@ from pathlib import Path
 from uuid import uuid4
 
 import uvicorn
+from pydantic import ValidationError
 
 from video_analyzer.config import Settings
+from video_analyzer.eval.schema import EvalDraft, GroundTruthLabels
+from video_analyzer.eval.scoring import DEFAULT_TOLERANCE_SEC, evaluate_draft, format_report
 from video_analyzer.logging_utils import configure_safe_http_logging
 from video_analyzer.pipeline.factory import build_default_orchestrator
 from video_analyzer.schemas.draft import GeminiUsageDiagnostics
@@ -89,12 +92,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to .env configuration file (default: .env in current directory if present).",
     )
 
+    evaluate_cmd = subparsers.add_parser(
+        "evaluate",
+        help="Score a generated draft against ground-truth labels (fully offline, no API calls).",
+    )
+    evaluate_cmd.add_argument("--draft", required=True, help="Path to a generated draft JSON file.")
+    evaluate_cmd.add_argument(
+        "--labels",
+        required=True,
+        help="Path to a labels JSON file (see eval_labels/sample_labels.example.json).",
+    )
+    evaluate_cmd.add_argument(
+        "--tolerance-sec",
+        type=float,
+        default=DEFAULT_TOLERANCE_SEC,
+        help=f"Max time difference for an event/anchor match (default {DEFAULT_TOLERANCE_SEC:g}).",
+    )
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "evaluate":
+        # Offline scoring needs no settings, API keys, or .env file.
+        return _run_evaluate(args)
 
     if args.env_file is not None:
         raw_env = args.env_file.strip()
@@ -129,6 +153,29 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.print_help()
     return 1
+
+
+def _run_evaluate(args: argparse.Namespace) -> int:
+    draft_path = Path(args.draft).resolve()
+    labels_path = Path(args.labels).resolve()
+    if args.tolerance_sec < 0:
+        print("Error: --tolerance-sec must be non-negative.", file=sys.stderr)
+        return 2
+    for label, path in (("draft", draft_path), ("labels", labels_path)):
+        if not path.is_file():
+            print(f"Error: {label} file not found: {path}", file=sys.stderr)
+            return 2
+
+    try:
+        draft = EvalDraft.model_validate_json(draft_path.read_text(encoding="utf-8"))
+        labels = GroundTruthLabels.model_validate_json(labels_path.read_text(encoding="utf-8"))
+    except ValidationError as exc:
+        print(f"Error: invalid draft or labels file: {exc}", file=sys.stderr)
+        return 2
+
+    report = evaluate_draft(draft, labels, tolerance_sec=args.tolerance_sec)
+    print(format_report(report, clip_id=labels.clip_id))
+    return 0
 
 
 def _run_analyze(args: argparse.Namespace, settings: Settings) -> int:
