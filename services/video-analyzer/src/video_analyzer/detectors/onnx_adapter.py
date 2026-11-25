@@ -324,7 +324,5 @@ class OnnxDetector(BaseObjectDetector):
 
 def _is_probability_slice(values: np.ndarray) -> bool:
     return bool(
-        np.all(np.isfinite(values))
-        and np.all(values >= -1e-3)
-        and np.all(values <= 1.0 + 1e-3)
+        np.all(np.isfinite(values)) and np.all(values >= -1e-3) and np.all(values <= 1.0 + 1e-3)
     )

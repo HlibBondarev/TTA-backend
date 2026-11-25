@@ -55,8 +55,8 @@ class ActorMatcher:
         diag = hypot(frame_width, frame_height)
         is_gk_event = candidate.definition.name.lower() in {"save", "goalkeeper error"}
         cap_hint = (
-            candidate.cap_color_hint or snapshot.tracked_team.cap_color_hint or ""
-        ).strip().lower()
+            (candidate.cap_color_hint or snapshot.tracked_team.cap_color_hint or "").strip().lower()
+        )
         has_spatial_hint = target_bbox_px is not None
 
         for tracklet in tracklets:

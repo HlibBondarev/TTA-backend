@@ -175,9 +175,7 @@ class BoTSortTracker:
                 active_tracks, high_dets, self._iou_threshold
             )
             for trk_idx, det in matched_tracks:
-                active_tracks[trk_idx].update(
-                    self._build_observation(frame, det, cap_assignments)
-                )
+                active_tracks[trk_idx].update(self._build_observation(frame, det, cap_assignments))
 
             # Second association stage (ByteTrack / BoT-SORT low-confidence recovery)
             remaining_tracks = [active_tracks[i] for i in unmatched_track_indices]
@@ -272,9 +270,7 @@ def compute_cap_crop_box(
 ) -> tuple[float, float, float, float]:
     """Return the padded crop coordinates used for cap number recognition."""
     bx1, by1, bx2, by2 = (
-        cap_bbox_xyxy
-        if cap_bbox_xyxy is not None
-        else _upper_body_cap_zone(player_bbox_xyxy)
+        cap_bbox_xyxy if cap_bbox_xyxy is not None else _upper_body_cap_zone(player_bbox_xyxy)
     )
     pad_x = (bx2 - bx1) * 0.20
     pad_y = (by2 - by1) * 0.20
@@ -296,9 +292,9 @@ def _boxes_overlap(
     box_b: tuple[float, float, float, float],
 ) -> bool:
     """Return True when two xyxy bounding boxes have positive intersection area."""
-    return min(box_a[2], box_b[2]) > max(box_a[0], box_b[0]) and min(
-        box_a[3], box_b[3]
-    ) > max(box_a[1], box_b[1])
+    return min(box_a[2], box_b[2]) > max(box_a[0], box_b[0]) and min(box_a[3], box_b[3]) > max(
+        box_a[1], box_b[1]
+    )
 
 
 def _index_contained_caps(

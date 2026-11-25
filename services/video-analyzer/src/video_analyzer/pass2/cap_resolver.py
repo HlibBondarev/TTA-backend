@@ -228,9 +228,7 @@ class GeminiCropGridCapResolver(BaseCapResolver):
                 )
 
         resolved = (
-            parsed.consensus_cap_number
-            if parsed.consensus_cap_number in allowed_numbers
-            else None
+            parsed.consensus_cap_number if parsed.consensus_cap_number in allowed_numbers else None
         )
         if resolved is not None:
             if scores:

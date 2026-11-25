@@ -20,9 +20,7 @@ _USD_DECIMAL_PLACES: int = 6
 def _read_non_negative_int(source: Any, field_name: str) -> int | None:
     """Safely extract a non-negative integer counter from an object or mapping."""
     raw = (
-        source.get(field_name)
-        if isinstance(source, Mapping)
-        else getattr(source, field_name, None)
+        source.get(field_name) if isinstance(source, Mapping) else getattr(source, field_name, None)
     )
     if raw is None or isinstance(raw, bool):
         return None
@@ -95,9 +93,7 @@ def aggregate_token_usage(usages: Iterable[GeminiTokenUsage | None]) -> GeminiTo
         return GeminiTokenUsage()
 
     has_unaccounted = any(_has_unaccounted_non_thought_tokens(item) for item in active)
-    thoughts_tokens = (
-        None if has_unaccounted else _sum_optional_counter(active, "thoughts_tokens")
-    )
+    thoughts_tokens = None if has_unaccounted else _sum_optional_counter(active, "thoughts_tokens")
     return GeminiTokenUsage(
         call_count=sum(item.call_count for item in active),
         prompt_tokens=_sum_strict_counter(active, "prompt_tokens"),

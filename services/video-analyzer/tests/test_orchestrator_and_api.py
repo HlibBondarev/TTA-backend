@@ -257,9 +257,7 @@ def test_cli_analyze_writes_draft_json(
     video.write_bytes(b"video")
     out_file = tmp_path / "out" / "draft.json"
     snapshot_file = (
-        Path(__file__).resolve().parents[1]
-        / "sample_snapshots"
-        / "waterpolo_default_snapshot.json"
+        Path(__file__).resolve().parents[1] / "sample_snapshots" / "waterpolo_default_snapshot.json"
     )
 
     monkeypatch.setattr(
@@ -603,9 +601,7 @@ def test_orchestrator_aggregates_gemini_usage_and_cost_in_diagnostics_and_cli(
     video.write_bytes(b"video")
     out_file = tmp_path / "out" / "draft_usage.json"
     snapshot_file = (
-        Path(__file__).resolve().parents[1]
-        / "sample_snapshots"
-        / "waterpolo_default_snapshot.json"
+        Path(__file__).resolve().parents[1] / "sample_snapshots" / "waterpolo_default_snapshot.json"
     )
     monkeypatch.setattr(
         "video_analyzer.cli.build_default_orchestrator",

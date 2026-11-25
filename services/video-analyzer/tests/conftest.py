@@ -16,9 +16,7 @@ from video_analyzer.schemas.request import (
 )
 
 SAMPLE_SNAPSHOT_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "sample_snapshots"
-    / "waterpolo_default_snapshot.json"
+    Path(__file__).resolve().parents[1] / "sample_snapshots" / "waterpolo_default_snapshot.json"
 )
 
 

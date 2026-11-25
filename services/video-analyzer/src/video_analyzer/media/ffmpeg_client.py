@@ -155,9 +155,7 @@ class FFmpegClient:
             raise TimeoutError("Source video download timed out while reading response.") from None
         except httpx.HTTPError as exc:
             dest_path.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"Failed to download source video ({type(exc).__name__})."
-            ) from None
+            raise RuntimeError(f"Failed to download source video ({type(exc).__name__}).") from None
         except BaseException:
             dest_path.unlink(missing_ok=True)
             raise
@@ -513,9 +511,7 @@ class FFmpegClient:
 
         if proc.returncode != 0:
             stderr_tail = stderr.strip()[-600:]
-            raise RuntimeError(
-                f"{stage_name} failed (exit {proc.returncode}): {stderr_tail}"
-            )
+            raise RuntimeError(f"{stage_name} failed (exit {proc.returncode}): {stderr_tail}")
         return subprocess.CompletedProcess(
             args=cmd,
             returncode=proc.returncode,

@@ -60,9 +60,7 @@ class RoboflowDetector(BaseObjectDetector):
 
     def detect(self, frame_bgr: np.ndarray) -> list[Detection]:
         if not self._api_key:
-            raise RuntimeError(
-                "ROBOFLOW_API_KEY must be set when DETECTOR_PROVIDER=roboflow."
-            )
+            raise RuntimeError("ROBOFLOW_API_KEY must be set when DETECTOR_PROVIDER=roboflow.")
 
         ok, encoded = cv2.imencode(".jpg", frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
         if not ok:

@@ -355,15 +355,11 @@ def test_tracker_accumulates_missed_frames_and_keeps_relative_velocity() -> None
     )
     pan_warp = np.array([[1.0, 0.0, -35.0], [0.0, 1.0, 0.0]], dtype=np.float64)
     state.predict(pan_warp)
-    state.update(
-        TrackletObservation(1, 0.2, (365.0, 100.0, 445.0, 220.0), 0.9, "White team")
-    )
+    state.update(TrackletObservation(1, 0.2, (365.0, 100.0, 445.0, 220.0), 0.9, "White team"))
     assert state.velocity == pytest.approx((0.0, 0.0), abs=1e-6)
 
     state.predict(pan_warp)
-    state.update(
-        TrackletObservation(2, 0.4, (342.0, 100.0, 422.0, 220.0), 0.9, "White team")
-    )
+    state.update(TrackletObservation(2, 0.4, (342.0, 100.0, 422.0, 220.0), 0.9, "White team"))
     assert state.velocity == pytest.approx((12.0, 0.0), abs=1e-6)
 
 
@@ -537,8 +533,7 @@ def test_cross_player_cap_ambiguity_blocks_auto_assignment(
     tracklets = BoTSortTracker(iou_threshold=0.20).track_window(frames, SyntheticDetector(boxes))
     assert len(tracklets) == 2
     assert all(
-        obs.cap_ambiguous is True and obs.cap_bbox_xyxy is None
-        for obs in tracklets[0].observations
+        obs.cap_ambiguous is True and obs.cap_bbox_xyxy is None for obs in tracklets[0].observations
     )
     assert tracklets[1].observations[0].cap_ambiguous is True
 
@@ -596,15 +591,11 @@ def test_actor_matcher_flags_tied_tracks_and_blocks_auto_confirmation(
     )
     t1 = Tracklet(
         track_id=1,
-        observations=[
-            TrackletObservation(0, 20.0, (160.0, 90.0, 200.0, 180.0), 0.9, "White team")
-        ],
+        observations=[TrackletObservation(0, 20.0, (160.0, 90.0, 200.0, 180.0), 0.9, "White team")],
     )
     t2 = Tracklet(
         track_id=2,
-        observations=[
-            TrackletObservation(0, 20.0, (160.0, 90.0, 200.0, 180.0), 0.9, "White team")
-        ],
+        observations=[TrackletObservation(0, 20.0, (160.0, 90.0, 200.0, 180.0), 0.9, "White team")],
     )
 
     matched = ActorMatcher().match(

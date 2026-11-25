@@ -55,9 +55,7 @@ def create_app(
     def verify_internal_api_key(
         x_internal_api_key: str | None = Header(default=None, alias="X-Internal-Api-Key"),
     ) -> None:
-        if not x_internal_api_key or not hmac.compare_digest(
-            x_internal_api_key, internal_api_key
-        ):
+        if not x_internal_api_key or not hmac.compare_digest(x_internal_api_key, internal_api_key):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or missing X-Internal-Api-Key.",

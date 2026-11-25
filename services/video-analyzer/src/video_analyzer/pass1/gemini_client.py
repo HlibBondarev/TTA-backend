@@ -222,9 +222,7 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
 
         raw_text = getattr(response, "text", None)
         if not isinstance(raw_text, str) or not raw_text.strip():
-            raise RuntimeError(
-                f"Gemini Pass 1 returned an empty response for chunk {chunk_index}."
-            )
+            raise RuntimeError(f"Gemini Pass 1 returned an empty response for chunk {chunk_index}.")
         try:
             payload = json.loads(raw_text)
         except json.JSONDecodeError as exc:

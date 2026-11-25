@@ -72,8 +72,8 @@ class Settings(BaseSettings):
         default_factory=lambda: dict(DEFAULT_CLASS_MAP)
     )
     detector_onnx_input_size: int = Field(default=640, ge=32)
-    detector_onnx_output_layout: Literal["auto", "channels_first", "channels_last", "nms"] = (
-        Field(default="auto")
+    detector_onnx_output_layout: Literal["auto", "channels_first", "channels_last", "nms"] = Field(
+        default="auto"
     )
 
     # Roboflow-specific settings

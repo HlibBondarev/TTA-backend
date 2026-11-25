@@ -109,9 +109,7 @@ class JobStore:
                 "callbackUrl cannot be used because CALLBACK_ALLOWED_ORIGINS is not configured."
             )
         if origin not in self._allowed_callback_origins:
-            raise ValueError(
-                f"callbackUrl origin '{origin}' is not in CALLBACK_ALLOWED_ORIGINS."
-            )
+            raise ValueError(f"callbackUrl origin '{origin}' is not in CALLBACK_ALLOWED_ORIGINS.")
         return stripped
 
     def submit(self, request: AnalyzeJobRequest) -> JobRecord:
