@@ -13,13 +13,13 @@ Follow this sequential delivery workflow for any new feature, bug fix, or refact
    - Ensure local `dev` is up to date, then create and switch to a dedicated branch from `dev` (e.g., `feat/<issue-number>-<short-slug>` or `fix/<issue-number>-<short-slug>`). Never commit directly to `main` or `dev`.
 
 3. **Implement Code**:
-   - Follow all repository rules in `.agents/rules/tta-backend.md` (Clean Architecture/CQRS/Dapper, SonarCloud cognitive complexity < 15, English comments/docs).
+   - For `.NET / C#` (`TTA.*`): Follow all repository rules in `.agents/rules/tta-backend.md` (Clean Architecture/CQRS/Dapper, SonarCloud cognitive complexity < 15, English comments/docs).
+   - For `Python` (`services/video-analyzer/`): Follow Python best practices, keep cognitive complexity low, and write comments/docstrings strictly in English.
 
 4. **Write & Run Unit Tests**:
-   - Add or update xUnit tests covering all new and modified behaviors.
-   - Run full verification from the repository root:
-     - `dotnet build TTA-backend.sln`
-     - `dotnet test TTA-backend.sln`
+   - Run verification for the modified stack(s) (if a PR touches both stacks, run both verification suites):
+     - `.NET / C#` (`TTA.*`): Add or update xUnit tests covering all new and modified behaviors, then run `dotnet build TTA-backend.sln` and `dotnet test TTA-backend.sln` from the repository root.
+     - `Python` (`services/video-analyzer/`): Add or update unit tests and run `pytest`, `ruff check`, and `ruff format --check` (if configured) inside `services/video-analyzer/`.
 
 5. **Commit Changes**:
    - Stage changes and create a clear Conventional Commit message in English (`feat: ...`, `fix: ...`, `test: ...`) describing what changed and why.
@@ -30,4 +30,4 @@ Follow this sequential delivery workflow for any new feature, bug fix, or refact
 7. **Address SonarCloud & CodeRabbit Review Findings**:
    - When review comments are provided, verify each finding against the actual codebase.
    - Fix only valid issues with minimal, surgical edits; skip false positives or out-of-scope nitpicks with a brief technical justification.
-   - Re-run `dotnet build TTA-backend.sln` and `dotnet test TTA-backend.sln` before pushing review fixes and draft concise English replies for the reviewer.
+   - Re-run the applicable verification suite(s) from Step 4 before pushing review fixes and draft concise English replies for the reviewer.
