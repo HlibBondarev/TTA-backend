@@ -71,8 +71,9 @@ def test_fetch_snapshot_reports_network_errors_invalid_json_and_contract_mismatc
     def refuse(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)
 
+    refusing = _client(refuse)
     with pytest.raises(SnapshotSourceError, match="request to the snapshot API failed"):
-        fetch_snapshot(BASE_URL, MATCH_ID, TEAM_ID, client=_client(refuse))
+        fetch_snapshot(BASE_URL, MATCH_ID, TEAM_ID, client=refusing)
 
     html = _client(lambda request: httpx.Response(200, text="<html>not json</html>"))
     with pytest.raises(SnapshotSourceError, match="not valid JSON"):
@@ -85,8 +86,105 @@ def test_fetch_snapshot_reports_network_errors_invalid_json_and_contract_mismatc
 
 @pytest.mark.parametrize("bad_url", ["", "ftp://tta.test", "tta.test", "file:///etc/passwd"])
 def test_build_snapshot_url_rejects_non_http_base_urls(bad_url: str) -> None:
-    with pytest.raises(SnapshotSourceError, match="absolute http"):
+    with pytest.raises(SnapshotSourceError, match=r"http\(s\) URL"):
         build_snapshot_url(bad_url, MATCH_ID, TEAM_ID)
+
+
+def _recording_client() -> tuple[httpx.Client, list[httpx.Request]]:
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json={})
+
+    return _client(handler), sent
+
+
+@pytest.mark.parametrize("bad_id", ["", "not-a-uuid", "../../etc/passwd", f"{MATCH_ID}/../x"])
+def test_fetch_snapshot_rejects_invalid_uuids_without_sending_a_request(bad_id: str) -> None:
+    client, sent = _recording_client()
+    with pytest.raises(SnapshotSourceError, match="valid UUID"):
+        fetch_snapshot(BASE_URL, bad_id, TEAM_ID, client=client)
+    with pytest.raises(SnapshotSourceError, match="valid UUID"):
+        fetch_snapshot(BASE_URL, MATCH_ID, bad_id, client=client)
+    assert sent == []
+
+
+@pytest.mark.parametrize(
+    ("bad_url", "message"),
+    [
+        ("ftp://tta.test", "http"),
+        ("file:///etc/passwd", "http"),
+        ("http://", "http"),
+        ("tta.test", "http"),
+        ("http://user:pw@tta.test", "credentials"),
+        ("http://user@tta.test", "credentials"),
+        ("http://tta.test?x=1", "query"),
+        ("http://tta.test#frag", "query"),
+        ("http://tta.test/;p=1", "query"),
+        ("http://tta.test:99999", "malformed"),
+        ("http://tta.test:abc", "malformed"),
+        ("http://[::1", "malformed"),
+    ],
+)
+def test_fetch_snapshot_rejects_unsafe_base_urls_without_sending_a_request(
+    bad_url: str, message: str
+) -> None:
+    client, sent = _recording_client()
+    with pytest.raises(SnapshotSourceError, match=message):
+        fetch_snapshot(bad_url, MATCH_ID, TEAM_ID, client=client)
+    assert sent == []
+
+
+def test_fetch_snapshot_translates_httpx_invalid_url() -> None:
+    def invalid(request: httpx.Request) -> httpx.Response:
+        raise httpx.InvalidURL("bad url")
+
+    broken = _client(invalid)
+    with pytest.raises(SnapshotSourceError, match="invalid"):
+        fetch_snapshot(BASE_URL, MATCH_ID, TEAM_ID, client=broken)
+
+
+def test_fetch_snapshot_never_follows_redirects() -> None:
+    hosts: list[str] = []
+
+    def redirect(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        return httpx.Response(302, headers={"location": "http://169.254.169.254/latest"})
+
+    redirecting = httpx.Client(transport=httpx.MockTransport(redirect), follow_redirects=True)
+    with pytest.raises(SnapshotSourceError, match="HTTP 302"):
+        fetch_snapshot(BASE_URL, MATCH_ID, TEAM_ID, client=redirecting)
+    assert hosts == ["tta.test"]
+
+
+def test_build_snapshot_url_normalizes_base_and_uses_canonical_uuid_path() -> None:
+    url = build_snapshot_url("HTTP://Tta.Test:8080/root/", str(MATCH_ID).upper(), TEAM_ID)
+    assert url == (
+        f"http://tta.test:8080/root/api/matches/{MATCH_ID}/teams/{TEAM_ID}/analysis-snapshot"
+    )
+
+
+def test_cli_reports_malformed_api_base_url_cleanly_without_a_request(
+    capsys: pytest.CaptureFixture[str], cli_env: dict[str, object]
+) -> None:
+    for bad_url in ("http://tta.test:99999", "http://u:p@tta.test", "ftp://tta.test"):
+        exit_code = cli_main(
+            _analyze_args(
+                cli_env,
+                "--match-id",
+                str(MATCH_ID),
+                "--team-id",
+                str(TEAM_ID),
+                "--api-base-url",
+                bad_url,
+            )
+        )
+        err = capsys.readouterr().err
+        assert exit_code == 2
+        assert err.startswith("Error:")
+        assert "Traceback" not in err
+    assert cli_env["requests"] == []
 
 
 def test_load_snapshot_file_reports_unreadable_and_invalid_files(tmp_path: Path) -> None:
