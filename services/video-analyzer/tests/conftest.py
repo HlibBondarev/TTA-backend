@@ -29,14 +29,14 @@ def _isolated_shared_pacers():
     reset_shared_pacers()
 
 
-@pytest.fixture()
+@pytest.fixture
 def sample_snapshot() -> MatchSnapshot:
     """Load the seeded Water Polo MatchSnapshot fixture."""
     raw = json.loads(SAMPLE_SNAPSHOT_PATH.read_text(encoding="utf-8"))
     return MatchSnapshot.model_validate(raw)
 
 
-@pytest.fixture()
+@pytest.fixture
 def sample_job_request(sample_snapshot: MatchSnapshot, tmp_path: Path) -> AnalyzeJobRequest:
     """Create a valid AnalyzeJobRequest pointing to a dummy local video file."""
     video_file = tmp_path / "match.mp4"

@@ -20,11 +20,13 @@ class SensitiveQueryParamFilter(logging.Filter):
         try:
             rendered = record.getMessage()
         except Exception:
-            return True
-        redacted = redact_sensitive_text(rendered)
-        if redacted != rendered:
-            record.msg = redacted
-            record.args = ()
+            # Unformattable records are passed through untouched.
+            rendered = None
+        if rendered is not None:
+            redacted = redact_sensitive_text(rendered)
+            if redacted != rendered:
+                record.msg = redacted
+                record.args = ()
         return True
 
 

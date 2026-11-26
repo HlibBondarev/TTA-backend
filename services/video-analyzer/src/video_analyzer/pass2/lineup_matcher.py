@@ -11,6 +11,15 @@ from video_analyzer.pass2.cap_resolver import CapResolutionResult
 from video_analyzer.schemas.draft import CandidateLineup
 from video_analyzer.schemas.request import LineupEntry, MatchSnapshot
 
+_LOW_EVENT_CONFIDENCE_THRESHOLD = 0.80
+_MISSING_SPATIAL_HINT_REASON = "MISSING_ACTOR_SPATIAL_HINT"
+
+
+def _add_reason(review_reasons: list[str], reason: str) -> None:
+    """Append ``reason`` unless it is already present, preserving insertion order."""
+    if reason not in review_reasons:
+        review_reasons.append(reason)
+
 
 @dataclass(frozen=True, slots=True)
 class LineupMatchOutcome:
@@ -22,6 +31,22 @@ class LineupMatchOutcome:
     candidate_lineup_ids: list[CandidateLineup]
     needs_review: bool
     review_reasons: list[str]
+
+
+def _needs_review_outcome(
+    cap_confidence: float,
+    candidates: list[CandidateLineup],
+    review_reasons: list[str],
+) -> LineupMatchOutcome:
+    """Build an unresolved outcome that keeps the ranked candidates for human review."""
+    return LineupMatchOutcome(
+        match_lineup_id=None,
+        resolved_cap_number=None,
+        cap_confidence=cap_confidence,
+        candidate_lineup_ids=candidates,
+        needs_review=True,
+        review_reasons=review_reasons,
+    )
 
 
 class LineupMatcher:
@@ -54,20 +79,12 @@ class LineupMatcher:
             by_number[entry.number].append(entry)
 
         missing_spatial_hint = (not has_spatial_hint) or (candidate.actor_bbox_normalized is None)
-        review_reasons: list[str] = list(dict.fromkeys(candidate.review_reasons))
-        if candidate.confidence < 0.80 and "LOW_EVENT_CONFIDENCE" not in review_reasons:
-            review_reasons.append("LOW_EVENT_CONFIDENCE")
-        if actor_match_tied and "TIED_ACTOR_TRACKLET_MATCH" not in review_reasons:
-            review_reasons.append("TIED_ACTOR_TRACKLET_MATCH")
-        if cap_ambiguous and "AMBIGUOUS_CAP_DETECTION" not in review_reasons:
-            review_reasons.append("AMBIGUOUS_CAP_DETECTION")
+        review_reasons = self._initial_review_reasons(candidate, actor_match_tied, cap_ambiguous)
 
         if cap_result is None:
-            failure_reason = pass2_failure_reason or "NO_PLAYER_TRACKLET_MATCHED"
-            if failure_reason not in review_reasons:
-                review_reasons.append(failure_reason)
-            if missing_spatial_hint and "MISSING_ACTOR_SPATIAL_HINT" not in review_reasons:
-                review_reasons.append("MISSING_ACTOR_SPATIAL_HINT")
+            _add_reason(review_reasons, pass2_failure_reason or "NO_PLAYER_TRACKLET_MATCHED")
+            if missing_spatial_hint:
+                _add_reason(review_reasons, _MISSING_SPATIAL_HINT_REASON)
             return LineupMatchOutcome(
                 match_lineup_id=None,
                 resolved_cap_number=None,
@@ -86,25 +103,16 @@ class LineupMatcher:
             candidate=candidate,
             max_candidates=max_candidates,
         )
-
-        if missing_spatial_hint and "MISSING_ACTOR_SPATIAL_HINT" not in review_reasons:
-            review_reasons.append("MISSING_ACTOR_SPATIAL_HINT")
+        if missing_spatial_hint:
+            _add_reason(review_reasons, _MISSING_SPATIAL_HINT_REASON)
 
         resolved_num = cap_result.resolved_cap_number
         matching_entries = by_number.get(resolved_num, []) if resolved_num is not None else []
 
         # Collision guard: never pick arbitrarily if two lineup entries share the same cap number
         if len(matching_entries) > 1:
-            if "DUPLICATE_CAP_NUMBER_IN_LINEUP" not in review_reasons:
-                review_reasons.append("DUPLICATE_CAP_NUMBER_IN_LINEUP")
-            return LineupMatchOutcome(
-                match_lineup_id=None,
-                resolved_cap_number=None,
-                cap_confidence=cap_result.confidence,
-                candidate_lineup_ids=ranked_candidates,
-                needs_review=True,
-                review_reasons=review_reasons,
-            )
+            _add_reason(review_reasons, "DUPLICATE_CAP_NUMBER_IN_LINEUP")
+            return _needs_review_outcome(cap_result.confidence, ranked_candidates, review_reasons)
 
         # Strict non-guessing threshold guard
         if (
@@ -112,26 +120,13 @@ class LineupMatcher:
             or len(matching_entries) == 0
             or cap_result.confidence < min_cap_confidence
         ):
-            if "LOW_CAP_CONFIDENCE" not in review_reasons:
-                review_reasons.append("LOW_CAP_CONFIDENCE")
-            return LineupMatchOutcome(
-                match_lineup_id=None,
-                resolved_cap_number=None,
-                cap_confidence=cap_result.confidence,
-                candidate_lineup_ids=ranked_candidates,
-                needs_review=True,
-                review_reasons=review_reasons,
-            )
+            _add_reason(review_reasons, "LOW_CAP_CONFIDENCE")
+            return _needs_review_outcome(cap_result.confidence, ranked_candidates, review_reasons)
 
         # Unhinted, tied-track, or ambiguous-cap matches must never auto-confirm a lineup entry
         if missing_spatial_hint or actor_match_tied or cap_ambiguous:
-            return LineupMatchOutcome(
-                match_lineup_id=None,
-                resolved_cap_number=None,
-                cap_confidence=round(cap_result.confidence, 4),
-                candidate_lineup_ids=ranked_candidates,
-                needs_review=True,
-                review_reasons=review_reasons,
+            return _needs_review_outcome(
+                round(cap_result.confidence, 4), ranked_candidates, review_reasons
             )
 
         chosen = matching_entries[0]
@@ -143,6 +138,22 @@ class LineupMatcher:
             needs_review=candidate.needs_review or len(review_reasons) > 0,
             review_reasons=review_reasons,
         )
+
+    @staticmethod
+    def _initial_review_reasons(
+        candidate: Pass1EventCandidate,
+        actor_match_tied: bool,
+        cap_ambiguous: bool,
+    ) -> list[str]:
+        """Seed review reasons from Pass 1 plus the Pass 2 tracking/ambiguity signals."""
+        review_reasons: list[str] = list(dict.fromkeys(candidate.review_reasons))
+        if candidate.confidence < _LOW_EVENT_CONFIDENCE_THRESHOLD:
+            _add_reason(review_reasons, "LOW_EVENT_CONFIDENCE")
+        if actor_match_tied:
+            _add_reason(review_reasons, "TIED_ACTOR_TRACKLET_MATCH")
+        if cap_ambiguous:
+            _add_reason(review_reasons, "AMBIGUOUS_CAP_DETECTION")
+        return review_reasons
 
     @staticmethod
     def _build_ranked_candidates(

@@ -93,7 +93,6 @@ class OnnxDetector(BaseObjectDetector):
         if tensor.shape[1] <= 4:
             return []
 
-        boxes_cxcywh = tensor[:, :4]
         class_scores = tensor[:, 4:]
         cls_ids = np.argmax(class_scores, axis=1)
         confidences = class_scores[np.arange(len(class_scores)), cls_ids]
@@ -102,13 +101,33 @@ class OnnxDetector(BaseObjectDetector):
         if not np.any(mask):
             return []
 
-        filtered_boxes = boxes_cxcywh[mask]
         filtered_confs = confidences[mask]
         filtered_cls = cls_ids[mask]
+        xywh_for_nms, xyxy_unscaled = self._project_boxes(
+            tensor[:, :4][mask], orig_width, orig_height, scale, pad_x, pad_y
+        )
+        kept_indices = self._nms_per_class(xywh_for_nms, filtered_confs, filtered_cls)
+        kept_indices.sort(key=lambda idx: (-float(filtered_confs[idx]), idx))
+        return [
+            self._build_detection(
+                xyxy_unscaled[idx], float(filtered_confs[idx]), int(filtered_cls[idx])
+            )
+            for idx in kept_indices
+        ]
 
-        xywh_for_nms: list[list[float]] = []
-        xyxy_unscaled: list[tuple[float, float, float, float]] = []
-        for cx, cy, w, h in filtered_boxes:
+    @staticmethod
+    def _project_boxes(
+        boxes_cxcywh: np.ndarray,
+        orig_width: int,
+        orig_height: int,
+        scale: float,
+        pad_x: float,
+        pad_y: float,
+    ) -> tuple[list[list[float]], list[tuple[float, float, float, float]]]:
+        """Map letterboxed center-format boxes to clamped native-pixel xywh and xyxy lists."""
+        xywh: list[list[float]] = []
+        xyxy: list[tuple[float, float, float, float]] = []
+        for cx, cy, w, h in boxes_cxcywh:
             x1 = float(cx - w / 2.0 - pad_x) / scale
             y1 = float(cy - h / 2.0 - pad_y) / scale
             x2 = float(cx + w / 2.0 - pad_x) / scale
@@ -117,49 +136,45 @@ class OnnxDetector(BaseObjectDetector):
             y1 = max(0.0, min(float(orig_height), y1))
             x2 = max(0.0, min(float(orig_width), x2))
             y2 = max(0.0, min(float(orig_height), y2))
-            xywh_for_nms.append([x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)])
-            xyxy_unscaled.append((x1, y1, x2, y2))
+            xywh.append([x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)])
+            xyxy.append((x1, y1, x2, y2))
+        return xywh, xyxy
 
+    def _nms_per_class(
+        self,
+        xywh_boxes: list[list[float]],
+        confidences: np.ndarray,
+        cls_ids: np.ndarray,
+    ) -> list[int]:
+        """Run class-wise NMS over non-degenerate boxes and return the surviving indices."""
         by_class: dict[int, list[int]] = {}
-        for idx, box in enumerate(xywh_for_nms):
-            if box[2] <= 0.0 or box[3] <= 0.0:
-                continue
-            cls_id = int(filtered_cls[idx])
-            by_class.setdefault(cls_id, []).append(idx)
+        for idx, box in enumerate(xywh_boxes):
+            if box[2] > 0.0 and box[3] > 0.0:
+                by_class.setdefault(int(cls_ids[idx]), []).append(idx)
 
         kept_indices: list[int] = []
         for class_indices in by_class.values():
-            class_boxes = [xywh_for_nms[i] for i in class_indices]
-            class_confs = [float(filtered_confs[i]) for i in class_indices]
-            indices = cv2.dnn.NMSBoxes(
-                class_boxes,
-                class_confs,
-                self._confidence,
-                self._iou,
-            )
-            if len(indices) == 0:
-                continue
-            for local_idx in np.asarray(indices).reshape(-1).tolist():
-                kept_indices.append(class_indices[int(local_idx)])
+            class_boxes = [xywh_boxes[i] for i in class_indices]
+            class_confs = [float(confidences[i]) for i in class_indices]
+            indices = cv2.dnn.NMSBoxes(class_boxes, class_confs, self._confidence, self._iou)
+            local_indices = np.asarray(indices).reshape(-1).tolist() if len(indices) else []
+            kept_indices.extend(class_indices[int(local_idx)] for local_idx in local_indices)
+        return kept_indices
 
-        if not kept_indices:
-            return []
-
-        kept_indices.sort(key=lambda idx: (-float(filtered_confs[idx]), idx))
-        detections: list[Detection] = []
-        for idx in kept_indices:
-            cls_id = int(filtered_cls[idx])
-            raw_name = self._class_names.get(cls_id, str(cls_id))
-            role = self._class_map.map_class(raw_name, fallback_id=cls_id)
-            detections.append(
-                Detection(
-                    bbox_xyxy=xyxy_unscaled[idx],
-                    confidence=float(filtered_confs[idx]),
-                    role=role,
-                    raw_class_name=raw_name,
-                )
-            )
-        return detections
+    def _build_detection(
+        self,
+        bbox_xyxy: tuple[float, float, float, float],
+        confidence: float,
+        cls_id: int,
+    ) -> Detection:
+        raw_name = self._class_names.get(cls_id, str(cls_id))
+        role = self._class_map.map_class(raw_name, fallback_id=cls_id)
+        return Detection(
+            bbox_xyxy=bbox_xyxy,
+            confidence=confidence,
+            role=role,
+            raw_class_name=raw_name,
+        )
 
     def _is_nms_output(self, tensor: np.ndarray) -> bool:
         if self._output_layout == "nms":
@@ -186,35 +201,42 @@ class OnnxDetector(BaseObjectDetector):
         if self._output_layout == "channels_last":
             return False
 
-        if self._class_names:
-            expected_channels = 4 + len(self._class_names)
-            matches_axis0 = tensor.shape[0] == expected_channels
-            matches_axis1 = tensor.shape[1] == expected_channels
-            if matches_axis0 and not matches_axis1:
-                return True
-            if matches_axis1 and not matches_axis0:
-                return False
-
-        if self._output_shape is not None and len(self._output_shape) >= 2:
-            s0, s1 = self._output_shape[-2], self._output_shape[-1]
-            if isinstance(s0, int) and not isinstance(s1, int):
-                return True
-            if isinstance(s1, int) and not isinstance(s0, int):
-                return False
-
-        if tensor.shape[0] > 4 and tensor.shape[1] > 4:
-            cf_scores = tensor[4:, :]
-            cl_scores = tensor[:, 4:]
-            cf_valid = _is_probability_slice(cf_scores)
-            cl_valid = _is_probability_slice(cl_scores)
-            if cf_valid and not cl_valid:
-                return True
-            if cl_valid and not cf_valid:
-                return False
+        hint = self._transpose_hint_from_class_count(tensor)
+        if hint is None:
+            hint = self._transpose_hint_from_declared_shape()
+        if hint is None:
+            hint = self._transpose_hint_from_score_ranges(tensor)
+        if hint is not None:
+            return hint
 
         if tensor.shape[0] != tensor.shape[1]:
             return tensor.shape[0] < tensor.shape[1]
         return True
+
+    def _transpose_hint_from_class_count(self, tensor: np.ndarray) -> bool | None:
+        """Use the model's class count: exactly one axis equal to ``4 + classes`` is channels."""
+        if not self._class_names:
+            return None
+        expected_channels = 4 + len(self._class_names)
+        matches_axis0 = tensor.shape[0] == expected_channels
+        matches_axis1 = tensor.shape[1] == expected_channels
+        return _exclusive_axis_hint(matches_axis0, matches_axis1)
+
+    def _transpose_hint_from_declared_shape(self) -> bool | None:
+        """Use the ONNX-declared shape: the static axis is channels, the dynamic one is anchors."""
+        if self._output_shape is None or len(self._output_shape) < 2:
+            return None
+        s0, s1 = self._output_shape[-2], self._output_shape[-1]
+        return _exclusive_axis_hint(isinstance(s0, int), isinstance(s1, int))
+
+    @staticmethod
+    def _transpose_hint_from_score_ranges(tensor: np.ndarray) -> bool | None:
+        """Prefer the orientation whose class-score slice looks like probabilities."""
+        if tensor.shape[0] <= 4 or tensor.shape[1] <= 4:
+            return None
+        channels_first_valid = _is_probability_slice(tensor[4:, :])
+        channels_last_valid = _is_probability_slice(tensor[:, 4:])
+        return _exclusive_axis_hint(channels_first_valid, channels_last_valid)
 
     def _decode_nms_rows(
         self,
@@ -320,6 +342,15 @@ class OnnxDetector(BaseObjectDetector):
         except Exception:
             return {}
         return {}
+
+
+def _exclusive_axis_hint(first_axis_matches: bool, second_axis_matches: bool) -> bool | None:
+    """Return True/False when exactly the first/second axis matches, else None (ambiguous)."""
+    if first_axis_matches and not second_axis_matches:
+        return True
+    if second_axis_matches and not first_axis_matches:
+        return False
+    return None
 
 
 def _is_probability_slice(values: np.ndarray) -> bool:

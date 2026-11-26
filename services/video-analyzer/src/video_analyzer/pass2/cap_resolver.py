@@ -233,35 +233,8 @@ class GeminiCropGridCapResolver(BaseCapResolver):
         parsed: _GeminiCapGridResponse,
         allowed_numbers: set[int],
     ) -> CapResolutionResult:
-        scores: dict[int, float] = {}
-        for cand in parsed.candidate_numbers:
-            if cand.cap_number in allowed_numbers:
-                scores[cand.cap_number] = max(scores.get(cand.cap_number, 0.0), cand.score)
-
-        for tile in parsed.tile_readings:
-            if tile.cap_number in allowed_numbers:
-                scores[tile.cap_number] = max(
-                    scores.get(tile.cap_number, 0.0), tile.confidence * 0.9
-                )
-
-        resolved = (
-            parsed.consensus_cap_number if parsed.consensus_cap_number in allowed_numbers else None
-        )
-        if resolved is not None:
-            if scores:
-                pre_top_score = max(scores.values())
-                pre_top_candidates = [
-                    num for num, score in scores.items() if score == pre_top_score
-                ]
-                if len(pre_top_candidates) != 1 or pre_top_candidates[0] != resolved:
-                    resolved = None
-            if resolved is not None:
-                scores[resolved] = max(scores.get(resolved, 0.0), parsed.confidence)
-                top_score = max(scores.values(), default=0.0)
-                top_candidates = [num for num, score in scores.items() if score == top_score]
-                if top_score <= 0.0 or len(top_candidates) != 1 or top_candidates[0] != resolved:
-                    resolved = None
-
+        scores = _collect_candidate_scores(parsed, allowed_numbers)
+        resolved = _confirm_consensus(parsed, allowed_numbers, scores)
         resolved_conf = (
             parsed.confidence if resolved is not None else max(scores.values(), default=0.0)
         )
@@ -271,6 +244,49 @@ class GeminiCropGridCapResolver(BaseCapResolver):
             candidate_scores=scores,
             reasoning=parsed.reasoning,
         )
+
+
+def _collect_candidate_scores(
+    parsed: _GeminiCapGridResponse,
+    allowed_numbers: set[int],
+) -> dict[int, float]:
+    """Merge candidate and tile-reading scores for allowed numbers, keeping the best per cap."""
+    scores: dict[int, float] = {}
+    for cand in parsed.candidate_numbers:
+        if cand.cap_number in allowed_numbers:
+            scores[cand.cap_number] = max(scores.get(cand.cap_number, 0.0), cand.score)
+
+    for tile in parsed.tile_readings:
+        if tile.cap_number in allowed_numbers:
+            scores[tile.cap_number] = max(scores.get(tile.cap_number, 0.0), tile.confidence * 0.9)
+    return scores
+
+
+def _sole_top_candidate(scores: dict[int, float]) -> int | None:
+    """Return the cap number holding the unique highest score, or None when tied or empty."""
+    top_score = max(scores.values(), default=0.0)
+    top_candidates = [num for num, score in scores.items() if score == top_score]
+    return top_candidates[0] if len(top_candidates) == 1 else None
+
+
+def _confirm_consensus(
+    parsed: _GeminiCapGridResponse,
+    allowed_numbers: set[int],
+    scores: dict[int, float],
+) -> int | None:
+    """Accept the model's consensus cap only if it also stays the unique top-scoring candidate.
+
+    Mutates ``scores`` by folding the consensus confidence into the accepted cap's score.
+    """
+    consensus = parsed.consensus_cap_number
+    if consensus not in allowed_numbers:
+        return None
+    if scores and _sole_top_candidate(scores) != consensus:
+        return None
+    scores[consensus] = max(scores.get(consensus, 0.0), parsed.confidence)
+    if max(scores.values()) <= 0.0 or _sole_top_candidate(scores) != consensus:
+        return None
+    return consensus
 
 
 class LocalOcrCapResolver(BaseCapResolver):

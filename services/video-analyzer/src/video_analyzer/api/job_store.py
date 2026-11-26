@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 JobStatus = Literal["queued", "processing", "completed", "failed", "cancelled"]
 TerminalJobStatus = Literal["completed", "failed", "cancelled"]
 _TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "failed", "cancelled"})
+_INVALID_CALLBACK_URL_PLACEHOLDER = "<invalid-callback-url>"
 
 
 @dataclass(slots=True)
@@ -211,62 +212,67 @@ class JobStore:
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _run_job(self, request: AnalyzeJobRequest, record: JobRecord) -> None:
-        if record.cancel_event.is_set():
-            callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
-            if callback_url is not None and payload is not None:
-                self._deliver_callback_and_finalize(record, callback_url, payload)
-            return
-
-        if not self._update(record, status="processing", stage="starting", progress=1):
+        if record.cancel_event.is_set() or not self._update(
+            record, status="processing", stage="starting", progress=1
+        ):
             if record.cancel_event.is_set():
                 callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
-                if callback_url is not None and payload is not None:
-                    self._deliver_callback_and_finalize(record, callback_url, payload)
+                self._deliver_if_prepared(record, callback_url, payload)
             return
+
+        callback_url, payload = self._execute_and_finalize(request, record)
+        self._deliver_if_prepared(record, callback_url, payload)
+
+    def _execute_and_finalize(
+        self,
+        request: AnalyzeJobRequest,
+        record: JobRecord,
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """Run the orchestrator and finalize the record, returning any callback to deliver."""
 
         def on_progress(stage: str, pct: int) -> None:
             self._update(record, stage=stage, progress=pct)
 
-        callback_url: str | None = None
-        payload: dict[str, Any] | None = None
         try:
             draft = self._orchestrator.run(
                 request=request,
                 cancel_event=record.cancel_event,
                 progress_callback=on_progress,
             )
-            if record.cancel_event.is_set():
-                callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
-            else:
-                callback_url, payload = self._finalize_and_prepare_callback(
-                    record,
-                    "completed",
-                    draft=draft,
-                )
         except JobCancelledError:
-            callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
+            return self._finalize_and_prepare_callback(record, "cancelled")
         except httpx.HTTPError as exc:
             safe_error = _summarize_job_http_error(exc)
             logger.error("Analysis job %s failed: %s", request.job_id, safe_error)
-            if record.cancel_event.is_set():
-                callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
-            else:
-                callback_url, payload = self._finalize_and_prepare_callback(
-                    record,
-                    "failed",
-                    error_message=safe_error,
-                )
+            return self._finalize_job_outcome(record, "failed", error_message=safe_error)
         except Exception as exc:
             logger.exception("Analysis job %s failed.", request.job_id)
-            if record.cancel_event.is_set():
-                callback_url, payload = self._finalize_and_prepare_callback(record, "cancelled")
-            else:
-                callback_url, payload = self._finalize_and_prepare_callback(
-                    record,
-                    "failed",
-                    error_message=str(exc),
-                )
+            return self._finalize_job_outcome(record, "failed", error_message=str(exc))
+        return self._finalize_job_outcome(record, "completed", draft=draft)
 
+    def _finalize_job_outcome(
+        self,
+        record: JobRecord,
+        target_status: TerminalJobStatus,
+        draft: VideoAnalysisDraft | None = None,
+        error_message: str | None = None,
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """Finalize with ``target_status`` unless cancellation was requested in the meantime."""
+        if record.cancel_event.is_set():
+            return self._finalize_and_prepare_callback(record, "cancelled")
+        return self._finalize_and_prepare_callback(
+            record,
+            target_status,
+            draft=draft,
+            error_message=error_message,
+        )
+
+    def _deliver_if_prepared(
+        self,
+        record: JobRecord,
+        callback_url: str | None,
+        payload: dict[str, Any] | None,
+    ) -> None:
         if callback_url is not None and payload is not None:
             self._deliver_callback_and_finalize(record, callback_url, payload)
 
@@ -433,16 +439,16 @@ def _sanitize_callback_url(callback_url: str) -> str:
     """Return scheme://host[:port]/path with userinfo, query, and fragment stripped."""
     stripped = callback_url.strip()
     if not stripped:
-        return "<invalid-callback-url>"
+        return _INVALID_CALLBACK_URL_PLACEHOLDER
     try:
         parsed = urlsplit(stripped)
         scheme = parsed.scheme.lower()
         hostname = parsed.hostname
         port = parsed.port
     except ValueError:
-        return "<invalid-callback-url>"
+        return _INVALID_CALLBACK_URL_PLACEHOLDER
     if not scheme or not hostname:
-        return "<invalid-callback-url>"
+        return _INVALID_CALLBACK_URL_PLACEHOLDER
     formatted_host = f"[{hostname}]" if ":" in hostname else hostname
     port_part = f":{port}" if port is not None else ""
     return f"{scheme}://{formatted_host}{port_part}{parsed.path}"

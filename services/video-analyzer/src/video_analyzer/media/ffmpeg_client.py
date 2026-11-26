@@ -52,6 +52,8 @@ _KEYFRAME_EPSILON_SEC: float = 1e-3
 _QUARTER_TURN_DEGREES: int = 90
 _FULL_TURN_DEGREES: int = 360
 _ENCODER_LINE_PATTERN = re.compile(r"^\s*V\S*\s+(\S+)")
+_DOWNLOAD_CANCELLED_MESSAGE = "Source video download cancelled."
+_DOWNLOAD_CONNECT_TIMEOUT_CAP_SEC: float = 10.0
 
 # Per-encoder constant-quality arguments (roughly equivalent to libx264 CRF 28).
 _ENCODER_QUALITY_ARGS: dict[str, list[str]] = {
@@ -380,27 +382,16 @@ class FFmpegClient:
         dest_path: Path,
         cancel_event: threading.Event | None,
     ) -> Path:
-        per_op_timeout = min(self._download_read_timeout_sec, self._download_total_timeout_sec)
-        connect_timeout = min(per_op_timeout, 10.0)
-        timeout = httpx.Timeout(
-            connect=connect_timeout,
-            read=per_op_timeout,
-            write=connect_timeout,
-            pool=connect_timeout,
-        )
         deadline = time.monotonic() + self._download_total_timeout_sec
         logger.info("Downloading source video from presigned URI to %s.", dest_path)
 
         try:
-            self._run_coro(
-                self._download_source_video_async(
-                    uri,
-                    dest_path,
-                    timeout,
-                    deadline,
-                    cancel_event,
+            # The file is opened and closed here, outside the event loop. asyncio.run() waits for
+            # in-flight writer threads, so the handle is closed before any cleanup unlinks it.
+            with dest_path.open("wb") as handle:
+                self._run_coro(
+                    self._download_source_video_async(uri, handle, deadline, cancel_event)
                 )
-            )
         except httpx.HTTPStatusError as exc:
             dest_path.unlink(missing_ok=True)
             status_code = exc.response.status_code
@@ -408,7 +399,7 @@ class FFmpegClient:
         except httpx.TimeoutException:
             dest_path.unlink(missing_ok=True)
             if cancel_event is not None and cancel_event.is_set():
-                raise FFmpegCancelledError("Source video download cancelled.") from None
+                raise FFmpegCancelledError(_DOWNLOAD_CANCELLED_MESSAGE) from None
             raise TimeoutError("Source video download timed out while reading response.") from None
         except httpx.HTTPError as exc:
             dest_path.unlink(missing_ok=True)
@@ -418,79 +409,94 @@ class FFmpegClient:
             raise
         return dest_path
 
+    def _build_download_http_timeout(self) -> httpx.Timeout:
+        """Build per-operation httpx timeouts bounded by the total download budget."""
+        per_op_timeout = min(self._download_read_timeout_sec, self._download_total_timeout_sec)
+        connect_timeout = min(per_op_timeout, _DOWNLOAD_CONNECT_TIMEOUT_CAP_SEC)
+        return httpx.Timeout(
+            connect=connect_timeout,
+            read=per_op_timeout,
+            write=connect_timeout,
+            pool=connect_timeout,
+        )
+
     async def _download_source_video_async(
         self,
         uri: str,
-        dest_path: Path,
-        timeout: httpx.Timeout,
+        handle: BinaryIO,
         deadline: float,
         cancel_event: threading.Event | None,
         poll_interval_sec: float = 0.05,
     ) -> None:
+        http_timeout = self._build_download_http_timeout()
+
         async def _stream_download() -> None:
             if isinstance(self._http_client, httpx.AsyncClient):
                 async with self._http_client.stream(
                     "GET",
                     uri,
                     follow_redirects=True,
-                    timeout=timeout,
+                    timeout=http_timeout,
                 ) as response:
-                    await self._consume_async_response(response, dest_path, deadline, cancel_event)
+                    await self._consume_async_response(response, handle, deadline, cancel_event)
                 return
 
             async with (
-                httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client,
+                httpx.AsyncClient(follow_redirects=True, timeout=http_timeout) as client,
                 client.stream("GET", uri) as response,
             ):
-                await self._consume_async_response(response, dest_path, deadline, cancel_event)
+                await self._consume_async_response(response, handle, deadline, cancel_event)
 
         download_task = asyncio.create_task(_stream_download())
         try:
-            while not download_task.done():
-                if cancel_event is not None and cancel_event.is_set():
-                    download_task.cancel()
-                    await asyncio.gather(download_task, return_exceptions=True)
-                    raise FFmpegCancelledError("Source video download cancelled.")
-                remaining = deadline - time.monotonic()
-                if remaining <= 0.0:
-                    download_task.cancel()
-                    await asyncio.gather(download_task, return_exceptions=True)
-                    raise TimeoutError(
-                        "Source video download exceeded total timeout "
-                        f"of {self._download_total_timeout_sec:.1f}s."
-                    )
-                wait_slice = (
-                    min(remaining, poll_interval_sec) if cancel_event is not None else remaining
-                )
-                done, _ = await asyncio.wait({download_task}, timeout=wait_slice)
-                if done:
-                    break
-            await download_task
+            async with asyncio.timeout(max(0.0, deadline - time.monotonic())):
+                await self._await_download_task(download_task, cancel_event, poll_interval_sec)
+        except TimeoutError:
+            raise TimeoutError(self._download_deadline_message()) from None
         except BaseException:
             if not download_task.done():
                 download_task.cancel()
                 await asyncio.gather(download_task, return_exceptions=True)
             raise
 
+    @staticmethod
+    async def _await_download_task(
+        download_task: asyncio.Task[None],
+        cancel_event: threading.Event | None,
+        poll_interval_sec: float,
+    ) -> None:
+        """Wait for the download task, cancelling it as soon as ``cancel_event`` is set."""
+        poll_slice = poll_interval_sec if cancel_event is not None else None
+        while not download_task.done():
+            if cancel_event is not None and cancel_event.is_set():
+                download_task.cancel()
+                await asyncio.gather(download_task, return_exceptions=True)
+                raise FFmpegCancelledError(_DOWNLOAD_CANCELLED_MESSAGE)
+            await asyncio.wait({download_task}, timeout=poll_slice)
+        await download_task
+
+    def _download_deadline_message(self) -> str:
+        return (
+            "Source video download exceeded total timeout "
+            f"of {self._download_total_timeout_sec:.1f}s."
+        )
+
     async def _consume_async_response(
         self,
         response: httpx.Response,
-        dest_path: Path,
+        handle: BinaryIO,
         deadline: float,
         cancel_event: threading.Event | None,
     ) -> None:
         self._check_download_cancelled(cancel_event)
         response.raise_for_status()
-        with dest_path.open("wb") as handle:
-            async for chunk in response.aiter_bytes():
-                self._check_download_cancelled(cancel_event)
-                if time.monotonic() > deadline:
-                    raise TimeoutError(
-                        "Source video download exceeded total timeout "
-                        f"of {self._download_total_timeout_sec:.1f}s."
-                    )
-                handle.write(chunk)
-                self._check_download_cancelled(cancel_event)
+        async for chunk in response.aiter_bytes():
+            self._check_download_cancelled(cancel_event)
+            if time.monotonic() > deadline:
+                raise TimeoutError(self._download_deadline_message())
+            # Disk writes run in a worker thread so they never block the event loop.
+            await asyncio.to_thread(handle.write, chunk)
+            self._check_download_cancelled(cancel_event)
         self._check_download_cancelled(cancel_event)
 
     @staticmethod
@@ -506,7 +512,7 @@ class FFmpegClient:
     @staticmethod
     def _check_download_cancelled(cancel_event: threading.Event | None) -> None:
         if cancel_event is not None and cancel_event.is_set():
-            raise FFmpegCancelledError("Source video download cancelled.")
+            raise FFmpegCancelledError(_DOWNLOAD_CANCELLED_MESSAGE)
 
     def probe(
         self,
@@ -1051,10 +1057,37 @@ class FFmpegClient:
         cancel_event: threading.Event | None = None,
         poll_interval_sec: float = 0.1,
     ) -> subprocess.CompletedProcess[str]:
+        proc = FFmpegClient._spawn_text_process(cmd, stage_name, cancel_event)
+        with proc:
+            stdout, stderr = FFmpegClient._communicate_until_done(
+                proc,
+                stage_name,
+                timeout_sec=timeout_sec,
+                cancel_event=cancel_event,
+                poll_interval_sec=poll_interval_sec,
+            )
+
+        if proc.returncode != 0:
+            stderr_tail = stderr.strip()[-600:]
+            raise RuntimeError(f"{stage_name} failed (exit {proc.returncode}): {stderr_tail}")
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=proc.returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    @staticmethod
+    def _spawn_text_process(
+        cmd: list[str],
+        stage_name: str,
+        cancel_event: threading.Event | None,
+    ) -> subprocess.Popen[str]:
+        """Start ``cmd`` with text pipes, honouring a pre-set cancellation event."""
         if cancel_event is not None and cancel_event.is_set():
             raise FFmpegCancelledError(f"{stage_name} cancelled before subprocess start.")
         try:
-            proc = subprocess.Popen(
+            return subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -1067,38 +1100,33 @@ class FFmpegClient:
                 f"Required binary '{cmd[0]}' for {stage_name} was not found on PATH."
             ) from exc
 
+    @staticmethod
+    def _communicate_until_done(
+        proc: subprocess.Popen[str],
+        stage_name: str,
+        *,
+        timeout_sec: float,
+        cancel_event: threading.Event | None,
+        poll_interval_sec: float,
+    ) -> tuple[str, str]:
+        """Wait for ``proc`` to exit, polling for cancellation until the deadline passes."""
         deadline = time.monotonic() + timeout_sec
-        stdout = ""
-        stderr = ""
-        with proc:
-            while True:
-                if cancel_event is not None and cancel_event.is_set():
-                    FFmpegClient._terminate_process(proc)
-                    raise FFmpegCancelledError(f"{stage_name} cancelled while running.")
-                remaining = deadline - time.monotonic()
-                if remaining <= 0.0:
-                    FFmpegClient._terminate_process(proc)
-                    raise TimeoutError(f"{stage_name} timed out after {timeout_sec:.1f}s.")
-                slice_timeout = (
-                    min(remaining, poll_interval_sec) if cancel_event is not None else remaining
-                )
-                try:
-                    out, err = proc.communicate(timeout=slice_timeout)
-                    stdout = out or ""
-                    stderr = err or ""
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
-
-        if proc.returncode != 0:
-            stderr_tail = stderr.strip()[-600:]
-            raise RuntimeError(f"{stage_name} failed (exit {proc.returncode}): {stderr_tail}")
-        return subprocess.CompletedProcess(
-            args=cmd,
-            returncode=proc.returncode,
-            stdout=stdout,
-            stderr=stderr,
-        )
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                FFmpegClient._terminate_process(proc)
+                raise FFmpegCancelledError(f"{stage_name} cancelled while running.")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                FFmpegClient._terminate_process(proc)
+                raise TimeoutError(f"{stage_name} timed out after {timeout_sec:.1f}s.")
+            slice_timeout = (
+                min(remaining, poll_interval_sec) if cancel_event is not None else remaining
+            )
+            try:
+                out, err = proc.communicate(timeout=slice_timeout)
+            except subprocess.TimeoutExpired:
+                continue
+            return out or "", err or ""
 
     @staticmethod
     def _terminate_process(proc: subprocess.Popen[str]) -> None:

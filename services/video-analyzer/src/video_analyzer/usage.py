@@ -213,6 +213,24 @@ def estimate_call_cost_usd(
     return estimate.total_cost_usd or 0.0
 
 
+def _stage_model_label(stage: GeminiStageUsageDiagnostics) -> str:
+    """Return a normalized model label for a stage, falling back to the raw name or 'unknown'."""
+    return normalize_gemini_model_name(stage.model or "") or (stage.model or "unknown")
+
+
+def _unavailable_cost_estimate(*, pricing_configured: bool, note: str) -> GeminiCostEstimate:
+    """Build a cost estimate carrying no amounts, only an explanatory note."""
+    return GeminiCostEstimate(
+        currency="USD",
+        is_estimate=True,
+        pricing_configured=pricing_configured,
+        input_cost_usd=None,
+        output_cost_usd=None,
+        total_cost_usd=None,
+        note=note,
+    )
+
+
 def _combine_stage_costs(
     stages: Iterable[GeminiStageUsageDiagnostics],
 ) -> GeminiCostEstimate | None:
@@ -230,28 +248,20 @@ def _combine_stage_costs(
     for stage in active_stages:
         estimate = stage.estimated_cost
         if estimate is None or not estimate.pricing_configured:
-            model_label = normalize_gemini_model_name(stage.model or "") or (
-                stage.model or "unknown"
-            )
+            model_label = _stage_model_label(stage)
             if model_label not in unconfigured_models:
                 unconfigured_models.append(model_label)
-            continue
-        if estimate.total_cost_usd is None:
+        elif estimate.total_cost_usd is None:
             has_incomplete_metadata = True
-            continue
-        input_total += estimate.input_cost_usd or 0.0
-        output_total += estimate.output_cost_usd or 0.0
-        combined_total += estimate.total_cost_usd
+        else:
+            input_total += estimate.input_cost_usd or 0.0
+            output_total += estimate.output_cost_usd or 0.0
+            combined_total += estimate.total_cost_usd
 
     if unconfigured_models:
         models_str = ", ".join(unconfigured_models)
-        return GeminiCostEstimate(
-            currency="USD",
-            is_estimate=True,
+        return _unavailable_cost_estimate(
             pricing_configured=False,
-            input_cost_usd=None,
-            output_cost_usd=None,
-            total_cost_usd=None,
             note=(
                 "Total estimated cost unavailable; "
                 f"unconfigured pricing for model(s): {models_str}."
@@ -259,13 +269,8 @@ def _combine_stage_costs(
         )
 
     if has_incomplete_metadata:
-        return GeminiCostEstimate(
-            currency="USD",
-            is_estimate=True,
+        return _unavailable_cost_estimate(
             pricing_configured=True,
-            input_cost_usd=None,
-            output_cost_usd=None,
-            total_cost_usd=None,
             note=(
                 "Total estimated cost unavailable due to incomplete token usage metadata "
                 "in one or more active stages."
