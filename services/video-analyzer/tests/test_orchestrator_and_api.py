@@ -305,13 +305,12 @@ def test_request_schemas_validate_unique_definition_ids_and_team_consistency(
             update={"event_definition_id": sample_snapshot.event_definitions[0].event_definition_id}
         ),
     ]
+    duplicate_payload = {
+        **sample_snapshot.model_dump(by_alias=True),
+        "eventDefinitions": [d.model_dump(by_alias=True) for d in dup_defs],
+    }
     with pytest.raises(ValidationError, match="eventDefinitionId"):
-        MatchSnapshot.model_validate(
-            {
-                **sample_snapshot.model_dump(by_alias=True),
-                "eventDefinitions": [d.model_dump(by_alias=True) for d in dup_defs],
-            }
-        )
+        MatchSnapshot.model_validate(duplicate_payload)
 
     mismatched_payload = {
         **sample_job_request.model_dump(by_alias=True),

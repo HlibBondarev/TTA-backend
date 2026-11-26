@@ -207,6 +207,15 @@ docker run --rm --env-file .env `
     --debug-dir "/debug/4min"
 ```
 
+The image runs as an unprivileged `app` user and installs only hash-pinned wheels from
+`requirements/<extras>.txt` (`onnx` by default; `--build-arg INSTALL_EXTRAS=yolo,onnx` selects
+`requirements/yolo-onnx.txt`). Regenerate a lock file after changing `pyproject.toml`:
+
+```powershell
+uv pip compile pyproject.toml --extra onnx --python-version 3.12 --python-platform linux `
+  --generate-hashes --only-binary :all: --no-header -o requirements/onnx.txt
+```
+
 ---
 
 ## Running Tests

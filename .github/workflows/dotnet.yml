@@ -74,7 +74,9 @@ jobs:
           -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
 
       - name: Lint Python video-analyzer (Ruff)
-        run: ruff check services/video-analyzer
+        run: |
+          ruff check services/video-analyzer
+          ruff format --check services/video-analyzer
 
       - name: Run Python video-analyzer tests with coverage
         env:

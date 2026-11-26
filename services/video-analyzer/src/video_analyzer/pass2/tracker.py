@@ -11,6 +11,8 @@ import numpy as np
 from video_analyzer.detectors.base import BaseObjectDetector, CanonicalRole, Detection
 from video_analyzer.media.ffmpeg_client import ExtractedFrame
 
+_MIN_GMC_POINTS = 6
+
 
 @dataclass(slots=True)
 class TrackletObservation:
@@ -110,41 +112,48 @@ class SparseOpticalFlowGMC:
     def compute_warp(self, frame_bgr: np.ndarray) -> np.ndarray | None:
         """Estimate 2x3 affine transformation from previous frame to current frame."""
         gray, scale = self._to_downscaled_gray(frame_bgr)
-        if self._prev_gray is None:
-            self._prev_gray = gray
-            self._prev_scale = scale
+        prev_gray = self._prev_gray
+        self._prev_gray = gray
+        self._prev_scale = scale
+        if prev_gray is None:
             return None
 
-        warp: np.ndarray | None = None
+        matrix = self._estimate_partial_affine(prev_gray, gray)
+        if matrix is None:
+            return None
+        # The affine was estimated on downscaled frames; translate it back to input pixels.
+        inv_scale = 1.0 / scale
+        warp = matrix.copy()
+        warp[0, 2] *= inv_scale
+        warp[1, 2] *= inv_scale
+        return warp
+
+    @staticmethod
+    def _estimate_partial_affine(prev_gray: np.ndarray, gray: np.ndarray) -> np.ndarray | None:
+        """Track sparse corners between two gray frames and fit a RANSAC partial affine."""
         prev_pts = cv2.goodFeaturesToTrack(
-            self._prev_gray,
+            prev_gray,
             maxCorners=200,
             qualityLevel=0.01,
             minDistance=20,
         )
-        if prev_pts is not None and len(prev_pts) >= 6:
-            curr_pts, status, _ = cv2.calcOpticalFlowPyrLK(self._prev_gray, gray, prev_pts, None)
-            if curr_pts is not None and status is not None:
-                valid = status.reshape(-1) == 1
-                good_prev = prev_pts[valid]
-                good_curr = curr_pts[valid]
-                if len(good_prev) >= 6:
-                    matrix, _ = cv2.estimateAffinePartial2D(
-                        good_prev,
-                        good_curr,
-                        method=cv2.RANSAC,
-                        ransacReprojThreshold=3.0,
-                    )
-                    if matrix is not None:
-                        inv_scale = 1.0 / scale
-                        scaled = matrix.copy()
-                        scaled[0, 2] *= inv_scale
-                        scaled[1, 2] *= inv_scale
-                        warp = scaled
-
-        self._prev_gray = gray
-        self._prev_scale = scale
-        return warp
+        if prev_pts is None or len(prev_pts) < _MIN_GMC_POINTS:
+            return None
+        curr_pts, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, gray, prev_pts, None)
+        if curr_pts is None or status is None:
+            return None
+        valid = status.reshape(-1) == 1
+        good_prev = prev_pts[valid]
+        good_curr = curr_pts[valid]
+        if len(good_prev) < _MIN_GMC_POINTS:
+            return None
+        matrix, _ = cv2.estimateAffinePartial2D(
+            good_prev,
+            good_curr,
+            method=cv2.RANSAC,
+            ransacReprojThreshold=3.0,
+        )
+        return matrix
 
     def _to_downscaled_gray(self, frame_bgr: np.ndarray) -> tuple[np.ndarray, float]:
         height, width = frame_bgr.shape[:2]

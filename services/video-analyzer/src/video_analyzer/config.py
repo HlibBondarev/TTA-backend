@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import math
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -19,6 +20,8 @@ DEFAULT_GEMINI_PASS2_MODEL: str = "gemini-3.5-flash-lite"
 
 ThinkingLevelName = Literal["MINIMAL", "LOW", "MEDIUM", "HIGH"]
 _UNSET_TEXT_VALUES: frozenset[str] = frozenset({"", "none", "null", "unset", "off"})
+_DEFAULT_HTTP_PORT: int = 80
+_DEFAULT_HTTPS_PORT: int = 443
 
 # Default estimated USD pricing per 1,000,000 tokens (thinking tokens billed at output rate).
 # Override or extend via GEMINI_MODEL_PRICING_USD_PER_1M.
@@ -175,23 +178,14 @@ class Settings(BaseSettings):
             return value.strip().lower() or "auto"
         return value
 
-    @field_validator("detector_provider", mode="before")
+    @field_validator(
+        "detector_provider",
+        "cap_resolver_provider",
+        "detector_onnx_output_layout",
+        mode="before",
+    )
     @classmethod
     def _normalize_provider(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return value.strip().lower()
-        return value
-
-    @field_validator("cap_resolver_provider", mode="before")
-    @classmethod
-    def _normalize_cap_resolver(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return value.strip().lower()
-        return value
-
-    @field_validator("detector_onnx_output_layout", mode="before")
-    @classmethod
-    def _normalize_onnx_output_layout(cls, value: Any) -> Any:
         if isinstance(value, str):
             return value.strip().lower()
         return value
@@ -227,28 +221,8 @@ class Settings(BaseSettings):
     @field_validator("callback_allowed_origins", mode="before")
     @classmethod
     def _parse_callback_allowed_origins(cls, value: Any) -> list[str]:
-        if value is None or value == "":
-            return []
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                return []
-            if stripped.startswith("["):
-                loaded = json.loads(stripped)
-                if not isinstance(loaded, list):
-                    raise ValueError(
-                        "CALLBACK_ALLOWED_ORIGINS JSON value must be a list of origin strings."
-                    )
-                items = [str(item).strip() for item in loaded if str(item).strip()]
-            else:
-                items = [part.strip() for part in stripped.split(",") if part.strip()]
-        elif isinstance(value, (list, tuple, set)):
-            items = [str(item).strip() for item in value if str(item).strip()]
-        else:
-            raise ValueError("Unsupported type for CALLBACK_ALLOWED_ORIGINS.")
-
         normalized: list[str] = []
-        for item in items:
+        for item in _collect_callback_origin_items(value):
             origin = normalize_origin(item)
             if origin not in normalized:
                 normalized.append(origin)
@@ -292,6 +266,33 @@ class Settings(BaseSettings):
                 "starting the API server."
             )
         return key
+
+
+def _clean_text_items(items: Iterable[Any]) -> list[str]:
+    """Stringify and strip items, dropping the ones that end up empty."""
+    cleaned = (str(item).strip() for item in items)
+    return [item for item in cleaned if item]
+
+
+def _split_origin_text(text: str) -> list[str]:
+    """Split a raw CALLBACK_ALLOWED_ORIGINS string (JSON list or comma-separated) into items."""
+    if not text.startswith("["):
+        return _clean_text_items(text.split(","))
+    loaded = json.loads(text)
+    if not isinstance(loaded, list):
+        raise ValueError("CALLBACK_ALLOWED_ORIGINS JSON value must be a list of origin strings.")
+    return _clean_text_items(loaded)
+
+
+def _collect_callback_origin_items(value: Any) -> list[str]:
+    """Return the raw (not yet normalized) origin strings from an env/config value."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return _split_origin_text(value.strip())
+    if isinstance(value, (list, tuple, set)):
+        return _clean_text_items(value)
+    raise ValueError("Unsupported type for CALLBACK_ALLOWED_ORIGINS.")
 
 
 def normalize_origin(raw_origin: str) -> str:
@@ -373,7 +374,9 @@ def _parse_origin(raw_url: str, *, allow_path_and_query: bool) -> str:
     if allow_path_and_query and parsed.fragment:
         raise ValueError("Callback URLs must not contain URL fragments.")
 
-    port = parsed.port if parsed.port is not None else (80 if scheme == "http" else 443)
+    port = parsed.port
+    if port is None:
+        port = _DEFAULT_HTTP_PORT if scheme == "http" else _DEFAULT_HTTPS_PORT
     formatted_host = f"[{hostname}]" if ":" in hostname else hostname
     return f"{scheme}://{formatted_host}:{port}"
 
