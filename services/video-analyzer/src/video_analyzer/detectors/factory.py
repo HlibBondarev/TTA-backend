@@ -29,6 +29,8 @@ class DetectorFactory:
                 class_map=class_map,
                 timeout_sec=settings.roboflow_timeout_sec,
                 allow_insecure_local_http=settings.roboflow_allow_insecure_local_http,
+                max_retries=settings.roboflow_max_retries,
+                retry_base_sec=settings.roboflow_retry_base_sec,
             )
 
         if provider == "local_yolo":

@@ -19,6 +19,7 @@ from video_analyzer.pass2.tracker import (
     BoTSortTracker,
     Tracklet,
     TrackletObservation,
+    _scale_warp_translation,
     _TrackState,
     _warp_bbox,
 )
@@ -355,15 +356,11 @@ def test_tracker_accumulates_missed_frames_and_keeps_relative_velocity() -> None
     )
     pan_warp = np.array([[1.0, 0.0, -35.0], [0.0, 1.0, 0.0]], dtype=np.float64)
     state.predict(pan_warp)
-    state.update(
-        TrackletObservation(1, 0.2, (365.0, 100.0, 445.0, 220.0), 0.9, "White team")
-    )
+    state.update(TrackletObservation(1, 0.2, (365.0, 100.0, 445.0, 220.0), 0.9, "White team"))
     assert state.velocity == pytest.approx((0.0, 0.0), abs=1e-6)
 
     state.predict(pan_warp)
-    state.update(
-        TrackletObservation(2, 0.4, (342.0, 100.0, 422.0, 220.0), 0.9, "White team")
-    )
+    state.update(TrackletObservation(2, 0.4, (342.0, 100.0, 422.0, 220.0), 0.9, "White team"))
     assert state.velocity == pytest.approx((12.0, 0.0), abs=1e-6)
 
 
@@ -537,8 +534,7 @@ def test_cross_player_cap_ambiguity_blocks_auto_assignment(
     tracklets = BoTSortTracker(iou_threshold=0.20).track_window(frames, SyntheticDetector(boxes))
     assert len(tracklets) == 2
     assert all(
-        obs.cap_ambiguous is True and obs.cap_bbox_xyxy is None
-        for obs in tracklets[0].observations
+        obs.cap_ambiguous is True and obs.cap_bbox_xyxy is None for obs in tracklets[0].observations
     )
     assert tracklets[1].observations[0].cap_ambiguous is True
 
@@ -596,15 +592,11 @@ def test_actor_matcher_flags_tied_tracks_and_blocks_auto_confirmation(
     )
     t1 = Tracklet(
         track_id=1,
-        observations=[
-            TrackletObservation(0, 20.0, (160.0, 90.0, 200.0, 180.0), 0.9, "White team")
-        ],
+        observations=[TrackletObservation(0, 20.0, (160.0, 90.0, 200.0, 180.0), 0.9, "White team")],
     )
     t2 = Tracklet(
         track_id=2,
-        observations=[
-            TrackletObservation(0, 20.0, (160.0, 90.0, 200.0, 180.0), 0.9, "White team")
-        ],
+        observations=[TrackletObservation(0, 20.0, (160.0, 90.0, 200.0, 180.0), 0.9, "White team")],
     )
 
     matched = ActorMatcher().match(
@@ -807,3 +799,180 @@ def test_unique_cap_crop_overlapping_neighbor_unowned_head_marks_ambiguous(
     assert clean_tracklets[0].observations[0].cap_ambiguous is False
     assert clean_tracklets[1].observations[0].cap_bbox_xyxy == (105.0, 10.0, 120.0, 30.0)
     assert clean_tracklets[1].observations[0].cap_ambiguous is False
+
+
+# ---------------------------------------------------------------------------------------------
+# Issue #157: downscaled detection, native rescaling, BALL/GOAL preservation
+# ---------------------------------------------------------------------------------------------
+
+
+def _downscaled_frame(index: int, time_sec: float, native: np.ndarray, det_width: int):
+    """Build an ExtractedFrame whose detection image is a downscaled copy of ``native``."""
+    height, width = native.shape[:2]
+    det_height = round(height * det_width / width)
+    ok, encoded = cv2.imencode(".jpg", native, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    assert ok
+    return ExtractedFrame(
+        index=index,
+        video_time_sec=time_sec,
+        image_bgr=cv2.resize(native, (det_width, det_height), interpolation=cv2.INTER_AREA),
+        native_width=width,
+        native_height=height,
+        native_jpeg=encoded.tobytes(),
+    )
+
+
+def test_tracker_detects_on_downscaled_frames_and_returns_native_coordinates() -> None:
+    native = np.zeros((720, 1280, 3), dtype=np.uint8)
+    frames = [_downscaled_frame(i, 10.0 + i * 0.25, native, det_width=640) for i in range(3)]
+    seen_shapes: list[tuple[int, ...]] = []
+
+    class RecordingDetector(SyntheticDetector):
+        def detect(self, frame_bgr: np.ndarray) -> list[Detection]:
+            seen_shapes.append(frame_bgr.shape)
+            return super().detect(frame_bgr)
+
+    # Boxes are expressed in the 640x360 detection image.
+    det_box = (100.0, 50.0, 140.0, 140.0)
+    detector = RecordingDetector(
+        {i: [Detection(det_box, 0.9, CanonicalRole.PLAYER, "White team")] for i in range(3)}
+    )
+
+    tracklets = BoTSortTracker().track_window(frames, detector)
+
+    assert seen_shapes == [(360, 640, 3)] * 3, "detector only sees the downscaled image"
+    assert len(tracklets) == 1
+    for obs in tracklets[0].observations:
+        assert obs.bbox_xyxy == pytest.approx((200.0, 100.0, 280.0, 280.0))
+
+
+def test_tracker_rescales_cap_boxes_and_keeps_native_cap_crops() -> None:
+    native = np.zeros((720, 1280, 3), dtype=np.uint8)
+    cv2.putText(native, "9", (230, 150), cv2.FONT_HERSHEY_SIMPLEX, 3.0, (255, 255, 255), 6)
+    frame = _downscaled_frame(0, 10.0, native, det_width=640)
+    player = Detection((100.0, 50.0, 160.0, 140.0), 0.9, CanonicalRole.PLAYER, "White team")
+    cap = Detection((110.0, 55.0, 150.0, 85.0), 0.8, CanonicalRole.CAP, "cap")
+
+    result = BoTSortTracker().track_window_with_scene(
+        [frame], SyntheticDetector({0: [player, cap]})
+    )
+    obs = result.tracklets[0].observations[0]
+    assert obs.cap_bbox_xyxy == pytest.approx((220.0, 110.0, 300.0, 170.0))
+
+    selected = CropSelector().select_and_build_sheet(result.tracklets[0], [frame], max_crops=1)
+    assert selected is not None
+    crop_h, crop_w = selected.crops[0].crop_bgr.shape[:2]
+    # Native cap box is 80x60 plus 20% padding per side, i.e. 112x84 native pixels.
+    assert (crop_w, crop_h) == (112, 84)
+    assert selected.crops[0].crop_bgr.max() > 200, (
+        "crop comes from native pixels, not the thumbnail"
+    )
+
+
+def test_tracker_preserves_ball_and_goal_detections_without_changing_player_tracking() -> None:
+    frames = [
+        ExtractedFrame(
+            index=i, video_time_sec=5.0 + i * 0.25, image_bgr=np.zeros((360, 640, 3), np.uint8)
+        )
+        for i in range(3)
+    ]
+    player = Detection((100.0, 100.0, 180.0, 220.0), 0.9, CanonicalRole.PLAYER, "White team")
+    referee = Detection((300.0, 100.0, 340.0, 200.0), 0.9, CanonicalRole.REFEREE, "Referee")
+
+    def scene(i: int) -> list[Detection]:
+        return [
+            player,
+            referee,
+            Detection(
+                (200.0 + i * 5, 150.0, 215.0 + i * 5, 165.0), 0.7, CanonicalRole.BALL, "ball"
+            ),
+            Detection((500.0, 20.0, 620.0, 120.0), 0.85, CanonicalRole.GOAL, "Goal"),
+        ]
+
+    with_scene = BoTSortTracker().track_window_with_scene(
+        frames, SyntheticDetector({i: scene(i) for i in range(3)})
+    )
+    players_only = BoTSortTracker().track_window(
+        frames, SyntheticDetector({i: [player] for i in range(3)})
+    )
+
+    assert [d.frame_index for d in with_scene.ball_detections] == [0, 1, 2]
+    assert with_scene.ball_detections[2].bbox_xyxy == (210.0, 150.0, 225.0, 165.0)
+    assert with_scene.ball_detections[0].video_time_sec == 5.0
+    assert [d.raw_class_name for d in with_scene.goal_detections] == ["Goal"] * 3
+    assert with_scene.goal_detections[0].bbox_xyxy == (500.0, 20.0, 620.0, 120.0)
+
+    # PLAYER/CAP tracking is unchanged: same tracklets whether or not extra roles are present,
+    # and referees never become tracklets.
+    assert [(t.track_id, len(t.observations)) for t in with_scene.tracklets] == [
+        (t.track_id, len(t.observations)) for t in players_only
+    ]
+    assert len(with_scene.tracklets) == 1
+
+
+def test_tracker_ball_and_goal_boxes_are_rescaled_to_native_coordinates() -> None:
+    native = np.zeros((720, 1280, 3), dtype=np.uint8)
+    frame = _downscaled_frame(0, 1.0, native, det_width=640)
+    ball = Detection((10.0, 20.0, 20.0, 30.0), 0.6, CanonicalRole.BALL, "ball")
+    result = BoTSortTracker().track_window_with_scene([frame], SyntheticDetector({0: [ball]}))
+    assert result.ball_detections[0].bbox_xyxy == pytest.approx((20.0, 40.0, 40.0, 60.0))
+    assert result.goal_detections == []
+    assert BoTSortTracker().track_window_with_scene([], SyntheticDetector({})).tracklets == []
+
+
+def test_camera_motion_translation_is_scaled_from_detection_to_native_pixels() -> None:
+    frame = ExtractedFrame(
+        index=0,
+        video_time_sec=0.0,
+        image_bgr=np.zeros((360, 640, 3), dtype=np.uint8),
+        native_width=1280,
+        native_height=720,
+    )
+    # Equal axis scales leave the linear part untouched; only the translation column scales.
+    warp = np.array([[0.99, -0.01, 10.0], [0.01, 0.99, -4.0]])
+    scaled = _scale_warp_translation(warp, frame)
+    assert scaled is not None
+    assert scaled[:, :2] == pytest.approx(warp[:, :2])
+    assert scaled[:, 2] == pytest.approx([20.0, -8.0])
+    assert warp[0, 2] == 10.0, "the input warp is not mutated"
+    assert _scale_warp_translation(None, frame) is None
+
+    native_frame = ExtractedFrame(index=1, video_time_sec=0.0, image_bgr=frame.image_bgr)
+    assert _scale_warp_translation(warp, native_frame)[:, 2] == pytest.approx([10.0, -4.0])
+
+
+def test_camera_motion_rotation_is_scaled_per_axis_for_unequal_scales() -> None:
+    frame = ExtractedFrame(
+        index=0,
+        video_time_sec=0.0,
+        image_bgr=np.zeros((360, 640, 3), dtype=np.uint8),
+        native_width=1280,  # scale_x = 2
+        native_height=1080,  # scale_y = 3
+    )
+    warp = np.array([[1.0, 0.2, 10.0], [0.1, 1.0, -4.0]])
+
+    scaled = _scale_warp_translation(warp, frame)
+
+    assert scaled is not None
+    # S @ A @ S^-1 with S = diag(2, 3): [0, 1] *= 2 / 3 and [1, 0] *= 3 / 2.
+    assert scaled[0, 1] == pytest.approx(0.2 * 2.0 / 3.0)
+    assert scaled[1, 0] == pytest.approx(0.1 * 3.0 / 2.0)
+    assert scaled[0, 0] == pytest.approx(1.0)
+    assert scaled[1, 1] == pytest.approx(1.0)
+    assert scaled[:, 2] == pytest.approx([20.0, -12.0])
+
+
+def test_extracted_frame_defaults_to_native_without_compact_copy() -> None:
+    image = np.zeros((90, 160, 3), dtype=np.uint8)
+    frame = ExtractedFrame(index=3, video_time_sec=1.0, image_bgr=image)
+    assert (frame.native_width, frame.native_height) == (160, 90)
+    assert frame.scale_x == 1.0
+    assert frame.scale_y == 1.0
+    assert frame.native_bgr() is image
+
+    corrupt = ExtractedFrame(
+        index=4, video_time_sec=1.0, image_bgr=image, native_width=320, native_height=180,
+        native_jpeg=b"not-a-jpeg",
+    )  # fmt: skip
+    with pytest.raises(RuntimeError, match="decode native copy"):
+        corrupt.native_bgr()

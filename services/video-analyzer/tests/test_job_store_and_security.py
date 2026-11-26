@@ -676,9 +676,7 @@ def test_cli_fails_on_missing_explicit_env_file_and_keeps_default_env_fallback(
     video = tmp_path / "sample.mp4"
     video.write_bytes(b"video")
     snapshot_file = (
-        Path(__file__).resolve().parents[1]
-        / "sample_snapshots"
-        / "waterpolo_default_snapshot.json"
+        Path(__file__).resolve().parents[1] / "sample_snapshots" / "waterpolo_default_snapshot.json"
     )
     exit_analyze = cli_main(
         [

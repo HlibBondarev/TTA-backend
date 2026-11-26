@@ -438,9 +438,7 @@ class AnchorReconciler:
             used_ends.add(end_idx)
             end_idx += 1
             last_end_time = end.video_time_sec
-            intervals.append(
-                _StoppageInterval(start=start, end=end, source_chunks={chunk_index})
-            )
+            intervals.append(_StoppageInterval(start=start, end=end, source_chunks={chunk_index}))
 
         unpaired_ends = [
             _IndexedAnchor(chunk_index=chunk_index, anchor=end)

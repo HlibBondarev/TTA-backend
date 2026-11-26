@@ -11,6 +11,8 @@ from typing import Any
 from pydantic import ValidationError
 
 from video_analyzer.config import DEFAULT_GEMINI_MODEL
+from video_analyzer.gemini.request_config import build_generate_content_config
+from video_analyzer.gemini.resilience import GeminiResilience, GeminiResilienceError
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.models import Pass1ChunkResult
 from video_analyzer.pass1.prompt_builder import Pass1PromptBuilder
@@ -94,7 +96,11 @@ class BasePass1Analyzer(ABC):
 
 
 class GeminiPass1Analyzer(BasePass1Analyzer):
-    """Pass 1 analyzer using the official google-genai SDK and Gemini Files API."""
+    """Pass 1 analyzer using the official google-genai SDK and Gemini Files API.
+
+    Every API request goes through a shared :class:`GeminiResilience` (RPM pacing, classified
+    retries, circuit and budget breakers). Malformed model output is retried separately here.
+    """
 
     def __init__(
         self,
@@ -103,12 +109,16 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
         timeout_sec: float = 180.0,
         prompt_builder: Pass1PromptBuilder | None = None,
         client: Any = None,
+        thinking_level: str | None = None,
+        resilience: GeminiResilience | None = None,
     ) -> None:
         self._api_key = api_key.strip()
         self._model_name = model_name
         self._timeout_sec = timeout_sec
         self._prompt_builder = prompt_builder or Pass1PromptBuilder()
         self._client = client
+        self._thinking_level = thinking_level
+        self._resilience = resilience or GeminiResilience("pass1", model_name)
 
     def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
         if not self._api_key and self._client is None:
@@ -119,14 +129,20 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
         client = self._get_client()
         prompt = self._prompt_builder.build_chunk_prompt(snapshot, chunk)
 
-        uploaded_file = client.files.upload(file=str(chunk.path))
+        uploaded_file = self._resilience.call(
+            lambda: client.files.upload(file=str(chunk.path)),
+            paced=False,
+            counted=False,
+        )
         try:
             active_file = self._wait_until_active(client, uploaded_file)
             return self._generate_with_retry(
                 client=client,
                 uploaded_file=active_file,
                 prompt=prompt,
-                config=types.GenerateContentConfig(
+                config=build_generate_content_config(
+                    types,
+                    thinking_level=self._thinking_level,
                     response_mime_type="application/json",
                     response_schema=_build_pass1_response_schema(types),
                     temperature=0.1,
@@ -180,10 +196,12 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
         attempt_usages: list[GeminiTokenUsage] = []
         for attempt in range(1, max_attempts + 1):
             try:
-                response = client.models.generate_content(
-                    model=self._model_name,
-                    contents=[uploaded_file, prompt],
-                    config=config,
+                response = self._resilience.call(
+                    lambda: client.models.generate_content(
+                        model=self._model_name,
+                        contents=[uploaded_file, prompt],
+                        config=config,
+                    )
                 )
                 usage = extract_usage_metadata(response)
                 if usage is not None:
@@ -191,11 +209,13 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
                 result = self._parse_response(response, chunk_index)
                 total_usage = aggregate_token_usage(attempt_usages) if attempt_usages else None
                 return result.model_copy(update={"token_usage": total_usage})
+            except GeminiResilienceError:
+                raise
             except Exception as exc:
                 last_exc = exc
                 if attempt == max_attempts:
                     break
-                sleep_sec = 2.0**attempt
+                sleep_sec = self._resilience.backoff_delay(attempt - 1)
                 logger.warning(
                     "Gemini Pass 1 call attempt %d/%d failed (%s); retrying in %.1fs.",
                     attempt,
@@ -222,9 +242,7 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
 
         raw_text = getattr(response, "text", None)
         if not isinstance(raw_text, str) or not raw_text.strip():
-            raise RuntimeError(
-                f"Gemini Pass 1 returned an empty response for chunk {chunk_index}."
-            )
+            raise RuntimeError(f"Gemini Pass 1 returned an empty response for chunk {chunk_index}.")
         try:
             payload = json.loads(raw_text)
         except json.JSONDecodeError as exc:

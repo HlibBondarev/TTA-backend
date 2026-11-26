@@ -16,8 +16,9 @@ import pytest
 from pydantic import ValidationError
 
 from video_analyzer.config import Settings
-from video_analyzer.detectors.base import CanonicalRole
+from video_analyzer.detectors.base import BaseObjectDetector, CanonicalRole, Detection
 from video_analyzer.detectors.class_map import ClassMapAdapter
+from video_analyzer.detectors.concurrency import ConcurrencyLimitedDetector, TimedDetector
 from video_analyzer.detectors.factory import DetectorFactory
 from video_analyzer.detectors.local_yolo import LocalYoloDetector
 from video_analyzer.detectors.onnx_adapter import OnnxDetector
@@ -520,3 +521,183 @@ def test_onnx_detector_serializes_lazy_initialization_across_concurrent_threads(
         assert len(dets) == 1
         assert dets[0].role == CanonicalRole.BALL
         assert dets[0].raw_class_name == "ball"
+
+
+# ---------------------------------------------------------------------------------------------
+# Issue #157: global concurrency limiter and Roboflow retry/backoff
+# ---------------------------------------------------------------------------------------------
+
+
+class _ProbeDetector(BaseObjectDetector):
+    """Fake detector measuring simultaneous calls."""
+
+    supports_concurrent_inference = True
+
+    def __init__(self, delay_sec: float = 0.03) -> None:
+        self._lock = threading.Lock()
+        self._active = 0
+        self.max_active = 0
+        self.calls = 0
+        self._delay_sec = delay_sec
+
+    def detect(self, frame_bgr: np.ndarray) -> list[Detection]:
+        with self._lock:
+            self._active += 1
+            self.calls += 1
+            self.max_active = max(self.max_active, self._active)
+        try:
+            time.sleep(self._delay_sec)
+            return []
+        finally:
+            with self._lock:
+                self._active -= 1
+
+    def provider_info(self) -> dict[str, str]:
+        return {"provider": "probe", "model": "fake"}
+
+
+def test_concurrency_limited_detector_caps_simultaneous_calls_across_all_callers() -> None:
+    inner = _ProbeDetector()
+    limited = ConcurrencyLimitedDetector(inner, max_concurrency=3)
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+
+    # 12 independent callers (e.g. 12 Phase A tasks) share ONE semaphore.
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        list(pool.map(lambda _: limited.detect(frame), range(12)))
+
+    assert inner.calls == 12
+    assert inner.max_active == 3
+    assert limited.provider_info() == {"provider": "probe", "model": "fake"}
+    assert limited.max_concurrency == 3
+    assert limited.inner is inner
+
+    serial_inner = _ProbeDetector()
+    serial = ConcurrencyLimitedDetector(serial_inner, max_concurrency=1)
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(lambda _: serial.detect(frame), range(6)))
+    assert serial_inner.max_active == 1
+
+    with pytest.raises(ValueError, match="at least 1"):
+        ConcurrencyLimitedDetector(inner, max_concurrency=0)
+
+
+def test_timed_detector_accumulates_inference_time_and_delegates() -> None:
+    inner = _ProbeDetector(delay_sec=0.03)
+    timed = TimedDetector(inner)
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    timed.detect(frame)
+    timed.detect(frame)
+    assert timed.elapsed_sec >= 0.04
+    assert timed.provider_info()["provider"] == "probe"
+
+
+def test_only_remote_roboflow_detector_declares_concurrent_inference_support() -> None:
+    assert RoboflowDetector.supports_concurrent_inference is True
+    assert OnnxDetector.supports_concurrent_inference is False
+    assert LocalYoloDetector.supports_concurrent_inference is False
+
+
+def _roboflow(handler, **kwargs) -> tuple[RoboflowDetector, list[float]]:
+    sleeps: list[float] = []
+    detector = RoboflowDetector(
+        model_id="waterpolo-salvasc/5",
+        api_key="secret-rf-key",
+        api_url="https://detect.roboflow.com",
+        confidence=0.25,
+        iou=0.45,
+        class_map=ClassMapAdapter({"White team": "player"}),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        sleep=sleeps.append,
+        **kwargs,
+    )
+    return detector, sleeps
+
+
+_OK_PAYLOAD = {
+    "predictions": [
+        {
+            "x": 50.0,
+            "y": 50.0,
+            "width": 20.0,
+            "height": 40.0,
+            "confidence": 0.9,
+            "class": "White team",
+        }
+    ]
+}
+
+
+def test_roboflow_retries_transient_failures_with_backoff_then_succeeds() -> None:
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return httpx.Response(503, request=request)
+        if attempts["n"] == 2:
+            raise httpx.ConnectTimeout("slow", request=request)
+        if attempts["n"] == 3:
+            return httpx.Response(429, headers={"retry-after": "4"}, request=request)
+        return httpx.Response(200, json=_OK_PAYLOAD)
+
+    detector, sleeps = _roboflow(handler, max_retries=3, retry_base_sec=1.0)
+    detections = detector.detect(np.zeros((100, 100, 3), dtype=np.uint8))
+
+    assert attempts["n"] == 4
+    assert len(detections) == 1
+    assert len(sleeps) == 3
+    assert 0.5 <= sleeps[0] <= 1.0  # attempt 0: 1s * [0.5, 1.0]
+    assert 1.0 <= sleeps[1] <= 2.0  # attempt 1: 2s * [0.5, 1.0]
+    assert sleeps[2] == 4.0  # honors Retry-After
+
+
+def test_roboflow_does_not_retry_client_errors_and_gives_up_after_max_retries() -> None:
+    attempts = {"n": 0}
+
+    def forbidden(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(403, request=request)
+
+    detector, sleeps = _roboflow(forbidden, max_retries=3)
+    with pytest.raises(RuntimeError, match="request failed"):
+        detector.detect(np.zeros((10, 10, 3), dtype=np.uint8))
+    assert attempts["n"] == 1
+    assert sleeps == []
+
+    attempts["n"] = 0
+
+    def always_500(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(500, request=request)
+
+    detector, sleeps = _roboflow(always_500, max_retries=2)
+    with pytest.raises(RuntimeError) as exc_info:
+        detector.detect(np.zeros((10, 10, 3), dtype=np.uint8))
+    assert attempts["n"] == 3
+    assert len(sleeps) == 2
+    assert "secret-rf-key" not in str(exc_info.value)
+
+    detector, sleeps = _roboflow(always_500, max_retries=0)
+    attempts["n"] = 0
+    with pytest.raises(RuntimeError):
+        detector.detect(np.zeros((10, 10, 3), dtype=np.uint8))
+    assert attempts["n"] == 1
+    assert sleeps == []
+
+    with pytest.raises(ValueError, match="max_retries"):
+        _roboflow(always_500, max_retries=-1)
+
+
+def test_detector_factory_passes_concurrency_and_retry_settings() -> None:
+    settings = Settings(
+        _env_file=None,
+        detector_provider="roboflow",
+        roboflow_api_key="rf_test_key",
+        roboflow_max_retries=5,
+        roboflow_retry_base_sec=0.25,
+    )
+    detector = DetectorFactory.create(settings)
+    assert isinstance(detector, RoboflowDetector)
+    assert detector._max_retries == 5
+    assert detector._retry_base_sec == 0.25
+    assert (settings.detector_max_concurrency, settings.detector_input_width) == (4, 1280)

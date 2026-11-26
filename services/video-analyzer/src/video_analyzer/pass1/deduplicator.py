@@ -181,10 +181,7 @@ class EventDeduplicator:
         if prev_zone and cand_zone and prev_zone != cand_zone:
             return False
 
-        if (
-            prev.actor_bbox_normalized is not None
-            and candidate.actor_bbox_normalized is not None
-        ):
+        if prev.actor_bbox_normalized is not None and candidate.actor_bbox_normalized is not None:
             iou = _norm_bbox_iou(prev.actor_bbox_normalized, candidate.actor_bbox_normalized)
             center_dist = _norm_bbox_center_dist(
                 prev.actor_bbox_normalized,
