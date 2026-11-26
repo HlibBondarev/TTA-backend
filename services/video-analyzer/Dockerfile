@@ -13,8 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system app \
-    && useradd --system --gid app --create-home --home-dir /home/app app
+    && groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid app --create-home --home-dir /home/app app
 
 WORKDIR /app
 
@@ -23,7 +23,15 @@ WORKDIR /app
 # Supported INSTALL_EXTRAS values: "onnx" (default), "yolo", "yolo,onnx" (or "onnx,yolo").
 ARG INSTALL_EXTRAS=onnx
 COPY requirements ./requirements
-RUN extras="$(printf '%s' "${INSTALL_EXTRAS}" | tr -d '[:space:]')"     && case "${extras}" in         onnx) lock_file="requirements/onnx.txt" ;;         yolo) lock_file="requirements/yolo.txt" ;;         yolo,onnx|onnx,yolo) lock_file="requirements/yolo-onnx.txt" ;;         *) echo "Unsupported INSTALL_EXTRAS='${INSTALL_EXTRAS}'. Use one of: onnx, yolo, yolo,onnx" >&2; exit 1 ;;     esac     && pip install --only-binary :all: --require-hashes -r "${lock_file}"
+RUN extras="$(printf '%s' "${INSTALL_EXTRAS}" | tr -d '[:space:]')" \
+    && case "${extras}" in \
+        onnx) lock_file="requirements/onnx.txt" ;; \
+        yolo) lock_file="requirements/yolo.txt" ;; \
+        yolo,onnx|onnx,yolo) lock_file="requirements/yolo-onnx.txt" ;; \
+        *) echo "Unsupported INSTALL_EXTRAS='${INSTALL_EXTRAS}'." \
+            "Use one of: onnx, yolo, yolo,onnx" >&2; exit 1 ;; \
+    esac \
+    && pip install --only-binary :all: --require-hashes -r "${lock_file}"
 
 COPY --chown=app:app src ./src
 

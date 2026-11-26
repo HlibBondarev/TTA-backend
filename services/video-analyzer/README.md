@@ -222,11 +222,11 @@ uv pip compile pyproject.toml --extra yolo --extra onnx --python-version 3.12 --
   --generate-hashes --only-binary :all: --no-header -o requirements/yolo-onnx.txt
 ```
 
-**Linux hosts:** the container user has UID/GID 999 (not root), so bind-mounted output folders must be
+**Linux hosts:** the container user has UID/GID 10001 (not root), so bind-mounted output folders must be
 writable by it. Create them before `docker run`:
 
 ```bash
-mkdir -p output debug && sudo chown 999:999 output debug
+mkdir -p output debug && sudo chown 10001:10001 output debug
 ```
 
 ---
