@@ -650,13 +650,16 @@ class FFmpegClient:
 
         Uses hardware decode (``-hwaccel``) and walks the encoder priority list
         (``h264_nvenc`` -> ``h264_qsv`` -> ``h264_amf`` -> ``libx264``): an encoder that fails at
-        runtime is dropped (for the life of this client) and the next candidate is tried, with
-        ``libx264`` as the final fallback.
+        runtime is tried past and the next candidate is used, with ``libx264`` as the final
+        fallback. Failed encoders are dropped (for the life of this client) only once a later
+        candidate succeeds; if every candidate fails (e.g. a corrupted source), the cached
+        candidates are left unchanged and the last error is re-raised.
 
         ``fps`` is applied before ``scale`` so a 30/60 fps 4K source is decimated to the
         mezzanine rate first; scaling every 4K frame only to discard most of them is ~4x slower.
         """
         last_error: RuntimeError | None = None
+        failed_encoders: list[str] = []
         for encoder in self._video_encoder_candidates(cancel_event):
             cmd = self._build_mezzanine_command(
                 video_path, probe, output_path, encoder, target_height, fps, keyframe_interval_sec
@@ -670,8 +673,10 @@ class FFmpegClient:
                 if encoder == LIBX264_ENCODER:
                     break
                 logger.warning("Video encoder '%s' failed (%s); trying the next.", encoder, exc)
-                self._discard_video_encoder(encoder)
+                failed_encoders.append(encoder)
                 continue
+            for failed_encoder in failed_encoders:
+                self._discard_video_encoder(failed_encoder)
             return output_path
         assert last_error is not None
         raise last_error

@@ -851,6 +851,30 @@ def test_encoder_chain_tries_next_hardware_encoder_before_libx264(
     assert used == ["h264_nvenc", "h264_qsv", "h264_amf", "libx264"]
 
 
+def test_encoder_candidates_are_kept_when_every_encoder_fails_on_a_bad_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    listing = (
+        " V....D h264_nvenc NVIDIA NVENC\n V..... h264_qsv Intel QSV\n V..... libx264 libx264\n"
+    )
+    client, cmds = _recording_client(
+        monkeypatch,
+        encoder_listing=listing,
+        failing_encoders=("h264_nvenc", "h264_qsv", "libx264"),
+    )
+    probe = _probe()
+    failing_dir = tmp_path / "a"
+    with pytest.raises(RuntimeError, match="no capable device"):
+        client.create_pass1_chunks(
+            video_path=tmp_path / "bad.mp4", probe=probe, output_dir=failing_dir
+        )
+
+    used = [cmd[cmd.index("-c:v") + 1] for cmd in _mezzanine_commands(cmds)]
+    assert used == ["h264_nvenc", "h264_qsv", "libx264"]
+    assert client._video_encoder_candidates(None) == ["h264_nvenc", "h264_qsv", "libx264"]
+
+
 def test_extraction_threads_and_hwaccel_are_independent_of_the_pass1_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
