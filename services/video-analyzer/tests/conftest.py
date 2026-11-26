@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from video_analyzer.gemini.resilience import reset_shared_pacers
 from video_analyzer.schemas.request import (
     AnalysisOptions,
     AnalyzeJobRequest,
@@ -18,6 +19,14 @@ from video_analyzer.schemas.request import (
 SAMPLE_SNAPSHOT_PATH = (
     Path(__file__).resolve().parents[1] / "sample_snapshots" / "waterpolo_default_snapshot.json"
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_shared_pacers():
+    """Give every test fresh per-model RPM pacers (they are process-wide in production)."""
+    reset_shared_pacers()
+    yield
+    reset_shared_pacers()
 
 
 @pytest.fixture()

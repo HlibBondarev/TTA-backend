@@ -15,6 +15,7 @@ A ratio whose denominator is zero is reported as ``None`` (rendered as ``n/a``).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 
@@ -147,10 +148,10 @@ def evaluate_draft(
         tolerance_sec: Maximum |time difference| for an event or anchor to count as a match.
 
     Raises:
-        ValueError: If ``tolerance_sec`` is negative.
+        ValueError: If ``tolerance_sec`` is not finite or is negative.
     """
-    if tolerance_sec < 0:
-        raise ValueError("tolerance_sec must be non-negative.")
+    if not math.isfinite(tolerance_sec) or tolerance_sec < 0:
+        raise ValueError("tolerance_sec must be a finite, non-negative number.")
 
     pairs, label_correct, cap_labeled, cap_correct = _score_events(
         draft.events, labels.events, tolerance_sec

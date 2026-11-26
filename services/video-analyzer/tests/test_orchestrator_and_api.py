@@ -111,6 +111,10 @@ class MockPass1Analyzer(BasePass1Analyzer):
         )
 
 
+# Fixed rates keep cost arithmetic independent of the shipped default price list.
+_FIXED_HYDROGEN_PRICING = {"input": 0.50, "output": 3.00}
+
+
 class MockDetector(BaseObjectDetector):
     def provider_info(self) -> dict[str, str]:
         return {"provider": "roboflow", "model": "waterpolo-salvasc/5"}
@@ -128,6 +132,8 @@ class MockDetector(BaseObjectDetector):
 
 
 class MockCapResolver(BaseCapResolver):
+    """Order-scripted resolver: tests using it must set ``pass2_phase_b_max_concurrency=1``."""
+
     def __init__(self) -> None:
         self.calls = 0
 
@@ -157,6 +163,7 @@ def _build_mock_orchestrator(work_dir: Path | None = None) -> VideoAnalysisOrche
         detector_model_path_or_id="waterpolo-salvasc/5",
         internal_api_key="secret-test-key",
         work_dir=resolved_work_dir,
+        pass2_phase_b_max_concurrency=1,
     )
     return VideoAnalysisOrchestrator(
         settings=settings,
@@ -346,6 +353,7 @@ def test_orchestrator_streams_pass2_frames_without_temp_dirs_and_propagates_tied
             _env_file=None,
             internal_api_key="test-key",
             work_dir=str(work_root),
+            pass2_phase_b_max_concurrency=1,
         ),
         ffmpeg_client=StreamingFFmpeg(),  # type: ignore[arg-type]
         pass1_analyzer=MockPass1Analyzer(),
@@ -504,7 +512,12 @@ def test_orchestrator_checks_cancellation_before_reporting_completed(
             return super().provider_info()
 
     orchestrator = VideoAnalysisOrchestrator(
-        settings=Settings(_env_file=None, internal_api_key="test-key", work_dir=str(tmp_path)),
+        settings=Settings(
+            _env_file=None,
+            internal_api_key="test-key",
+            work_dir=str(tmp_path),
+            pass2_phase_b_max_concurrency=1,
+        ),
         ffmpeg_client=MockFFmpegClient(),  # type: ignore[arg-type]
         pass1_analyzer=MockPass1Analyzer(),
         detector=LateCancellingDetector(),
@@ -565,6 +578,8 @@ def test_orchestrator_aggregates_gemini_usage_and_cost_in_diagnostics_and_cli(
         work_dir=str(tmp_path),
         gemini_pass1_model="gemini-4-hydrogen",
         gemini_pass2_model="gemini-4-hydrogen",
+        gemini_model_pricing_usd_per_1m={"gemini-4-hydrogen": _FIXED_HYDROGEN_PRICING},
+        pass2_phase_b_max_concurrency=1,
     )
     orchestrator = VideoAnalysisOrchestrator(
         settings=settings,
@@ -673,6 +688,8 @@ def test_orchestrator_records_pass2_usage_once_on_recovered_parse_failure(
         work_dir=str(tmp_path),
         gemini_pass1_model="gemini-4-hydrogen",
         gemini_pass2_model="gemini-4-hydrogen",
+        gemini_model_pricing_usd_per_1m={"gemini-4-hydrogen": _FIXED_HYDROGEN_PRICING},
+        pass2_phase_b_max_concurrency=1,
     )
     orchestrator = VideoAnalysisOrchestrator(
         settings=settings,
@@ -1073,12 +1090,48 @@ def test_breaker_trip_falls_back_to_local_ocr_when_available(
         tmp_path,
         cap_resolver=BlockedResolver(),
         fallback_cap_resolver=LocalOcrCapResolver(reader=FakeOcrReader()),
-        pass2_phase_b_max_concurrency=2,
+        pass2_phase_b_max_concurrency=1,
     ).run(sample_job_request)
 
     assert BlockedResolver.calls == 1, "the blocked Gemini resolver is only probed once"
     assert all(event.resolved_cap_number == 7 for event in draft.events)
     assert all(event.match_lineup_id is not None for event in draft.events)
+    assert any("local OCR fallback" in w for w in draft.diagnostics.warnings)
+
+
+def test_concurrent_breaker_trip_probes_gemini_at_most_once_per_worker(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    workers = 2
+    barrier = threading.Barrier(workers, timeout=10)
+    call_lock = threading.Lock()
+
+    class BlockedResolver(BaseCapResolver):
+        calls = 0
+
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            with call_lock:
+                BlockedResolver.calls += 1
+                first_wave = BlockedResolver.calls <= workers
+            if first_wave:
+                barrier.wait()  # both workers are in flight before either sees the breaker
+            raise GeminiCallBlockedError("pass2", BreakerReason.QUOTA_EXHAUSTED, "daily quota")
+
+    class FakeOcrReader:
+        @staticmethod
+        def readtext(image, allowlist: str = ""):
+            return [([], "7", 0.98)]
+
+    draft = _orchestrator_with(
+        tmp_path,
+        cap_resolver=BlockedResolver(),
+        fallback_cap_resolver=LocalOcrCapResolver(reader=FakeOcrReader()),
+        pass2_phase_b_max_concurrency=workers,
+    ).run(sample_job_request)
+
+    assert BlockedResolver.calls == workers, "only the in-flight probes reached Gemini"
+    assert all(event.resolved_cap_number == 7 for event in draft.events)
     assert any("local OCR fallback" in w for w in draft.diagnostics.warnings)
 
 
@@ -1207,9 +1260,11 @@ def test_pass2_extraction_requests_streaming_args_and_no_work_dir(
     assert options.pass2_sample_fps == 4.0
     first = ffmpeg.extract_calls[0]
     assert "work_dir" not in first
-    assert first["frame_width"] == 3840 and first["frame_height"] == 2160
+    assert first["frame_width"] == 3840
+    assert first["frame_height"] == 2160
     assert first["detector_input_width"] == 1280
-    assert first["half_window_sec"] == 2.5 and first["sample_fps"] == 4.0
+    assert first["half_window_sec"] == 2.5
+    assert first["sample_fps"] == 4.0
     assert list(work_root.rglob("pass2_win_*")) == []
 
 
@@ -1340,11 +1395,13 @@ def test_extraction_semaphore_caps_4k_decoders_while_phase_a_overlaps_detector_i
 
 
 def test_extraction_slot_wait_is_cancellable_and_released_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
     sample_job_request: AnalyzeJobRequest,
     tmp_path: Path,
 ) -> None:
     release = threading.Event()
     entered = threading.Event()
+    cancellation_observed = threading.Event()
 
     class BlockingFFmpeg(MockFFmpegClient):
         def extract_window_frames(self, video_path, center_sec, **kwargs):
@@ -1360,6 +1417,16 @@ def test_extraction_slot_wait_is_cancellable_and_released_on_failure(
         ffmpeg_extraction_max_concurrency=1,
     )
     outcome: dict[str, BaseException] = {}
+    original_check = orchestrator._check_cancelled
+
+    def recording_check(event: threading.Event | None) -> None:
+        try:
+            original_check(event)
+        except JobCancelledError:
+            cancellation_observed.set()
+            raise
+
+    monkeypatch.setattr(orchestrator, "_check_cancelled", recording_check)
 
     def run_job() -> None:
         try:
@@ -1372,10 +1439,14 @@ def test_extraction_slot_wait_is_cancellable_and_released_on_failure(
     assert entered.wait(timeout=5.0)
     time.sleep(0.2)  # the second Phase A task is now waiting for the only extraction slot
     cancel_event.set()
+    # The first decoder keeps the only slot until the waiting task has observed cancellation.
+    assert cancellation_observed.wait(timeout=5.0), "the slot wait must notice cancellation"
     release.set()
     worker.join(timeout=10.0)
     assert not worker.is_alive(), "waiting for a slot must not hang past cancellation"
-    assert isinstance(outcome["error"], (JobCancelledError, RuntimeError))
+    # The earliest failure by item order (the decoder) is the one reported.
+    assert isinstance(outcome["error"], RuntimeError)
+    assert "decoder exploded" in str(outcome["error"])
 
     # The slot was released by the failing task (no leak): a fresh job can acquire it.
     assert orchestrator._extraction_slots.acquire(timeout=1.0)
@@ -1405,7 +1476,8 @@ def test_phase_a_releases_frame_buffers_and_prepared_items_hold_only_small_resul
     # Phase B has already finished here; if prepared items kept frames alive, they would
     # accumulate across all events until the end of the job.
     gc.collect()
-    assert frame_refs and all(ref() is None for ref in frame_refs)
+    assert frame_refs
+    assert all(ref() is None for ref in frame_refs)
 
 
 def test_prepared_events_do_not_retain_frames_between_phase_a_and_phase_b(
@@ -1438,4 +1510,5 @@ def test_prepared_events_do_not_retain_frames_between_phase_a_and_phase_b(
         pass2_phase_b_max_concurrency=1,
     ).run(sample_job_request)
 
-    assert leaked_at_phase_b and all(count == 0 for count in leaked_at_phase_b)
+    assert leaked_at_phase_b
+    assert all(count == 0 for count in leaked_at_phase_b)

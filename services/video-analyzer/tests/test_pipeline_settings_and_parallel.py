@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import os
+import sys
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from video_analyzer.config import Settings
 from video_analyzer.gemini.resilience import BreakerReason
 from video_analyzer.pass1.models import Pass1EventCandidate
-from video_analyzer.pass2.cap_resolver import CapResolutionResult
+from video_analyzer.pass2.cap_resolver import CapResolutionResult, LocalOcrCapResolver
 from video_analyzer.pass2.failure_reasons import Pass2FailureReason, failure_reason_for_breaker
 from video_analyzer.pass2.lineup_matcher import LineupMatcher
+from video_analyzer.pipeline.orchestrator import VideoAnalysisOrchestrator, _CapOutcome
 from video_analyzer.pipeline.parallel import ordered_parallel_map
 from video_analyzer.schemas.request import AnalysisOptions, MatchSnapshot
 
@@ -36,11 +40,18 @@ _INFRA_ENV_VARS = (
 )
 
 
+def _clear_infra_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove every infra env var regardless of key case (Settings is case-insensitive)."""
+    wanted = {name.upper() for name in _INFRA_ENV_VARS}
+    for key in list(os.environ):
+        if key.upper() in wanted:
+            monkeypatch.delenv(key, raising=False)
+
+
 def test_infrastructure_setting_defaults_match_the_tier_1_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for name in _INFRA_ENV_VARS:
-        monkeypatch.delenv(name, raising=False)
+    _clear_infra_env(monkeypatch)
     settings = Settings(_env_file=None)
 
     assert (settings.pass1_max_concurrency, settings.pass2_phase_a_max_concurrency) == (3, 4)
@@ -130,7 +141,8 @@ def test_lineup_matcher_uses_specific_failure_reason_instead_of_blanket_fallback
             pass2_failure_reason=reason.value,
         )
         assert reason.value in outcome.review_reasons
-        assert outcome.needs_review is True and outcome.match_lineup_id is None
+        assert outcome.needs_review is True
+        assert outcome.match_lineup_id is None
         if reason is not Pass2FailureReason.NO_PLAYER_TRACKLET_MATCHED:
             assert "NO_PLAYER_TRACKLET_MATCHED" not in outcome.review_reasons
 
@@ -238,3 +250,90 @@ def test_ordered_parallel_map_runs_before_task_hook_for_every_task() -> None:
 
     with pytest.raises(KeyboardInterrupt):
         ordered_parallel_map(lambda v: v, [1, 2, 3], max_workers=2, before_task=cancel)
+
+
+def test_before_task_failure_aborts_tasks_that_have_not_started() -> None:
+    started: list[int] = []
+    first_call = threading.Event()
+    call_lock = threading.Lock()
+
+    def before_task() -> None:
+        with call_lock:
+            is_first = not first_call.is_set()
+            first_call.set()
+        if is_first:
+            raise ValueError("cancelled before start")
+
+    def work(item: int) -> int:
+        started.append(item)
+        time.sleep(0.2)  # keep the sibling worker busy so later tasks start after the abort
+        return item
+
+    with pytest.raises(ValueError, match="cancelled before start"):
+        ordered_parallel_map(work, range(8), max_workers=2, before_task=before_task)
+
+    assert len(started) < 7, "tasks queued after the failure must be skipped"
+
+
+def test_task_failure_aborts_siblings_and_raises_the_earliest_failure() -> None:
+    started: list[int] = []
+
+    def work(item: int) -> int:
+        started.append(item)
+        if item == 0:
+            raise RuntimeError("boom")
+        time.sleep(0.2)
+        return item
+
+    with pytest.raises(RuntimeError, match="boom"):
+        ordered_parallel_map(work, range(8), max_workers=2)
+
+    assert len(started) < 8
+
+
+def test_fallback_summary_counts_only_events_that_the_local_ocr_actually_resolved() -> None:
+    outcomes = [
+        _CapOutcome(used_fallback=True),  # OCR read a confirmed lineup
+        _CapOutcome(used_fallback=True),  # OCR found nothing usable
+        _CapOutcome(used_fallback=True),  # OCR cap rejected by the cap-color guard
+        _CapOutcome(),
+    ]
+    events = [
+        SimpleNamespace(match_lineup_id="lineup-7"),
+        SimpleNamespace(match_lineup_id=None),
+        SimpleNamespace(match_lineup_id=None),
+        SimpleNamespace(match_lineup_id="lineup-3"),
+    ]
+
+    messages = VideoAnalysisOrchestrator._fallback_summary(outcomes, events)  # type: ignore[arg-type]
+
+    assert messages == ["Gemini Pass 2 stopped; 1 event(s) resolved with the local OCR fallback."]
+    assert VideoAnalysisOrchestrator._fallback_summary(outcomes[2:3], events[2:3]) == []  # type: ignore[arg-type]
+
+
+def test_local_ocr_reader_is_created_once_under_concurrent_first_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[object] = []
+    created_lock = threading.Lock()
+
+    class SlowReader:
+        def __init__(self, languages, gpu=False, verbose=False) -> None:
+            time.sleep(0.05)  # widen the window in which a second thread could also initialize
+            with created_lock:
+                created.append(self)
+
+    monkeypatch.setitem(sys.modules, "easyocr", SimpleNamespace(Reader=SlowReader))
+    resolver = LocalOcrCapResolver()
+    readers: list[object] = []
+
+    threads = [
+        threading.Thread(target=lambda: readers.append(resolver._get_reader())) for _ in range(8)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(created) == 1
+    assert len({id(reader) for reader in readers}) == 1

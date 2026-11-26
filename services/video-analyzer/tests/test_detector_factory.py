@@ -568,7 +568,8 @@ def test_concurrency_limited_detector_caps_simultaneous_calls_across_all_callers
     assert inner.calls == 12
     assert inner.max_active == 3
     assert limited.provider_info() == {"provider": "probe", "model": "fake"}
-    assert limited.max_concurrency == 3 and limited.inner is inner
+    assert limited.max_concurrency == 3
+    assert limited.inner is inner
 
     serial_inner = _ProbeDetector()
     serial = ConcurrencyLimitedDetector(serial_inner, max_concurrency=1)
@@ -660,7 +661,8 @@ def test_roboflow_does_not_retry_client_errors_and_gives_up_after_max_retries() 
     detector, sleeps = _roboflow(forbidden, max_retries=3)
     with pytest.raises(RuntimeError, match="request failed"):
         detector.detect(np.zeros((10, 10, 3), dtype=np.uint8))
-    assert attempts["n"] == 1 and sleeps == []
+    assert attempts["n"] == 1
+    assert sleeps == []
 
     attempts["n"] = 0
 
@@ -671,14 +673,16 @@ def test_roboflow_does_not_retry_client_errors_and_gives_up_after_max_retries() 
     detector, sleeps = _roboflow(always_500, max_retries=2)
     with pytest.raises(RuntimeError) as exc_info:
         detector.detect(np.zeros((10, 10, 3), dtype=np.uint8))
-    assert attempts["n"] == 3 and len(sleeps) == 2
+    assert attempts["n"] == 3
+    assert len(sleeps) == 2
     assert "secret-rf-key" not in str(exc_info.value)
 
     detector, sleeps = _roboflow(always_500, max_retries=0)
     attempts["n"] = 0
     with pytest.raises(RuntimeError):
         detector.detect(np.zeros((10, 10, 3), dtype=np.uint8))
-    assert attempts["n"] == 1 and sleeps == []
+    assert attempts["n"] == 1
+    assert sleeps == []
 
     with pytest.raises(ValueError, match="max_retries"):
         _roboflow(always_500, max_retries=-1)

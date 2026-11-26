@@ -202,6 +202,10 @@ def estimate_call_cost_usd(
 ) -> float:
     """Estimate the USD cost of one call for budget enforcement.
 
+    The figure is intentionally a conservative upper bound: every prompt token is billed at the
+    full input rate and cached-content discounts are ignored, so the budget breaker never
+    under-counts spend and its behavior stays predictable.
+
     Returns ``0.0`` when pricing or token metadata is unavailable, so an unpriced model never
     trips the cost breaker (the call-count limit still applies).
     """

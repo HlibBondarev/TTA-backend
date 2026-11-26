@@ -22,14 +22,16 @@ _UNSET_TEXT_VALUES: frozenset[str] = frozenset({"", "none", "null", "unset", "of
 
 # Default estimated USD pricing per 1,000,000 tokens (thinking tokens billed at output rate).
 # Override or extend via GEMINI_MODEL_PRICING_USD_PER_1M.
-# The gemini-4-neon rates are taken from secondary reports of the public paid-tier price list;
-# verify them against the official pricing page and override via the env var if they differ.
+# Rates are the standard paid-tier prices from secondary reports of the public price list
+# (gemini-4-hydrogen also has an introductory $0.75/$3.75 rate through 2026-12-31; the higher
+# standard rate is used so budget checks stay conservative). Verify them against the official
+# pricing page and override via the env var if they differ.
 DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M: dict[str, dict[str, float]] = {
-    "gemini-4-hydrogen": {"input": 0.50, "output": 3.00},
+    "gemini-4-hydrogen": {"input": 1.50, "output": 7.50},
     "gemini-4-neon": {"input": 3.00, "output": 15.00},
     "gemini-3.8-flash": {"input": 0.50, "output": 3.00},
     "gemini-3.6-flash": {"input": 0.30, "output": 2.50},
-    "gemini-3.5-flash-lite": {"input": 0.10, "output": 0.40},
+    "gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50},
 }
 
 DEFAULT_CLASS_MAP: dict[str, str] = {

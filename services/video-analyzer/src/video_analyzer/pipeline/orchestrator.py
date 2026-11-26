@@ -197,10 +197,12 @@ class _ProgressTracker:
     def advance(self) -> None:
         if self._callback is None:
             return
+        # Percentage computation and delivery share one critical section so concurrent workers
+        # can never emit updates out of order (e.g. 60 % arriving after 65 %).
         with self._lock:
             self._done += 1
             pct = self._base + int((self._done / self._total) * self._span)
-        self._callback(self._stage, pct)
+            self._callback(self._stage, pct)
 
 
 class VideoAnalysisOrchestrator:
@@ -562,7 +564,7 @@ class VideoAnalysisOrchestrator:
             if outcome.token_usage is not None:
                 result.usages.append(outcome.token_usage)
             result.events.append(self._build_draft_event(item, outcome, request, video_start_utc))
-        warnings.extend(self._fallback_summary(outcomes))
+        warnings.extend(self._fallback_summary(outcomes, result.events))
         result.timings = self._pass2_timings(prepared, outcomes)
         return result
 
@@ -657,6 +659,7 @@ class VideoAnalysisOrchestrator:
                 sample_fps=opts.pass2_sample_fps,
                 frame_width=ctx.probe.width,
                 frame_height=ctx.probe.height,
+                video_stream_index=ctx.probe.video_stream_index,
                 detector_input_width=self._settings.detector_input_width,
                 cancel_event=ctx.cancel_event,
             )
@@ -742,7 +745,12 @@ class VideoAnalysisOrchestrator:
         )
 
         def resolve(item: _PreparedEvent) -> _CapOutcome:
-            outcome = self._resolve_cap(item, ctx, state)
+            try:
+                outcome = self._resolve_cap(item, ctx, state)
+            finally:
+                # Release the crop bundle as soon as its outcome is recorded; later stages only
+                # need the outcome, so memory does not accumulate across a long match.
+                item.selected_crops = None
             progress.advance()
             return outcome
 
@@ -821,8 +829,17 @@ class VideoAnalysisOrchestrator:
         )
 
     @staticmethod
-    def _fallback_summary(outcomes: list[_CapOutcome]) -> list[str]:
-        fallback_count = sum(1 for outcome in outcomes if outcome.used_fallback)
+    def _fallback_summary(outcomes: list[_CapOutcome], events: list[DraftEvent]) -> list[str]:
+        """Summarize breaker effects; ``events`` align with ``outcomes`` by index.
+
+        Only events that ended up with a confirmed lineup count as resolved by the local OCR
+        fallback: failed OCR attempts and cap-color rejections are not "resolved".
+        """
+        fallback_count = sum(
+            1
+            for outcome, event in zip(outcomes, events, strict=True)
+            if outcome.used_fallback and event.match_lineup_id is not None
+        )
         blocked = [outcome for outcome in outcomes if outcome.blocked_by_breaker]
         messages: list[str] = []
         if fallback_count:

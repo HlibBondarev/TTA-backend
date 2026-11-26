@@ -600,12 +600,14 @@ def test_pass2_resolver_uses_resilience_and_stops_calling_when_breaker_is_open()
     resolver = GeminiCropGridCapResolver(
         api_key="k", client=client, resilience=_fast_resilience("pass2")
     )
+    first_crops = _selected_crops()
+    second_crops = _selected_crops()
     with job_scope(GeminiJobScope()):
         with pytest.raises(GeminiCallBlockedError) as first:
-            resolver.resolve(_selected_crops(), allowed_cap_numbers=[7])
+            resolver.resolve(first_crops, allowed_cap_numbers=[7])
         assert first.value.reason is BreakerReason.QUOTA_EXHAUSTED
         with pytest.raises(GeminiCallBlockedError):
-            resolver.resolve(_selected_crops(), allowed_cap_numbers=[7])
+            resolver.resolve(second_crops, allowed_cap_numbers=[7])
     assert client.generate_calls == 1
 
 

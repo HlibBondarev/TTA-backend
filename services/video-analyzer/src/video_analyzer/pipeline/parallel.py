@@ -42,13 +42,14 @@ def ordered_parallel_map(  # noqa: UP047 - keep Python 3.11 compatible TypeVar g
     def guarded(item: T) -> R:
         if abort.is_set():
             raise _AbortedError("Skipped because another task failed.")
-        if before_task is not None:
-            before_task()
-        return fn(item)
-
-    def mark_abort_on_failure(future: Future[R]) -> None:
-        if not future.cancelled() and future.exception() is not None:
+        try:
+            if before_task is not None:
+                before_task()
+            return fn(item)
+        except BaseException:
+            # Signal siblings immediately instead of waiting for the done-callback.
             abort.set()
+            raise
 
     futures: list[Future[R]] = []
     with ThreadPoolExecutor(
@@ -56,11 +57,14 @@ def ordered_parallel_map(  # noqa: UP047 - keep Python 3.11 compatible TypeVar g
         thread_name_prefix="va-parallel",
     ) as pool:
         for item in materialized:
-            future = pool.submit(contextvars.copy_context().run, guarded, item)
-            future.add_done_callback(mark_abort_on_failure)
-            futures.append(future)
+            futures.append(pool.submit(contextvars.copy_context().run, guarded, item))
         wait(futures)
 
+    return _collect_results(futures)
+
+
+def _collect_results(futures: list[Future[R]]) -> list[R]:  # noqa: UP047
+    """Return results in item order, raising the earliest real (non-skip) failure."""
     for future in futures:
         error = None if future.cancelled() else future.exception()
         if error is not None and not isinstance(error, _AbortedError):

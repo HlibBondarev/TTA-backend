@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import Any
@@ -278,6 +279,8 @@ class LocalOcrCapResolver(BaseCapResolver):
     def __init__(self, languages: list[str] | None = None, reader: Any = None) -> None:
         self._languages = languages or ["en"]
         self._reader = reader
+        # Guards lazy reader creation only; ``readtext`` stays unsynchronized by design.
+        self._reader_lock = threading.Lock()
 
     def resolve(
         self,
@@ -345,16 +348,22 @@ class LocalOcrCapResolver(BaseCapResolver):
         )
 
     def _get_reader(self) -> Any:
-        if self._reader is None:
-            try:
-                import easyocr
-            except ImportError as exc:
-                raise RuntimeError(
-                    "easyocr is required when CAP_RESOLVER_PROVIDER=local_ocr. "
-                    "Install it with: pip install '.[ocr]'"
-                ) from exc
-            self._reader = easyocr.Reader(self._languages, gpu=False, verbose=False)
+        if self._reader is not None:
+            return self._reader
+        with self._reader_lock:
+            if self._reader is None:
+                self._reader = self._create_reader()
         return self._reader
+
+    def _create_reader(self) -> Any:
+        try:
+            import easyocr
+        except ImportError as exc:
+            raise RuntimeError(
+                "easyocr is required when CAP_RESOLVER_PROVIDER=local_ocr. "
+                "Install it with: pip install '.[ocr]'"
+            ) from exc
+        return easyocr.Reader(self._languages, gpu=False, verbose=False)
 
 
 class CapResolverFactory:

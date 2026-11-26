@@ -22,6 +22,7 @@ from video_analyzer.gemini.resilience import (
     current_job_scope,
     extract_retry_delay_sec,
     job_scope,
+    normalize_model_name,
 )
 
 
@@ -295,7 +296,8 @@ def test_non_retryable_errors_get_zero_retries_and_open_the_breaker(
             resilience.call(failing)
         assert exc_info.value.reason is expected_reason
         assert exc_info.value.__cause__ is error
-        assert calls["n"] == 1 and recorder.sleeps == []
+        assert calls["n"] == 1
+        assert recorder.sleeps == []
 
         # Subsequent calls are refused immediately without touching the API.
         with pytest.raises(GeminiCallBlockedError) as blocked:
@@ -315,7 +317,8 @@ def test_unknown_exceptions_propagate_unchanged_without_retry_or_breaker() -> No
 
     with job_scope(scope), pytest.raises(ValueError, match="malformed"):
         resilience.call(broken)
-    assert recorder.sleeps == [] and scope.open_breakers() == []
+    assert recorder.sleeps == []
+    assert scope.open_breakers() == []
 
 
 def test_breaker_is_per_slot_but_budget_is_shared() -> None:
@@ -363,7 +366,10 @@ def test_max_calls_per_job_is_enforced_and_counts_every_attempt() -> None:
 
 
 def test_max_estimated_cost_is_enforced_from_response_usage() -> None:
-    resilience = _resilience(_Recorder())  # gemini-4-hydrogen: $0.50 in / $3.00 out per 1M
+    resilience = _resilience(
+        _Recorder(),
+        pricing_table={"gemini-4-hydrogen": {"input": 0.50, "output": 3.00}},  # per 1M tokens
+    )
     scope = GeminiJobScope(max_cost_usd=1.0)
     expensive = _usage_response(prompt=1_000_000, candidates=100_000)  # $0.50 + $0.30 = $0.80
 
@@ -414,3 +420,58 @@ def test_job_scope_isolates_concurrent_jobs_and_restores_previous_scope() -> Non
         with pytest.raises(GeminiCallBlockedError):
             resilience.call(lambda: "ok")
     assert current_job_scope() is None
+
+
+# ------------------------------------------------------- shared pacer and dispatch recheck
+
+
+def test_pacers_are_shared_process_wide_per_normalized_model_with_minimum_rpm() -> None:
+    first = GeminiResilience("pass1", "Gemini-4-Hydrogen", rpm=60)
+    verifier = GeminiResilience("verifier", " models/gemini-4-hydrogen ", rpm=30)
+    looser = GeminiResilience("pass1", "gemini-4-hydrogen", rpm=120)
+    other = GeminiResilience("pass2", "gemini-3.5-flash-lite", rpm=120)
+
+    assert first._pacer is verifier._pacer is looser._pacer
+    assert first._pacer is not None
+    assert first._pacer._interval_sec == pytest.approx(2.0), "the strictest RPM wins"
+    assert other._pacer is not first._pacer
+    assert other._pacer is not None
+    assert other._pacer._interval_sec == pytest.approx(0.5)
+    assert normalize_model_name("MODELS/Gemini-4-Hydrogen ") == "gemini-4-hydrogen"
+
+
+def test_breaker_opened_while_queued_on_the_pacer_blocks_dispatch_without_burning_budget() -> None:
+    scope = GeminiJobScope(max_calls=5)
+
+    class TrippingPacer:
+        def acquire(self) -> float:
+            # Another call opens the slot breaker while this one is waiting for its slot.
+            scope.breaker_for("pass1").trip(BreakerReason.API_ERROR, "HTTP 403")
+            return 0.0
+
+    resilience = GeminiResilience("pass1", "m", pacer=TrippingPacer())  # type: ignore[arg-type]
+    calls: list[int] = []
+
+    with job_scope(scope), pytest.raises(GeminiCallBlockedError) as exc_info:
+        resilience.call(lambda: calls.append(1))
+
+    assert exc_info.value.reason is BreakerReason.API_ERROR
+    assert calls == [], "the request must not be dispatched"
+    assert scope.budget.calls == 0, "queued calls blocked by a breaker do not burn budget"
+
+
+def test_budget_is_reserved_only_when_the_call_is_dispatched() -> None:
+    scope = GeminiJobScope(max_calls=1)
+    order: list[str] = []
+
+    class RecordingPacer:
+        def acquire(self) -> float:
+            order.append(f"acquire(calls={scope.budget.calls})")
+            return 0.0
+
+    resilience = GeminiResilience("pass1", "m", pacer=RecordingPacer())  # type: ignore[arg-type]
+    with job_scope(scope):
+        resilience.call(lambda: order.append("fn") or "ok")
+
+    assert order == ["acquire(calls=0)", "fn"]
+    assert scope.budget.calls == 1

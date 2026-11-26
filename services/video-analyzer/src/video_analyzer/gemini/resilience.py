@@ -47,6 +47,8 @@ _DAILY_QUOTA_MARKER: str = "perday"
 _RETRY_DELAY_TEXT_PATTERN = re.compile(
     r"retry(?:Delay)?\W{0,6}(?:in\W{0,3})?(\d+(?:\.\d+)?)\s*(ms|s)\b", re.IGNORECASE
 )
+# Linear-time: input is stripped first and only one optional whitespace run precedes the unit.
+_DELAY_STRING_PATTERN = re.compile(r"(\d+(?:\.\d+)?)(?:\s*(ms|s))?")
 
 
 class BreakerReason(StrEnum):
@@ -137,7 +139,7 @@ def _parse_delay_value(raw: Any) -> float | None:
     if isinstance(raw, (int, float)) and not isinstance(raw, bool):
         return float(raw)
     if isinstance(raw, str):
-        match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(ms|s)?\s*", raw)
+        match = _DELAY_STRING_PATTERN.fullmatch(raw.strip())
         if match:
             return float(match.group(1)) / (1000.0 if match.group(2) == "ms" else 1.0)
     return None
@@ -208,6 +210,13 @@ class RpmPacer:
         self._lock = threading.Lock()
         self._next_slot = 0.0
 
+    def limit_rpm(self, rpm: int) -> None:
+        """Lower the allowed rate to ``rpm`` when that is stricter than the current rate."""
+        if rpm < 1:
+            raise ValueError("rpm must be at least 1.")
+        with self._lock:
+            self._interval_sec = max(self._interval_sec, 60.0 / rpm)
+
     def acquire(self) -> float:
         """Block until a call slot is available and return the seconds waited."""
         with self._lock:
@@ -218,6 +227,43 @@ class RpmPacer:
         if wait_sec > 0.0:
             self._sleep(wait_sec)
         return max(0.0, wait_sec)
+
+
+_SHARED_PACERS: dict[str, RpmPacer] = {}
+_SHARED_PACERS_LOCK = threading.Lock()
+
+
+def normalize_model_name(model: str) -> str:
+    """Return the key under which a model's quota is shared (case- and ``models/``-insensitive)."""
+    return model.strip().lower().removeprefix("models/")
+
+
+def shared_pacer(
+    model: str,
+    rpm: int,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> RpmPacer:
+    """Return the process-wide pacer for ``model``, creating it on first use.
+
+    Quotas are per model, so every slot (Pass 1, verifier, Pass 2) using the same model shares one
+    pacer. When slots configure different RPM values for one model, the strictest (minimum) RPM
+    wins regardless of creation order.
+    """
+    key = normalize_model_name(model)
+    with _SHARED_PACERS_LOCK:
+        pacer = _SHARED_PACERS.get(key)
+        if pacer is None:
+            pacer = _SHARED_PACERS[key] = RpmPacer(rpm, sleep=sleep)
+        else:
+            pacer.limit_rpm(rpm)
+        return pacer
+
+
+def reset_shared_pacers() -> None:
+    """Forget all shared pacers (test isolation)."""
+    with _SHARED_PACERS_LOCK:
+        _SHARED_PACERS.clear()
 
 
 class CircuitBreaker:
@@ -362,7 +408,7 @@ class GeminiResilience:
         self._pricing_table = pricing_table or parse_gemini_model_pricing(None)
         self._sleep = sleep
         self._rng = rng
-        self._pacer = pacer or (RpmPacer(rpm, sleep=sleep) if rpm else None)
+        self._pacer = pacer or (shared_pacer(model, rpm, sleep=sleep) if rpm else None)
         self._fallback_scope = GeminiJobScope()
 
     @classmethod
@@ -412,9 +458,13 @@ class GeminiResilience:
         breaker = scope.breaker_for(self.slot)
         attempt = 0
         while True:
-            self._ensure_allowed(scope, breaker, counted)
+            # Fail fast before queueing on the pacer, then re-check after the (possibly long)
+            # wait: a breaker may have opened meanwhile, and the budget is only reserved at the
+            # moment of dispatch so blocked queued calls never burn it.
+            self._raise_if_blocked(scope, breaker)
             if paced and self._pacer is not None:
                 self._pacer.acquire()
+            self._reserve_dispatch(scope, breaker, counted)
             try:
                 response = fn()
             except Exception as exc:
@@ -434,11 +484,15 @@ class GeminiResilience:
                 self._record_response_cost(scope, response)
             return response
 
-    def _ensure_allowed(
-        self, scope: GeminiJobScope, breaker: CircuitBreaker, counted: bool
-    ) -> None:
+    @staticmethod
+    def _raise_if_blocked(scope: GeminiJobScope, breaker: CircuitBreaker) -> None:
         scope.budget_breaker.raise_if_open()
         breaker.raise_if_open()
+
+    def _reserve_dispatch(
+        self, scope: GeminiJobScope, breaker: CircuitBreaker, counted: bool
+    ) -> None:
+        self._raise_if_blocked(scope, breaker)
         if not counted:
             return
         exceeded = scope.budget.try_reserve_call()

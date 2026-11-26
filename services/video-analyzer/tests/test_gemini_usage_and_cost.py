@@ -26,6 +26,32 @@ from video_analyzer.usage import (
     extract_usage_metadata,
 )
 
+# Fixed rates keep the arithmetic assertions independent of the shipped default price list.
+_FIXED_PRICING: dict[str, dict[str, float]] = {
+    "gemini-4-hydrogen": {"input": 0.50, "output": 3.00},
+    "gemini-4-neon": {"input": 3.00, "output": 15.00},
+    "gemini-3.5-flash-lite": {"input": 0.10, "output": 0.40},
+}
+
+_ENV_KEYS_AFFECTING_DEFAULTS: tuple[str, ...] = (
+    "GEMINI_PASS1_MODEL",
+    "GEMINI_VERIFIER_MODEL",
+    "GEMINI_PASS2_MODEL",
+    "GEMINI_PASS1_THINKING_LEVEL",
+    "GEMINI_VERIFIER_THINKING_LEVEL",
+    "GEMINI_PASS2_THINKING_LEVEL",
+    "GEMINI_MODEL_PRICING_USD_PER_1M",
+    "GEMINI_MAX_CALLS_PER_JOB",
+    "GEMINI_MAX_ESTIMATED_COST_USD",
+)
+
+
+@pytest.fixture(autouse=True)
+def _clean_gemini_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default-settings tests must not see Gemini overrides from the developer's environment."""
+    for name in _ENV_KEYS_AFFECTING_DEFAULTS:
+        monkeypatch.delenv(name, raising=False)
+
 
 def test_default_gemini_models_and_independent_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
@@ -85,6 +111,8 @@ def test_pricing_table_covers_all_three_default_model_slots() -> None:
         assert model in DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M
         assert table[model]["input"] > 0
         assert table[model]["output"] > 0
+    assert table["gemini-3.5-flash-lite"] == {"input": 0.30, "output": 2.50}
+    assert table["gemini-4-hydrogen"] == {"input": 1.50, "output": 7.50}
 
 
 def test_budget_settings_default_and_unlimited_values(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,7 +130,7 @@ def test_budget_settings_default_and_unlimited_values(monkeypatch: pytest.Monkey
 
 
 def test_usage_diagnostics_include_verifier_slot_and_pass2_model() -> None:
-    pricing = Settings(_env_file=None).resolved_gemini_model_pricing
+    pricing = _FIXED_PRICING
     usage = GeminiTokenUsage(
         call_count=1,
         prompt_tokens=1_000_000,
@@ -141,7 +169,7 @@ def test_usage_diagnostics_include_verifier_slot_and_pass2_model() -> None:
 
 
 def test_estimate_call_cost_usd_is_zero_without_pricing_or_metadata() -> None:
-    pricing = Settings(_env_file=None).resolved_gemini_model_pricing
+    pricing = _FIXED_PRICING
     usage = GeminiTokenUsage(
         call_count=1, prompt_tokens=1_000_000, candidates_tokens=0, total_tokens=1_000_000
     )
@@ -279,7 +307,7 @@ def test_estimate_stage_cost_bills_thinking_tokens_at_output_rate_without_double
     cost = estimate_stage_cost(
         "  models/gemini-4-hydrogen ",
         usage,
-        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+        _FIXED_PRICING,
     )
     assert cost.is_estimate is True
     assert cost.pricing_configured is True
@@ -345,7 +373,7 @@ def test_mixed_pass1_and_pass2_models_pricing_and_unconfigured_fallback() -> Non
         pass1_usages=[p1_usage],
         pass2_model="gemini-3.5-flash-lite",
         pass2_usages=[p2_usage],
-        pricing_table=DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+        pricing_table=_FIXED_PRICING,
     )
     assert diag_both.pass1.estimated_cost is not None
     assert diag_both.pass2.estimated_cost is not None
@@ -365,7 +393,7 @@ def test_mixed_pass1_and_pass2_models_pricing_and_unconfigured_fallback() -> Non
         pass1_usages=[p1_usage],
         pass2_model="gemini-experimental-unknown",
         pass2_usages=[p2_usage],
-        pricing_table=DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+        pricing_table=_FIXED_PRICING,
     )
     assert diag_mixed_unknown.pass1.estimated_cost is not None
     assert diag_mixed_unknown.pass1.estimated_cost.pricing_configured is True
@@ -388,7 +416,7 @@ def test_mixed_pass1_and_pass2_models_pricing_and_unconfigured_fallback() -> Non
         pass1_usages=[p1_usage],
         pass2_model="gemini-experimental-unknown",
         pass2_usages=[],
-        pricing_table=DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+        pricing_table=_FIXED_PRICING,
     )
     assert diag_inactive_p2.pass2.estimated_cost is None
     assert diag_inactive_p2.estimated_cost is not None
@@ -435,7 +463,7 @@ def test_estimate_stage_cost_handles_nullable_counters_and_non_thinking_models()
     cost_missing = estimate_stage_cost(
         "gemini-4-hydrogen",
         missing_candidates,
-        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+        _FIXED_PRICING,
     )
     assert cost_missing.pricing_configured is True
     assert cost_missing.input_cost_usd is None
@@ -454,7 +482,7 @@ def test_estimate_stage_cost_handles_nullable_counters_and_non_thinking_models()
     cost_unaccounted = estimate_stage_cost(
         "gemini-4-hydrogen",
         unaccounted,
-        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+        _FIXED_PRICING,
     )
     assert cost_unaccounted.pricing_configured is True
     assert cost_unaccounted.total_cost_usd is None
@@ -471,7 +499,7 @@ def test_estimate_stage_cost_handles_nullable_counters_and_non_thinking_models()
     cost_nt1 = estimate_stage_cost(
         "gemini-4-hydrogen",
         non_thinking_no_total,
-        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+        _FIXED_PRICING,
     )
     assert non_thinking_no_total.thoughts_tokens is None
     assert cost_nt1.pricing_configured is True
@@ -490,7 +518,7 @@ def test_estimate_stage_cost_handles_nullable_counters_and_non_thinking_models()
     cost_nt2 = estimate_stage_cost(
         "gemini-4-hydrogen",
         non_thinking_exact_total,
-        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+        _FIXED_PRICING,
     )
     assert non_thinking_exact_total.thoughts_tokens is None
     assert cost_nt2.pricing_configured is True
@@ -524,7 +552,7 @@ def test_aggregate_preserves_unavailable_cost_across_mixed_partial_calls() -> No
     stage_cost = estimate_stage_cost(
         "gemini-4-hydrogen",
         aggregated,
-        DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+        _FIXED_PRICING,
     )
     assert stage_cost.pricing_configured is True
     assert stage_cost.input_cost_usd is None
@@ -537,7 +565,7 @@ def test_aggregate_preserves_unavailable_cost_across_mixed_partial_calls() -> No
         pass1_usages=[call_with_unaccounted, call_without_total],
         pass2_model="gemini-4-hydrogen",
         pass2_usages=[],
-        pricing_table=DEFAULT_GEMINI_MODEL_PRICING_USD_PER_1M,
+        pricing_table=_FIXED_PRICING,
     )
     assert diag.pass1.estimated_cost is not None
     assert diag.pass1.estimated_cost.total_cost_usd is None

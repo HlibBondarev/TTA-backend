@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -27,10 +28,12 @@ def _load_fixtures() -> tuple[EvalDraft, GroundTruthLabels]:
 
 def test_synthetic_fixtures_load_and_ignore_unknown_draft_fields() -> None:
     draft, labels = _load_fixtures()
-    assert len(draft.events) == 4 and len(draft.time_anchors) == 2
+    assert len(draft.events) == 4
+    assert len(draft.time_anchors) == 2
     assert draft.events[0].resolved_cap_number == 7
     assert draft.events[1].resolved_cap_number is None
-    assert len(labels.events) == 4 and len(labels.anchors) == 3
+    assert len(labels.events) == 4
+    assert len(labels.anchors) == 3
     assert labels.events[2].cap_number is None
     assert labels.anchors[0].type == "PeriodStart"
 
@@ -64,8 +67,9 @@ def test_tolerance_changes_what_counts_as_a_match() -> None:
     assert loose.matched_anchors == 2  # PeriodEnd is exactly 10s away
     assert loose.matched_events == 3
 
-    with pytest.raises(ValueError, match="non-negative"):
-        evaluate_draft(draft, labels, tolerance_sec=-1.0)
+    for invalid in (-1.0, float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match="finite, non-negative"):
+            evaluate_draft(draft, labels, tolerance_sec=invalid)
 
 
 def test_matching_is_one_to_one_closest_first_and_deterministic() -> None:
@@ -112,7 +116,8 @@ def test_empty_inputs_report_none_instead_of_dividing_by_zero() -> None:
     empty_draft = EvalDraft()
     empty_labels = GroundTruthLabels(clip_id="empty")
     report = evaluate_draft(empty_draft, empty_labels)
-    assert report.event_precision is None and report.event_recall is None
+    assert report.event_precision is None
+    assert report.event_recall is None
     assert report.label_accuracy is None
     assert report.anchor_accuracy is None
     assert report.cap_resolution_accuracy is None
@@ -120,7 +125,8 @@ def test_empty_inputs_report_none_instead_of_dividing_by_zero() -> None:
 
     draft, _ = _load_fixtures()
     no_labels = evaluate_draft(draft, empty_labels)
-    assert no_labels.event_precision == 0.0 and no_labels.event_recall is None
+    assert no_labels.event_precision == 0.0
+    assert no_labels.event_recall is None
     assert no_labels.to_dict()["predicted_events"] == 4
 
 
@@ -145,9 +151,21 @@ def test_sample_labels_template_is_valid_documented_and_the_only_committed_label
     labels = GroundTruthLabels.model_validate_json(SAMPLE_LABELS.read_text(encoding="utf-8"))
     assert "TEMPLATE ONLY" in (labels.description or "")
     assert "REPLACE-ME" in labels.clip_id
-    assert labels.events and labels.anchors
+    assert labels.events
+    assert labels.anchors
 
-    tracked = sorted(path.name for path in (SERVICE_ROOT / "eval_labels").iterdir())
+    # Only git-tracked files count: git-ignored local Clip 1 / Clip 2 labels must not fail this.
+    try:
+        listing = subprocess.run(
+            ["git", "ls-files", "--", "eval_labels"],
+            cwd=SERVICE_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("git metadata is not available to list tracked label files")
+    tracked = sorted(Path(line).name for line in listing.splitlines() if line.strip())
     assert tracked == ["sample_labels.example.json"], "no real Clip 1 / Clip 2 labels in the repo"
     ignore_rules = (SERVICE_ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "eval_labels/*" in ignore_rules
@@ -173,7 +191,8 @@ def test_evaluate_cli_runs_fully_offline_without_settings_or_api_keys(
     stdout = capsys.readouterr().out
     assert "synthetic-fixture" in stdout
     assert "tolerance +/-3s" in stdout
-    assert "Event precision:" in stdout and "75.0% (3/4)" in stdout
+    assert "Event precision:" in stdout
+    assert "75.0% (3/4)" in stdout
     assert "Event recall:" in stdout
     assert "Label accuracy:          66.7% (2/3)" in stdout
     assert "Anchor accuracy:         33.3% (1/3)" in stdout
@@ -211,8 +230,9 @@ def test_evaluate_cli_reports_missing_and_invalid_files_with_exit_code_2(
     assert "invalid draft or labels" in capsys.readouterr().err
 
     args = ["evaluate", "--draft", str(DRAFT_FIXTURE), "--labels", str(LABELS_FIXTURE)]
-    assert cli_main([*args, "--tolerance-sec", "-2"]) == 2
-    assert "non-negative" in capsys.readouterr().err
+    for invalid in ("-2", "nan", "inf"):
+        assert cli_main([*args, "--tolerance-sec", invalid]) == 2
+        assert "finite, non-negative" in capsys.readouterr().err
 
 
 def test_evaluate_scores_a_real_draft_roundtrip(
@@ -238,7 +258,8 @@ def test_evaluate_scores_a_real_draft_roundtrip(
         }
     )
     report = evaluate_draft(EvalDraft.model_validate_json(draft_path.read_text("utf-8")), labels)
-    assert report.event_precision == 1.0 and report.event_recall == 1.0
+    assert report.event_precision == 1.0
+    assert report.event_recall == 1.0
     assert report.label_accuracy == 1.0
     assert report.cap_resolution_accuracy == 1.0
     assert report.anchor_accuracy == 1.0

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import socket
 import subprocess
 import sys
@@ -21,6 +22,7 @@ from video_analyzer.media.ffmpeg_client import (
     FFmpegCancelledError,
     FFmpegClient,
     VideoProbeResult,
+    _RawFrameStream,
     compute_keyframe_interval,
 )
 from video_analyzer.schemas.request import VideoSource
@@ -94,11 +96,13 @@ def test_create_pass1_chunks_normalizes_odd_target_height_and_preserves_even(
     assert odd_cmd[odd_cmd.index("-vf") + 1] == "fps=2.0,scale=-2:720"
     assert even_cmd[even_cmd.index("-vf") + 1] == "fps=2.0,scale=-2:720"
 
+    tiny_probe = _probe()
+    tiny_dir = tmp_path / "tiny"
     with pytest.raises(ValueError, match="target_height"):
         client.create_pass1_chunks(
             video_path=video_path,
-            probe=_probe(),
-            output_dir=tmp_path / "tiny",
+            probe=tiny_probe,
+            output_dir=tiny_dir,
             target_height=1,
         )
 
@@ -148,13 +152,16 @@ def test_mezzanine_forces_keyframes_that_divide_chunk_overlap_and_step(
     expression = mezzanine[mezzanine.index("-force_key_frames") + 1]
     interval = int(expression.rsplit("*", 1)[1].rstrip(")"))
     assert 1 <= interval <= 5
-    assert 120 % interval == 0 and 15 % interval == 0 and (120 - 15) % interval == 0
+    assert 120 % interval == 0
+    assert 15 % interval == 0
+    assert (120 - 15) % interval == 0
     assert mezzanine[mezzanine.index("-g") + 1] == str(interval * 2)
     assert mezzanine[mezzanine.index("-bf") + 1] == "0", "B-frame delay would offset -c copy chunks"
 
     # Slice start times must all fall on the keyframe grid so -c copy cuts cleanly.
     starts = [float(cmd[cmd.index("-ss") + 1]) for cmd in cmds if "-c" in cmd]
-    assert starts and all(start % interval == 0 for start in starts)
+    assert starts
+    assert all(start % interval == 0 for start in starts)
 
 
 @pytest.mark.parametrize(
@@ -166,7 +173,9 @@ def test_compute_keyframe_interval_divides_all_boundaries(
 ) -> None:
     interval = compute_keyframe_interval(chunk, overlap)
     assert interval == expected
-    assert chunk % interval == 0 and overlap % interval == 0 and (chunk - overlap) % interval == 0
+    assert chunk % interval == 0
+    assert overlap % interval == 0
+    assert (chunk - overlap) % interval == 0
 
 
 def test_mezzanine_keeps_16khz_mono_audio_only_when_source_has_audio(
@@ -262,10 +271,11 @@ def test_libx264_failure_and_cancellation_are_not_masked_by_fallback(
     client, _ = _recording_client(
         monkeypatch, failing_encoders=("libx264",), video_encoder="libx264"
     )
+    source_path = tmp_path / "m.mp4"
+    probe = _probe()
+    failing_dir = tmp_path / "x"
     with pytest.raises(RuntimeError, match="no capable device"):
-        client.create_pass1_chunks(
-            video_path=tmp_path / "m.mp4", probe=_probe(), output_dir=tmp_path / "x"
-        )
+        client.create_pass1_chunks(video_path=source_path, probe=probe, output_dir=failing_dir)
 
     cancelling = FFmpegClient(video_encoder="h264_nvenc")
     calls: list[list[str]] = []
@@ -275,9 +285,10 @@ def test_libx264_failure_and_cancellation_are_not_masked_by_fallback(
         raise FFmpegCancelledError("cancelled while running")
 
     monkeypatch.setattr(cancelling, "_run_command", cancelled)
+    cancelled_dir = tmp_path / "y"
     with pytest.raises(FFmpegCancelledError):
         cancelling.create_pass1_chunks(
-            video_path=tmp_path / "m.mp4", probe=_probe(), output_dir=tmp_path / "y"
+            video_path=source_path, probe=probe, output_dir=cancelled_dir
         )
     assert len(calls) == 1
 
@@ -903,3 +914,232 @@ def test_raw_frame_reading_reuses_one_buffer_without_corrupting_returned_frames(
     assert [int(f.image_bgr.mean()) for f in scaled_frames] == [10, 20, 30]
     for frame, expected in zip(scaled_frames, (10, 20, 30), strict=True):
         assert abs(int(frame.native_bgr().mean()) - expected) <= 2
+
+
+# ------------------------------------------------------- probe, mapping, timeouts, keyframes
+
+
+def _ffprobe_payload(streams: list[dict], duration: str = "120.0") -> str:
+    return json.dumps({"streams": streams, "format": {"duration": duration}})
+
+
+def _probe_with(monkeypatch: pytest.MonkeyPatch, payload: str) -> VideoProbeResult:
+    client = FFmpegClient()
+    monkeypatch.setattr(
+        client,
+        "_run_command",
+        lambda cmd, stage, **kw: subprocess.CompletedProcess(cmd, 0, stdout=payload, stderr=""),
+    )
+    return client.probe(Path("match.mp4"))
+
+
+def test_probe_records_selected_stream_index_and_skips_attached_cover_art(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = [
+        {"index": 0, "codec_type": "audio", "codec_name": "aac"},
+        {
+            "index": 1,
+            "codec_type": "video",
+            "codec_name": "mjpeg",
+            "width": 600,
+            "height": 600,
+            "disposition": {"attached_pic": 1},
+        },
+        {
+            "index": 2,
+            "codec_type": "video",
+            "codec_name": "hevc",
+            "width": 3840,
+            "height": 2160,
+            "avg_frame_rate": "30/1",
+        },
+    ]
+    result = _probe_with(monkeypatch, _ffprobe_payload(streams))
+    assert result.video_stream_index == 2
+    assert (result.width, result.height, result.rotation_deg) == (3840, 2160, 0)
+    assert result.has_audio is True
+
+
+@pytest.mark.parametrize(
+    "stream_patch",
+    [
+        {"side_data_list": [{"side_data_type": "Display Matrix", "rotation": -90}]},
+        {"side_data_list": [{"side_data_type": "Display Matrix", "rotation": 90}]},
+        {"tags": {"rotate": "270"}},
+    ],
+)
+def test_probe_reports_display_dimensions_for_quarter_turn_rotation(
+    monkeypatch: pytest.MonkeyPatch, stream_patch: dict
+) -> None:
+    stream = {
+        "index": 0,
+        "codec_type": "video",
+        "codec_name": "h264",
+        "width": 1920,
+        "height": 1080,
+    }
+    result = _probe_with(monkeypatch, _ffprobe_payload([{**stream, **stream_patch}]))
+    assert (result.width, result.height) == (1080, 1920), "FFmpeg auto-rotates the raw frames"
+    assert result.rotation_deg in (90, 270)
+
+
+def test_probe_keeps_dimensions_for_half_turn_rotation(monkeypatch: pytest.MonkeyPatch) -> None:
+    stream = {
+        "index": 0,
+        "codec_type": "video",
+        "width": 1920,
+        "height": 1080,
+        "side_data_list": [{"rotation": 180}],
+    }
+    result = _probe_with(monkeypatch, _ffprobe_payload([stream]))
+    assert (result.width, result.height, result.rotation_deg) == (1920, 1080, 180)
+
+
+def test_both_ffmpeg_passes_map_the_probed_video_stream_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client, cmds = _recording_client(monkeypatch)
+    probe = VideoProbeResult(
+        duration_sec=10.0,
+        width=1920,
+        height=1080,
+        fps=30.0,
+        has_audio=True,
+        codec_name="h264",
+        video_stream_index=2,
+    )
+    client.create_pass1_chunks(video_path=tmp_path / "m.mp4", probe=probe, output_dir=tmp_path)
+    mezzanine = _mezzanine_commands(cmds)[0]
+    maps = [mezzanine[i + 1] for i, arg in enumerate(mezzanine) if arg == "-map"]
+    assert maps == ["0:2", "0:a:0?"]
+    assert mezzanine.index("-map") > mezzanine.index("-i")
+
+    captured: list[list[str]] = []
+
+    def fake_popen(cmd, **kwargs):
+        captured.append(cmd)
+        return _FakeStreamProcess(_raw_frames(1, 32, 18))
+
+    monkeypatch.setattr("video_analyzer.media.ffmpeg_client.subprocess.Popen", fake_popen)
+    FFmpegClient(hwaccel="none").extract_window_frames(
+        video_path=Path("m.mp4"),
+        center_sec=1.0,
+        half_window_sec=1.0,
+        total_duration_sec=10.0,
+        sample_fps=2.0,
+        frame_width=32,
+        frame_height=18,
+        video_stream_index=2,
+    )
+    assert captured[0][captured[0].index("-map") + 1] == "0:2"
+
+
+def test_unprobed_stream_index_falls_back_to_first_video_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client, cmds = _recording_client(monkeypatch)
+    client.create_pass1_chunks(
+        video_path=tmp_path / "m.mp4", probe=_probe(), output_dir=tmp_path / "o"
+    )
+    mezzanine = _mezzanine_commands(cmds)[0]
+    assert mezzanine[mezzanine.index("-map") + 1] == "0:v:0"
+    assert "0:a:0?" not in mezzanine, "silent sources must not map an audio stream"
+
+
+def test_mezzanine_timeout_scales_with_source_duration_but_slices_stay_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    timeouts: dict[str, float] = {}
+
+    def fake_run_command(cmd, stage_name, **kwargs):
+        timeouts.setdefault(stage_name, kwargs["timeout_sec"])
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    client = FFmpegClient(ffmpeg_timeout_sec=600.0, video_encoder="libx264")
+    monkeypatch.setattr(client, "_run_command", fake_run_command)
+    client.create_pass1_chunks(
+        video_path=tmp_path / "m.mp4",
+        probe=_probe(duration_sec=65 * 60.0),
+        output_dir=tmp_path / "o",
+    )
+    assert timeouts["ffmpeg pass1 mezzanine"] == pytest.approx(600.0 + 65 * 60.0)
+    assert timeouts["ffmpeg pass1 chunk slicing"] == pytest.approx(600.0)
+
+
+def test_slice_chunks_report_the_real_first_keyframe_time_as_chunk_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # With fps 0.7 forced keyframes land after the nominal 5 s grid (e.g. 5.714 s).
+    keyframe_listing = "0.000000,K__\n1.428571,___\n5.714286,K__\n10.000000,K__\n10.5,___\n"
+    seen: list[list[str]] = []
+
+    def fake_run_command(cmd, stage_name, **kwargs):
+        seen.append(cmd)
+        stdout = keyframe_listing if "packet=pts_time,flags" in cmd else ""
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout, stderr="")
+
+    client = FFmpegClient()
+    monkeypatch.setattr(client, "_run_command", fake_run_command)
+    chunks = client.slice_chunks(
+        tmp_path / "mezz.mp4", [(0.0, 12.0), (6.0, 18.0), (10.0, 20.0)], tmp_path / "chunks"
+    )
+    assert [chunk.start_sec for chunk in chunks] == [0.0, pytest.approx(5.714286), 10.0]
+    assert [chunk.end_sec for chunk in chunks] == [12.0, 18.0, 20.0]
+    slice_cmds = [cmd for cmd in seen if "-c" in cmd]
+    starts = [float(cmd[cmd.index("-ss") + 1]) for cmd in slice_cmds]
+    assert starts == [0.0, pytest.approx(5.714286), 10.0]
+    durations = [float(cmd[cmd.index("-t") + 1]) for cmd in slice_cmds]
+    assert durations[1] == pytest.approx(18.0 - 5.714286, abs=1e-3)
+
+
+def test_slice_chunks_keep_nominal_starts_when_keyframe_probe_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fake_run_command(cmd, stage_name, **kwargs):
+        if "packet=pts_time,flags" in cmd:
+            raise RuntimeError("ffprobe failed")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    client = FFmpegClient()
+    monkeypatch.setattr(client, "_run_command", fake_run_command)
+    chunks = client.slice_chunks(tmp_path / "mezz.mp4", [(3.0, 9.0)], tmp_path / "chunks")
+    assert [chunk.start_sec for chunk in chunks] == [3.0]
+
+
+class _StubbornProcess:
+    """Process that ignores terminate() and only dies on kill(); communicate() is forbidden."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self._dead = False
+
+    def poll(self) -> int | None:
+        return 0 if self._dead else None
+
+    def terminate(self) -> None:
+        self.events.append("terminate")
+
+    def kill(self) -> None:
+        self.events.append("kill")
+        self._dead = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.events.append("wait")
+        if not self._dead:
+            raise subprocess.TimeoutExpired("ffmpeg", timeout or 0.0)
+        return -9
+
+    def communicate(self, timeout: float | None = None):
+        raise AssertionError("communicate() would race the stdout reader and stderr drain")
+
+
+def test_raw_stream_stop_process_terminates_waits_then_kills_without_communicate() -> None:
+    proc = _StubbornProcess()
+    _RawFrameStream._stop_process(proc)  # type: ignore[arg-type]
+    assert proc.events == ["terminate", "wait", "kill", "wait"]

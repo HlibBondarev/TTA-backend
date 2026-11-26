@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -158,8 +159,8 @@ def main(argv: list[str] | None = None) -> int:
 def _run_evaluate(args: argparse.Namespace) -> int:
     draft_path = Path(args.draft).resolve()
     labels_path = Path(args.labels).resolve()
-    if args.tolerance_sec < 0:
-        print("Error: --tolerance-sec must be non-negative.", file=sys.stderr)
+    if not math.isfinite(args.tolerance_sec) or args.tolerance_sec < 0:
+        print("Error: --tolerance-sec must be a finite, non-negative number.", file=sys.stderr)
         return 2
     for label, path in (("draft", draft_path), ("labels", labels_path)):
         if not path.is_file():

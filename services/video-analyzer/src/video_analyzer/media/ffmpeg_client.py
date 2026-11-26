@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import logging
 import math
@@ -43,6 +44,13 @@ _ENCODER_PROBE_TIMEOUT_SEC: float = 30.0
 _STREAM_POLL_INTERVAL_SEC: float = 0.1
 _STREAM_EXIT_TIMEOUT_SEC: float = 5.0
 _STDERR_TAIL_CHARS: int = 600
+_PROCESS_STOP_TIMEOUT_SEC: float = 2.0
+# The mezzanine decodes the whole source, so its timeout grows with the source duration:
+# ``ffmpeg_timeout_sec`` plus this many seconds of budget per second of source video.
+MEZZANINE_TIMEOUT_PER_SOURCE_SEC: float = 1.0
+_KEYFRAME_EPSILON_SEC: float = 1e-3
+_QUARTER_TURN_DEGREES: int = 90
+_FULL_TURN_DEGREES: int = 360
 _ENCODER_LINE_PATTERN = re.compile(r"^\s*V\S*\s+(\S+)")
 
 # Per-encoder constant-quality arguments (roughly equivalent to libx264 CRF 28).
@@ -60,7 +68,12 @@ class FFmpegCancelledError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class VideoProbeResult:
-    """Technical metadata extracted via ffprobe."""
+    """Technical metadata extracted via ffprobe.
+
+    ``width``/``height`` are the *display* dimensions: they already account for a 90/270 degree
+    rotation (``rotation_deg``), because FFmpeg auto-rotates the frames it emits. The stream
+    index identifies the video stream that ``probe`` selected so FFmpeg passes map it explicitly.
+    """
 
     duration_sec: float
     width: int
@@ -68,6 +81,8 @@ class VideoProbeResult:
     fps: float
     has_audio: bool
     codec_name: str
+    video_stream_index: int | None = None
+    rotation_deg: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,7 +212,7 @@ class _RawFrameStream:
         self._stop.set()
         proc = self._proc
         if proc is not None:
-            FFmpegClient._terminate_process(proc)  # type: ignore[arg-type]
+            self._stop_process(proc)
             for stream in (proc.stdout, proc.stderr):
                 self._close_quietly(stream)
         for thread in self._threads:
@@ -225,7 +240,7 @@ class _RawFrameStream:
         try:
             self._proc.wait(timeout=_STREAM_EXIT_TIMEOUT_SEC)
         except subprocess.TimeoutExpired:
-            FFmpegClient._terminate_process(self._proc)  # type: ignore[arg-type]
+            self._stop_process(self._proc)
         self._stop.set()
         for thread in self._threads:
             thread.join(timeout=2.0)
@@ -255,8 +270,29 @@ class _RawFrameStream:
                 self._abort_reason = "timeout"
             else:
                 continue
-            FFmpegClient._terminate_process(self._proc)  # type: ignore[arg-type]
+            self._stop_process(self._proc)
             return
+
+    @staticmethod
+    def _stop_process(proc: subprocess.Popen[bytes]) -> None:
+        """Terminate, wait (bounded), then kill, without touching the stdout/stderr pipes.
+
+        ``communicate()`` must not be used here: another thread may be inside ``readinto`` on
+        stdout or draining stderr, and pipe closure is left to :meth:`__exit__`.
+        """
+        if proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=_PROCESS_STOP_TIMEOUT_SEC)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=_PROCESS_STOP_TIMEOUT_SEC)
+            except subprocess.TimeoutExpired:
+                pass
+        except OSError:
+            pass
 
     @staticmethod
     def _close_quietly(stream: BinaryIO | None) -> None:
@@ -498,18 +534,23 @@ class FFmpegClient:
         streams = payload.get("streams", [])
         fmt = payload.get("format", {})
 
-        video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+        video_stream = self._select_video_stream(streams)
         if video_stream is None:
             raise RuntimeError(f"No video stream found in '{video_path}'.")
 
         has_audio = any(s.get("codec_type") == "audio" for s in streams)
         width = int(video_stream.get("width", 0))
         height = int(video_stream.get("height", 0))
+        rotation_deg = self._parse_rotation(video_stream)
+        if rotation_deg in (_QUARTER_TURN_DEGREES, _FULL_TURN_DEGREES - _QUARTER_TURN_DEGREES):
+            # FFmpeg auto-rotates, so the frames it emits have swapped dimensions.
+            width, height = height, width
         codec_name = str(video_stream.get("codec_name", "unknown"))
         fps = self._parse_frame_rate(
             video_stream.get("avg_frame_rate") or video_stream.get("r_frame_rate") or "30/1"
         )
         duration_sec = self._parse_duration(video_stream, fmt)
+        stream_index = video_stream.get("index")
 
         return VideoProbeResult(
             duration_sec=duration_sec,
@@ -518,7 +559,33 @@ class FFmpegClient:
             fps=fps,
             has_audio=has_audio,
             codec_name=codec_name,
+            video_stream_index=stream_index if isinstance(stream_index, int) else None,
+            rotation_deg=rotation_deg,
         )
+
+    @staticmethod
+    def _select_video_stream(streams: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Pick the first real video stream, skipping attached cover art when possible."""
+        videos = [s for s in streams if s.get("codec_type") == "video"]
+        real = [s for s in videos if not (s.get("disposition") or {}).get("attached_pic")]
+        return (real or videos or [None])[0]
+
+    @staticmethod
+    def _parse_rotation(video_stream: dict[str, Any]) -> int:
+        """Return the display rotation in degrees normalized to 0, 90, 180 or 270.
+
+        Reads the display-matrix side data (``rotation``) and the legacy ``rotate`` tag. Only the
+        axis swap of quarter turns matters to callers, so the rotation sense is not preserved.
+        """
+        raw: Any = (video_stream.get("tags") or {}).get("rotate")
+        for side_data in video_stream.get("side_data_list") or []:
+            if "rotation" in side_data:
+                raw = side_data["rotation"]
+        try:
+            degrees = round(float(raw))
+        except (TypeError, ValueError):
+            return 0
+        return degrees % _FULL_TURN_DEGREES
 
     def create_pass1_chunks(
         self,
@@ -595,7 +662,7 @@ class FFmpegClient:
                 video_path, probe, output_path, encoder, target_height, fps, keyframe_interval_sec
             )
             try:
-                self._run_mezzanine(cmd, cancel_event)
+                self._run_mezzanine(cmd, self._mezzanine_timeout_sec(probe), cancel_event)
             except FFmpegCancelledError:
                 raise
             except RuntimeError as exc:
@@ -616,17 +683,25 @@ class FFmpegClient:
         output_dir: Path,
         cancel_event: threading.Event | None = None,
     ) -> list[VideoChunk]:
-        """Cut overlapping chunks from the mezzanine with ``-c copy`` (no re-encode)."""
+        """Cut overlapping chunks from the mezzanine with ``-c copy`` (no re-encode).
+
+        A stream-copy cut can only begin on a keyframe. Each window start is therefore snapped
+        back to the nearest keyframe at or before it (read from the mezzanine), and the returned
+        ``VideoChunk.start_sec`` is that real first-packet time, so timeline offsets stay exact
+        for any ``pass1Fps`` even when forced keyframes do not land on the nominal grid.
+        """
         output_dir.mkdir(parents=True, exist_ok=True)
+        keyframes = self._probe_keyframe_times(mezzanine_path, cancel_event)
         chunks: list[VideoChunk] = []
-        for idx, (start_sec, end_sec) in enumerate(windows):
+        for idx, (window_start_sec, end_sec) in enumerate(windows):
+            start_sec = self._snap_to_keyframe(window_start_sec, keyframes)
             chunk_path = output_dir / f"pass1_chunk_{idx:04d}.mp4"
             cmd = [
                 self._ffmpeg_bin,
                 "-y",
                 "-hide_banner",
                 "-ss",
-                f"{start_sec:.3f}",
+                f"{start_sec:.6f}",  # keyframe times carry 6 decimals; avoid rounding below one
                 "-i",
                 str(mezzanine_path),
                 "-t",
@@ -650,11 +725,64 @@ class FFmpegClient:
             )
         return chunks
 
-    def _run_mezzanine(self, cmd: list[str], cancel_event: threading.Event | None) -> None:
+    def _mezzanine_timeout_sec(self, probe: VideoProbeResult) -> float:
+        """Timeout for the one-pass transcode: fixed base plus time proportional to the source."""
+        return self._ffmpeg_timeout_sec + MEZZANINE_TIMEOUT_PER_SOURCE_SEC * max(
+            0.0, probe.duration_sec
+        )
+
+    def _probe_keyframe_times(
+        self, video_path: Path, cancel_event: threading.Event | None
+    ) -> list[float]:
+        """Return the sorted keyframe timestamps of the first video stream (empty if unknown)."""
+        cmd = [
+            self._ffprobe_bin,
+            "-v",
+            "quiet",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "packet=pts_time,flags",
+            "-of",
+            "csv=p=0",
+            str(video_path),
+        ]
+        try:
+            completed = self._run_command(
+                cmd,
+                "ffprobe mezzanine keyframes",
+                timeout_sec=self._ffprobe_timeout_sec,
+                cancel_event=cancel_event,
+            )
+        except FFmpegCancelledError:
+            raise
+        except (RuntimeError, TimeoutError) as exc:
+            logger.warning("Keyframe probe failed (%s); using nominal chunk starts.", exc)
+            return []
+        times: list[float] = []
+        for line in (completed.stdout or "").splitlines():
+            pts, _, flags = line.partition(",")
+            if "K" not in flags:
+                continue
+            try:
+                times.append(float(pts))
+            except ValueError:
+                continue
+        return sorted(times)
+
+    @staticmethod
+    def _snap_to_keyframe(start_sec: float, keyframes: list[float]) -> float:
+        """Return the last keyframe time at or before ``start_sec`` (``start_sec`` if none)."""
+        position = bisect.bisect_right(keyframes, start_sec + _KEYFRAME_EPSILON_SEC) - 1
+        return keyframes[position] if position >= 0 else start_sec
+
+    def _run_mezzanine(
+        self, cmd: list[str], timeout_sec: float, cancel_event: threading.Event | None
+    ) -> None:
         self._run_command(
             cmd,
             "ffmpeg pass1 mezzanine",
-            timeout_sec=self._ffmpeg_timeout_sec,
+            timeout_sec=timeout_sec,
             cancel_event=cancel_event,
         )
 
@@ -672,7 +800,10 @@ class FFmpegClient:
         effective_height = target_height - (target_height % 2)
         gop_frames = max(1, round(keyframe_interval_sec * fps))
         cmd = [self._ffmpeg_bin, "-y", "-hide_banner", *self._hwaccel_args()]
-        cmd += ["-i", str(video_path), "-vf", f"fps={fps},scale=-2:{effective_height}"]
+        cmd += ["-i", str(video_path), *self._video_map_args(probe.video_stream_index)]
+        if probe.has_audio:
+            cmd += ["-map", "0:a:0?"]
+        cmd += ["-vf", f"fps={fps},scale=-2:{effective_height}"]
         cmd += ["-c:v", encoder, *_ENCODER_QUALITY_ARGS.get(encoder, []), "-pix_fmt", "yuv420p"]
         # No B-frames: at the low mezzanine fps a B-frame reorder delay (e.g. 2 x 0.5 s) would
         # make `-c copy` chunks start late and drift against the audio track.
@@ -684,6 +815,11 @@ class FFmpegClient:
             cmd.append("-an")
         cmd += ["-movflags", "+faststart", str(output_path)]
         return cmd
+
+    @staticmethod
+    def _video_map_args(video_stream_index: int | None) -> list[str]:
+        """Map the probed video stream explicitly (first video stream when it is unknown)."""
+        return ["-map", "0:v:0" if video_stream_index is None else f"0:{video_stream_index}"]
 
     def _hwaccel_args(self, hwaccel: str | None = None) -> list[str]:
         selected = self._hwaccel if hwaccel is None else hwaccel
@@ -741,6 +877,7 @@ class FFmpegClient:
         frame_height: int,
         detector_input_width: int | None = None,
         cancel_event: threading.Event | None = None,
+        video_stream_index: int | None = None,
     ) -> list[ExtractedFrame]:
         """Stream frames in a narrow [t - d, t + d] window through an ffmpeg ``rawvideo`` pipe.
 
@@ -749,9 +886,11 @@ class FFmpegClient:
         per window stays far below holding every raw 4K frame.
 
         Args:
-            frame_width: Native source width (from ffprobe), needed to slice the raw stream.
-            frame_height: Native source height (from ffprobe).
+            frame_width: Display width (from :meth:`probe`, rotation-aware), needed to slice the
+                raw stream, because FFmpeg emits frames in display orientation.
+            frame_height: Display height (from :meth:`probe`, rotation-aware).
             detector_input_width: Detection image width; ``None`` keeps native resolution.
+            video_stream_index: Stream index selected by :meth:`probe`; mapped explicitly.
         """
         if frame_width < 2 or frame_height < 2:
             raise ValueError("frame_width and frame_height must be at least 2 pixels.")
@@ -763,7 +902,8 @@ class FFmpegClient:
         if self._extraction_threads > 0:
             cmd += ["-threads", str(self._extraction_threads)]
         cmd += ["-ss", f"{win_start:.3f}", "-i", str(video_path), "-t", f"{win_dur:.3f}"]
-        cmd += ["-an", "-sn", "-vf", f"fps={sample_fps}"]
+        cmd += [*self._video_map_args(video_stream_index), "-an", "-sn"]
+        cmd += ["-vf", f"fps={sample_fps}"]
         cmd += ["-f", "rawvideo", "-pix_fmt", "bgr24", "pipe:1"]
 
         extracted: list[ExtractedFrame] = []

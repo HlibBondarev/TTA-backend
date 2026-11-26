@@ -928,7 +928,7 @@ def test_camera_motion_translation_is_scaled_from_detection_to_native_pixels() -
         native_width=1280,
         native_height=720,
     )
-    # Rotation/scale part is dimensionless; only the translation column scales.
+    # Equal axis scales leave the linear part untouched; only the translation column scales.
     warp = np.array([[0.99, -0.01, 10.0], [0.01, 0.99, -4.0]])
     scaled = _scale_warp_translation(warp, frame)
     assert scaled is not None
@@ -941,11 +941,33 @@ def test_camera_motion_translation_is_scaled_from_detection_to_native_pixels() -
     assert _scale_warp_translation(warp, native_frame)[:, 2] == pytest.approx([10.0, -4.0])
 
 
+def test_camera_motion_rotation_is_scaled_per_axis_for_unequal_scales() -> None:
+    frame = ExtractedFrame(
+        index=0,
+        video_time_sec=0.0,
+        image_bgr=np.zeros((360, 640, 3), dtype=np.uint8),
+        native_width=1280,  # scale_x = 2
+        native_height=1080,  # scale_y = 3
+    )
+    warp = np.array([[1.0, 0.2, 10.0], [0.1, 1.0, -4.0]])
+
+    scaled = _scale_warp_translation(warp, frame)
+
+    assert scaled is not None
+    # S @ A @ S^-1 with S = diag(2, 3): [0, 1] *= 2 / 3 and [1, 0] *= 3 / 2.
+    assert scaled[0, 1] == pytest.approx(0.2 * 2.0 / 3.0)
+    assert scaled[1, 0] == pytest.approx(0.1 * 3.0 / 2.0)
+    assert scaled[0, 0] == pytest.approx(1.0)
+    assert scaled[1, 1] == pytest.approx(1.0)
+    assert scaled[:, 2] == pytest.approx([20.0, -12.0])
+
+
 def test_extracted_frame_defaults_to_native_without_compact_copy() -> None:
     image = np.zeros((90, 160, 3), dtype=np.uint8)
     frame = ExtractedFrame(index=3, video_time_sec=1.0, image_bgr=image)
     assert (frame.native_width, frame.native_height) == (160, 90)
-    assert frame.scale_x == 1.0 and frame.scale_y == 1.0
+    assert frame.scale_x == 1.0
+    assert frame.scale_y == 1.0
     assert frame.native_bgr() is image
 
     corrupt = ExtractedFrame(

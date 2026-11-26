@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import cv2
@@ -315,11 +316,15 @@ class BoTSortTracker:
 def _scale_warp_translation(warp: np.ndarray | None, frame: ExtractedFrame) -> np.ndarray | None:
     """Convert a camera-motion warp from detection-image pixels to native pixels.
 
-    Only the translation column scales; the rotation/scale part is dimensionless.
+    With ``S = diag(scale_x, scale_y)`` the native warp is ``S @ A @ S^-1`` for the linear part
+    and ``S @ t`` for the translation. For unequal axis scales the cross-axis terms therefore
+    scale by ``scale_x / scale_y`` (``[0, 1]``) and ``scale_y / scale_x`` (``[1, 0]``).
     """
     if warp is None:
         return None
     scaled = warp.copy()
+    scaled[0, 1] *= frame.scale_x / frame.scale_y
+    scaled[1, 0] *= frame.scale_y / frame.scale_x
     scaled[0, 2] *= frame.scale_x
     scaled[1, 2] *= frame.scale_y
     return scaled
@@ -332,7 +337,7 @@ def _detect_in_native_coordinates(
     """Run the detector on the detection image and rescale its boxes to native coordinates."""
     detections = detector.detect(frame.image_bgr)
     scale_x, scale_y = frame.scale_x, frame.scale_y
-    if scale_x == 1.0 and scale_y == 1.0:
+    if math.isclose(scale_x, 1.0) and math.isclose(scale_y, 1.0):
         return detections
     return [
         Detection(
