@@ -40,6 +40,23 @@ public interface IMatchRepository : IEntityRepositoryBase<Guid, Match>
     Task<dynamic?> GetMatchByIdWithDetailsAsync(Guid matchId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Retrieves everything required to build a match analysis snapshot for a match and a tracked team:
+    /// match context, participating teams, sport, the actual sport configuration, the tracked team lineup
+    /// and the active system-level event definitions of the sport.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the tracked team.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>
+    /// The snapshot projection (with an empty lineup when the team has no lineup entries);
+    /// or <c>null</c> when the match does not exist or the team does not participate in it.
+    /// </returns>
+    Task<MatchAnalysisSnapshotProjection?> GetMatchAnalysisSnapshotAsync(
+        Guid matchId,
+        Guid teamId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Provisions JIT quick match infrastructure (teams, tournament, rosters), creates a match record using client-generated match ID,
     /// and automatically tracks the selected team for the user based on <paramref name="isGuestTeam"/>.
     /// </summary>

@@ -290,6 +290,25 @@ public static class SqlStatements
             "SELECT * FROM public.get_match_with_details_by_id(@p_id)";
 
         /// <summary>
+        /// SQL to retrieve the match analysis context (match, teams, sport and actual sport configuration) for a tracked team.
+        /// Returns no rows when the match does not exist or the team does not participate in it.
+        /// </summary>
+        public const string GetMatchAnalysisContext =
+            "SELECT * FROM public.get_match_analysis_context(@p_match_id, @p_team_id)";
+
+        /// <summary>
+        /// SQL to retrieve the tracked team lineup (with position short names) for the match analysis snapshot.
+        /// </summary>
+        public const string GetMatchAnalysisLineup =
+            "SELECT * FROM public.get_match_analysis_lineup(@p_match_id, @p_team_id)";
+
+        /// <summary>
+        /// SQL to retrieve active system-level event definitions (excluding custom and soft-deleted ones) for a sport.
+        /// </summary>
+        public const string GetSystemEventDefinitionsBySport =
+            "SELECT * FROM public.get_system_event_definitions_by_sport(@p_sport_id)";
+
+        /// <summary>
         /// Executes the storage function to provision infrastructure and create a quick match.
         /// </summary>
         public const string CreateQuickMatch =
