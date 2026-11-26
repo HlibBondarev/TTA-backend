@@ -37,6 +37,8 @@ def build_default_orchestrator(settings: Settings) -> VideoAnalysisOrchestrator:
         ffprobe_bin=settings.ffprobe_bin,
         hwaccel=settings.ffmpeg_hwaccel,
         video_encoder=settings.ffmpeg_video_encoder,
+        extraction_threads=settings.ffmpeg_extraction_threads,
+        extraction_hwaccel=settings.ffmpeg_extraction_hwaccel,
     )
     pass1_analyzer = GeminiPass1Analyzer(
         api_key=settings.gemini_api_key,

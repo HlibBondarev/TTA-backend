@@ -963,6 +963,7 @@ def test_global_detector_semaphore_caps_concurrency_across_all_phase_a_tasks(
         ffmpeg=ffmpeg,
         detector=remote,
         pass2_phase_a_max_concurrency=6,
+        ffmpeg_extraction_max_concurrency=6,
         detector_max_concurrency=2,
     ).run(sample_job_request)
 
@@ -1004,6 +1005,7 @@ def test_phase_a_and_phase_b_concurrency_are_independently_configurable(
         ffmpeg=ffmpeg,
         cap_resolver=resolver,
         pass2_phase_a_max_concurrency=3,
+        ffmpeg_extraction_max_concurrency=3,
         pass2_phase_b_max_concurrency=1,
     ).run(sample_job_request)
     assert 2 <= ffmpeg.max_active <= 3
@@ -1305,3 +1307,135 @@ def test_gemini_job_scope_budget_is_applied_per_job_through_worker_threads(
         pass2_phase_b_max_concurrency=1,
     ).run(sample_job_request)
     assert len([e for e in second.events if e.resolved_cap_number == 7]) == 2
+
+
+def test_extraction_semaphore_caps_4k_decoders_while_phase_a_overlaps_detector_io(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    """Phase A concurrency (network I/O overlap) must not multiply simultaneous 4K decoders."""
+    ffmpeg = _CountingFFmpeg(delay_sec=0.03)
+    detector = _ConcurrencyProbeDetector(concurrent=True, delay_sec=0.03)
+    draft = _orchestrator_with(
+        tmp_path,
+        ffmpeg=ffmpeg,
+        detector=detector,
+        pass2_phase_a_max_concurrency=6,
+        ffmpeg_extraction_max_concurrency=2,
+        detector_max_concurrency=4,
+    ).run(sample_job_request)
+
+    assert len(draft.events) == len(_EVENT_TIMES_SEC)
+    assert ffmpeg.max_active == 2, "at most 2 simultaneous 4K extractions"
+    assert detector.max_active > 1, "...while detector calls from other tasks still overlap"
+
+    serial = _CountingFFmpeg(delay_sec=0.02)
+    _orchestrator_with(
+        tmp_path,
+        ffmpeg=serial,
+        pass2_phase_a_max_concurrency=6,
+        ffmpeg_extraction_max_concurrency=1,
+    ).run(sample_job_request)
+    assert serial.max_active == 1
+
+
+def test_extraction_slot_wait_is_cancellable_and_released_on_failure(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    release = threading.Event()
+    entered = threading.Event()
+
+    class BlockingFFmpeg(MockFFmpegClient):
+        def extract_window_frames(self, video_path, center_sec, **kwargs):
+            entered.set()
+            release.wait(timeout=5.0)
+            raise RuntimeError("decoder exploded")
+
+    cancel_event = threading.Event()
+    orchestrator = _orchestrator_with(
+        tmp_path,
+        ffmpeg=BlockingFFmpeg(),
+        pass2_phase_a_max_concurrency=2,
+        ffmpeg_extraction_max_concurrency=1,
+    )
+    outcome: dict[str, BaseException] = {}
+
+    def run_job() -> None:
+        try:
+            orchestrator.run(sample_job_request, cancel_event=cancel_event)
+        except BaseException as exc:  # noqa: BLE001 - captured for assertions
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run_job)
+    worker.start()
+    assert entered.wait(timeout=5.0)
+    time.sleep(0.2)  # the second Phase A task is now waiting for the only extraction slot
+    cancel_event.set()
+    release.set()
+    worker.join(timeout=10.0)
+    assert not worker.is_alive(), "waiting for a slot must not hang past cancellation"
+    assert isinstance(outcome["error"], (JobCancelledError, RuntimeError))
+
+    # The slot was released by the failing task (no leak): a fresh job can acquire it.
+    assert orchestrator._extraction_slots.acquire(timeout=1.0)
+    orchestrator._extraction_slots.release()
+
+
+def test_phase_a_releases_frame_buffers_and_prepared_items_hold_only_small_results(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    """Frames (detection images + native JPEG copies) must not outlive their Phase A task."""
+    import gc
+    import weakref
+
+    frame_refs: list[weakref.ReferenceType] = []
+
+    class RecordingFFmpeg(MockFFmpegClient):
+        def extract_window_frames(self, video_path, center_sec, **kwargs):
+            frames = super().extract_window_frames(video_path, center_sec, **kwargs)
+            frame_refs.extend(weakref.ref(frame.image_bgr) for frame in frames)
+            return frames
+
+    orchestrator = _orchestrator_with(tmp_path, ffmpeg=RecordingFFmpeg())
+    draft = orchestrator.run(sample_job_request)
+    assert len(draft.events) == len(_EVENT_TIMES_SEC)
+
+    # Phase B has already finished here; if prepared items kept frames alive, they would
+    # accumulate across all events until the end of the job.
+    gc.collect()
+    assert frame_refs and all(ref() is None for ref in frame_refs)
+
+
+def test_prepared_events_do_not_retain_frames_between_phase_a_and_phase_b(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    import gc
+    import weakref
+
+    frame_refs: list[weakref.ReferenceType] = []
+
+    class RecordingFFmpeg(MockFFmpegClient):
+        def extract_window_frames(self, video_path, center_sec, **kwargs):
+            frames = super().extract_window_frames(video_path, center_sec, **kwargs)
+            frame_refs.extend(weakref.ref(frame.image_bgr) for frame in frames)
+            return frames
+
+    leaked_at_phase_b: list[int] = []
+
+    class InspectingResolver(_AlwaysSevenCapResolver):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            gc.collect()
+            leaked_at_phase_b.append(sum(ref() is not None for ref in frame_refs))
+            return super().resolve(selected_crops, allowed_cap_numbers, cap_color_hint)
+
+    _orchestrator_with(
+        tmp_path,
+        ffmpeg=RecordingFFmpeg(),
+        cap_resolver=InspectingResolver(),
+        pass2_phase_b_max_concurrency=1,
+    ).run(sample_job_request)
+
+    assert leaked_at_phase_b and all(count == 0 for count in leaked_at_phase_b)

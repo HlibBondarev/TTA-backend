@@ -103,11 +103,18 @@ All values are environment variables (see `.env.example`). Defaults target a sin
 | `DETECTOR_MAX_CONCURRENCY` (global semaphore across all Phase A tasks) | `4` | `1` |
 | `DETECTOR_INPUT_WIDTH` | `1280` | same |
 | `ROBOFLOW_MAX_RETRIES`, `ROBOFLOW_RETRY_BASE_SEC` | `3`, `1.0` | same |
-| `FFMPEG_HWACCEL`, `FFMPEG_VIDEO_ENCODER` | `auto`, `auto` | `none` for CI |
+| `FFMPEG_HWACCEL`, `FFMPEG_VIDEO_ENCODER` (Pass 1 mezzanine) | `auto`, `auto` | `none` for CI |
+| `FFMPEG_EXTRACTION_MAX_CONCURRENCY` (simultaneous 4K Pass 2 decoders) | `2` | `1` |
+| `FFMPEG_EXTRACTION_THREADS` (`-threads` per Pass 2 decoder, `0` = ffmpeg default) | `2` | same |
+| `FFMPEG_EXTRACTION_HWACCEL` (Pass 2 hardware decode) | `none` | `none` |
 
 **Thinking control.** A thinking level (`MINIMAL`, `LOW`, `MEDIUM`, `HIGH`) is sent per slot as `thinking_level`. When a level is unset the whole `thinking_config` is omitted from the request (some models, such as `gemini-3.5-flash-lite`, reject the field with HTTP 400). `thinking_budget` is never sent and `include_thoughts` is never enabled. Automatic function calling is disabled on every `generate_content` call.
 
-**Encoder selection.** With `FFMPEG_VIDEO_ENCODER=auto` the mezzanine encoder is chosen from `ffmpeg -encoders` in the order `h264_nvenc`, `h264_qsv`, `h264_amf`, `libx264`. If a hardware encoder fails at runtime the transcode is retried with `libx264` and that choice is remembered.
+**Encoder selection.** With `FFMPEG_VIDEO_ENCODER=auto` the mezzanine encoder candidates come from `ffmpeg -encoders` in the order `h264_nvenc`, `h264_qsv`, `h264_amf`, `libx264`. An encoder that fails at runtime (a listed encoder may have no matching GPU) is dropped and the **next** candidate is tried, ending with `libx264`; failed encoders are not retried for the life of the process.
+
+**Pass 1 transcode speed.** The mezzanine filter is `fps=...,scale=...` (decimate first, then downscale): on a 4K 30 fps HEVC clip, scaling every frame before dropping ~93% of them was about 4x slower. At 2 fps the encoder is never the bottleneck, so the cost is dominated by decoding the 4K source; on the 4-minute Clip 1 the mezzanine takes about 60 s on a laptop with only an Intel iGPU (QSV is picked after NVENC fails).
+
+**Pass 2 memory.** Each concurrent 4K decoder holds roughly 1-1.7 GB with default threading and hardware surface pools, so they are throttled by their own semaphore (`FFMPEG_EXTRACTION_MAX_CONCURRENCY`) rather than by `PASS2_PHASE_A_MAX_CONCURRENCY`, which can stay higher to overlap remote detector latency. With the defaults (2 decoders, 2 threads each, software decode) the 14-window Clip 1 benchmark peaks at about 1.2 GB for Python plus all ffmpeg processes (previously about 7 GB) with the same wall-clock time. Raw frames are read one at a time into a single reusable buffer, downscaled immediately, and only compact JPEG copies of native frames are kept until Phase A for that event finishes.
 
 **Error handling (shared by Pass 1 and Pass 2).**
 - Transient failures (HTTP 500/502/503/504, timeouts) and short per-minute `429`s (`retryDelay <= 60 s`, honoring the server delay) are retried with jittered exponential backoff.

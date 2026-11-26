@@ -7,7 +7,8 @@ import re
 import tempfile
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -232,6 +233,20 @@ class VideoAnalysisOrchestrator:
         self._actor_matcher = actor_matcher or ActorMatcher()
         self._crop_selector = crop_selector or CropSelector()
         self._lineup_matcher = lineup_matcher or LineupMatcher()
+        # One semaphore for ALL Phase A tasks: bounds simultaneous 4K ffmpeg decoders (RAM/CPU).
+        self._extraction_slots = threading.BoundedSemaphore(
+            settings.ffmpeg_extraction_max_concurrency
+        )
+
+    @contextmanager
+    def _extraction_slot(self, cancel_event: threading.Event | None) -> Iterator[None]:
+        """Hold one 4K extraction slot, staying responsive to cancellation while waiting."""
+        while not self._extraction_slots.acquire(timeout=0.1):
+            self._check_cancelled(cancel_event)
+        try:
+            yield
+        finally:
+            self._extraction_slots.release()
 
     @staticmethod
     def _limit_detector_concurrency(
@@ -631,19 +646,21 @@ class VideoAnalysisOrchestrator:
 
     def _extract_frames(self, prepared: _PreparedEvent, ctx: _Pass2Context) -> list[ExtractedFrame]:
         opts = ctx.request.analysis_options
-        started = time.monotonic()
-        frames = self._ffmpeg.extract_window_frames(
-            video_path=ctx.video_path,
-            center_sec=prepared.candidate.video_time_sec,
-            half_window_sec=opts.pass2_window_half_sec,
-            total_duration_sec=ctx.probe.duration_sec,
-            sample_fps=opts.pass2_sample_fps,
-            frame_width=ctx.probe.width,
-            frame_height=ctx.probe.height,
-            detector_input_width=self._settings.detector_input_width,
-            cancel_event=ctx.cancel_event,
-        )
-        prepared.timings.extraction_sec = time.monotonic() - started
+        with self._extraction_slot(ctx.cancel_event):
+            # Timed inside the slot so queueing behind other windows is not counted as decoding.
+            started = time.monotonic()
+            frames = self._ffmpeg.extract_window_frames(
+                video_path=ctx.video_path,
+                center_sec=prepared.candidate.video_time_sec,
+                half_window_sec=opts.pass2_window_half_sec,
+                total_duration_sec=ctx.probe.duration_sec,
+                sample_fps=opts.pass2_sample_fps,
+                frame_width=ctx.probe.width,
+                frame_height=ctx.probe.height,
+                detector_input_width=self._settings.detector_input_width,
+                cancel_event=ctx.cancel_event,
+            )
+            prepared.timings.extraction_sec = time.monotonic() - started
         return frames
 
     def _track_and_match(

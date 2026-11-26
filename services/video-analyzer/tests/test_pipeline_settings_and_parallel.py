@@ -24,6 +24,9 @@ _INFRA_ENV_VARS = (
     "DETECTOR_INPUT_WIDTH",
     "FFMPEG_HWACCEL",
     "FFMPEG_VIDEO_ENCODER",
+    "FFMPEG_EXTRACTION_MAX_CONCURRENCY",
+    "FFMPEG_EXTRACTION_THREADS",
+    "FFMPEG_EXTRACTION_HWACCEL",
     "GEMINI_PASS1_RPM",
     "GEMINI_PASS2_RPM",
     "GEMINI_MAX_RETRIES",
@@ -44,6 +47,10 @@ def test_infrastructure_setting_defaults_match_the_tier_1_profile(
     assert settings.pass2_phase_b_max_concurrency == 4
     assert (settings.detector_max_concurrency, settings.detector_input_width) == (4, 1280)
     assert (settings.ffmpeg_hwaccel, settings.ffmpeg_video_encoder) == ("auto", "auto")
+    # Pass 2 4K decoders: capped concurrency, few threads, software decode (RAM benchmark).
+    assert settings.ffmpeg_extraction_max_concurrency == 2
+    assert settings.ffmpeg_extraction_threads == 2
+    assert settings.ffmpeg_extraction_hwaccel == "none"
     assert (settings.gemini_pass1_rpm, settings.gemini_pass2_rpm) == (60, 120)
     assert (settings.gemini_max_retries, settings.gemini_retry_base_sec) == (3, 2.0)
     assert (settings.roboflow_max_retries, settings.roboflow_retry_base_sec) == (3, 1.0)
@@ -60,6 +67,9 @@ def test_infrastructure_settings_are_overridable_from_the_environment(
         "DETECTOR_INPUT_WIDTH": "960",
         "FFMPEG_HWACCEL": " NONE ",
         "FFMPEG_VIDEO_ENCODER": "libx264",
+        "FFMPEG_EXTRACTION_MAX_CONCURRENCY": "1",
+        "FFMPEG_EXTRACTION_THREADS": "0",
+        "FFMPEG_EXTRACTION_HWACCEL": " AUTO ",
         "GEMINI_PASS1_RPM": "5",
         "GEMINI_PASS2_RPM": "15",
         "GEMINI_MAX_CALLS_PER_JOB": "20",
@@ -76,6 +86,9 @@ def test_infrastructure_settings_are_overridable_from_the_environment(
     assert settings.detector_input_width == 960
     assert settings.ffmpeg_hwaccel == "none"
     assert settings.ffmpeg_video_encoder == "libx264"
+    assert settings.ffmpeg_extraction_max_concurrency == 1
+    assert settings.ffmpeg_extraction_threads == 0
+    assert settings.ffmpeg_extraction_hwaccel == "auto"
     assert (settings.gemini_pass1_rpm, settings.gemini_pass2_rpm) == (5, 15)
     assert settings.gemini_max_calls_per_job == 20
     assert settings.gemini_max_estimated_cost_usd == 0.5

@@ -162,6 +162,8 @@ class _RawFrameStream:
         self._abort_reason: str | None = None
         self._stderr_tail = ""
         self._threads: list[threading.Thread] = []
+        # One buffer reused for every frame: avoids allocating (and joining) 25 MB per 4K frame.
+        self._buffer = bytearray(frame_bytes)
 
     def __enter__(self) -> _RawFrameStream:
         if self._cancel_event is not None and self._cancel_event.is_set():
@@ -201,18 +203,21 @@ class _RawFrameStream:
         for thread in self._threads:
             thread.join(timeout=2.0)
 
-    def read_frame(self) -> bytes | None:
-        """Return the next complete frame, or None at end of stream (partial tails dropped)."""
+    def read_frame(self) -> bytearray | None:
+        """Read exactly one frame into the shared buffer and return it.
+
+        Returns None at end of stream (a partial trailing frame is dropped). The returned buffer
+        is overwritten by the next call, so callers must copy or consume it immediately.
+        """
         assert self._proc is not None and self._proc.stdout is not None
-        chunks: list[bytes] = []
-        remaining = self._frame_bytes
-        while remaining > 0:
-            data = self._proc.stdout.read(remaining)
-            if not data:
+        view = memoryview(self._buffer)
+        filled = 0
+        while filled < self._frame_bytes:
+            read = self._proc.stdout.readinto(view[filled:])
+            if not read:
                 return None
-            chunks.append(data)
-            remaining -= len(data)
-        return chunks[0] if len(chunks) == 1 else b"".join(chunks)
+            filled += read
+        return self._buffer
 
     def finish(self) -> None:
         """Validate how the process ended; raise for cancellation, timeout, or non-zero exit."""
@@ -277,6 +282,8 @@ class FFmpegClient:
         http_client: httpx.AsyncClient | None = None,
         hwaccel: str = "auto",
         video_encoder: str = "auto",
+        extraction_threads: int = 0,
+        extraction_hwaccel: str | None = None,
     ) -> None:
         if ffprobe_timeout_sec <= 0:
             raise ValueError("ffprobe_timeout_sec must be positive.")
@@ -300,7 +307,16 @@ class FFmpegClient:
         self._http_client = http_client
         self._hwaccel = (hwaccel or "auto").strip().lower()
         self._video_encoder_setting = (video_encoder or "auto").strip().lower()
-        self._resolved_encoder: str | None = None
+        # 0 keeps ffmpeg's default decoder threading; a small cap shrinks the 4K decoder's RAM.
+        self._extraction_threads = max(0, int(extraction_threads))
+        # Pass 2 decoders default to the Pass 1 setting; hardware surface pools can multiply the
+        # per-decoder RAM of 4K HEVC, so deployments usually set this to "none".
+        self._extraction_hwaccel = (
+            self._hwaccel
+            if extraction_hwaccel is None
+            else (extraction_hwaccel.strip().lower() or "auto")
+        )
+        self._encoder_candidates: list[str] | None = None
         self._encoder_lock = threading.Lock()
 
     def resolve_source_path(
@@ -565,33 +581,33 @@ class FFmpegClient:
     ) -> Path:
         """Transcode the source once into a downscaled H.264 mezzanine with regular keyframes.
 
-        Uses hardware decode (``-hwaccel``) and the best available encoder, falling back to
-        ``libx264`` automatically when a hardware encoder is missing or fails at runtime.
+        Uses hardware decode (``-hwaccel``) and walks the encoder priority list
+        (``h264_nvenc`` -> ``h264_qsv`` -> ``h264_amf`` -> ``libx264``): an encoder that fails at
+        runtime is dropped (for the life of this client) and the next candidate is tried, with
+        ``libx264`` as the final fallback.
+
+        ``fps`` is applied before ``scale`` so a 30/60 fps 4K source is decimated to the
+        mezzanine rate first; scaling every 4K frame only to discard most of them is ~4x slower.
         """
-        encoder = self._resolve_video_encoder(cancel_event)
-
-        def build(selected_encoder: str) -> list[str]:
-            return self._build_mezzanine_command(
-                video_path, probe, output_path, selected_encoder, target_height, fps,
-                keyframe_interval_sec,
-            )  # fmt: skip
-
-        try:
-            self._run_mezzanine(build(encoder), cancel_event)
-        except FFmpegCancelledError:
-            raise
-        except RuntimeError as exc:
-            if encoder == LIBX264_ENCODER:
-                raise
-            logger.warning(
-                "Video encoder '%s' failed (%s); falling back to %s.",
-                encoder,
-                exc,
-                LIBX264_ENCODER,
+        last_error: RuntimeError | None = None
+        for encoder in self._video_encoder_candidates(cancel_event):
+            cmd = self._build_mezzanine_command(
+                video_path, probe, output_path, encoder, target_height, fps, keyframe_interval_sec
             )
-            self._set_resolved_encoder(LIBX264_ENCODER)
-            self._run_mezzanine(build(LIBX264_ENCODER), cancel_event)
-        return output_path
+            try:
+                self._run_mezzanine(cmd, cancel_event)
+            except FFmpegCancelledError:
+                raise
+            except RuntimeError as exc:
+                last_error = exc
+                if encoder == LIBX264_ENCODER:
+                    break
+                logger.warning("Video encoder '%s' failed (%s); trying the next.", encoder, exc)
+                self._discard_video_encoder(encoder)
+                continue
+            return output_path
+        assert last_error is not None
+        raise last_error
 
     def slice_chunks(
         self,
@@ -656,7 +672,7 @@ class FFmpegClient:
         effective_height = target_height - (target_height % 2)
         gop_frames = max(1, round(keyframe_interval_sec * fps))
         cmd = [self._ffmpeg_bin, "-y", "-hide_banner", *self._hwaccel_args()]
-        cmd += ["-i", str(video_path), "-vf", f"scale=-2:{effective_height},fps={fps}"]
+        cmd += ["-i", str(video_path), "-vf", f"fps={fps},scale=-2:{effective_height}"]
         cmd += ["-c:v", encoder, *_ENCODER_QUALITY_ARGS.get(encoder, []), "-pix_fmt", "yuv420p"]
         # No B-frames: at the low mezzanine fps a B-frame reorder delay (e.g. 2 x 0.5 s) would
         # make `-c copy` chunks start late and drift against the audio track.
@@ -669,24 +685,28 @@ class FFmpegClient:
         cmd += ["-movflags", "+faststart", str(output_path)]
         return cmd
 
-    def _hwaccel_args(self) -> list[str]:
-        if self._hwaccel in ("", HWACCEL_DISABLED):
+    def _hwaccel_args(self, hwaccel: str | None = None) -> list[str]:
+        selected = self._hwaccel if hwaccel is None else hwaccel
+        if selected in ("", HWACCEL_DISABLED):
             return []
-        return ["-hwaccel", self._hwaccel]
+        return ["-hwaccel", selected]
 
-    def _resolve_video_encoder(self, cancel_event: threading.Event | None) -> str:
+    def _video_encoder_candidates(self, cancel_event: threading.Event | None) -> list[str]:
+        """Return the ordered encoders to try (always ending with ``libx264``)."""
         with self._encoder_lock:
-            if self._resolved_encoder is None:
-                self._resolved_encoder = self._select_video_encoder(cancel_event)
-            return self._resolved_encoder
+            if self._encoder_candidates is None:
+                self._encoder_candidates = self._detect_video_encoders(cancel_event)
+            return list(self._encoder_candidates)
 
-    def _set_resolved_encoder(self, encoder: str) -> None:
+    def _discard_video_encoder(self, encoder: str) -> None:
         with self._encoder_lock:
-            self._resolved_encoder = encoder
+            if self._encoder_candidates is not None and encoder in self._encoder_candidates:
+                self._encoder_candidates.remove(encoder)
 
-    def _select_video_encoder(self, cancel_event: threading.Event | None) -> str:
+    def _detect_video_encoders(self, cancel_event: threading.Event | None) -> list[str]:
         if self._video_encoder_setting != "auto":
-            return self._video_encoder_setting
+            explicit = [self._video_encoder_setting]
+            return explicit if explicit == [LIBX264_ENCODER] else [*explicit, LIBX264_ENCODER]
         try:
             completed = self._run_command(
                 [self._ffmpeg_bin, "-hide_banner", "-encoders"],
@@ -698,15 +718,17 @@ class FFmpegClient:
             raise
         except (RuntimeError, TimeoutError) as exc:
             logger.warning("Encoder auto-detection failed (%s); using %s.", exc, LIBX264_ENCODER)
-            return LIBX264_ENCODER
+            return [LIBX264_ENCODER]
         available = {
             match.group(1)
             for line in (completed.stdout or "").splitlines()
             if (match := _ENCODER_LINE_PATTERN.match(line))
         }
-        selected = next((name for name in ENCODER_PRIORITY if name in available), LIBX264_ENCODER)
-        logger.info("Selected H.264 encoder '%s' for the Pass 1 mezzanine.", selected)
-        return selected
+        candidates = [name for name in ENCODER_PRIORITY if name in available]
+        if LIBX264_ENCODER not in candidates:
+            candidates.append(LIBX264_ENCODER)
+        logger.info("H.264 encoder candidates for the Pass 1 mezzanine: %s.", candidates)
+        return candidates
 
     def extract_window_frames(
         self,
@@ -737,7 +759,9 @@ class FFmpegClient:
         win_end = min(total_duration_sec, center_sec + half_window_sec)
         win_dur = max(0.25, win_end - win_start)
         cmd = [self._ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-nostdin"]
-        cmd += self._hwaccel_args()
+        cmd += self._hwaccel_args(self._extraction_hwaccel)
+        if self._extraction_threads > 0:
+            cmd += ["-threads", str(self._extraction_threads)]
         cmd += ["-ss", f"{win_start:.3f}", "-i", str(video_path), "-t", f"{win_dur:.3f}"]
         cmd += ["-an", "-sn", "-vf", f"fps={sample_fps}"]
         cmd += ["-f", "rawvideo", "-pix_fmt", "bgr24", "pipe:1"]

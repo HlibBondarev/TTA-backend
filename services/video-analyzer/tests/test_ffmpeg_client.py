@@ -89,8 +89,10 @@ def test_create_pass1_chunks_normalizes_odd_target_height_and_preserves_even(
     )
 
     odd_cmd, even_cmd = _mezzanine_commands(recorded_cmds)
-    assert odd_cmd[odd_cmd.index("-vf") + 1] == "scale=-2:720,fps=2.0"
-    assert even_cmd[even_cmd.index("-vf") + 1] == "scale=-2:720,fps=2.0"
+    # fps must come BEFORE scale: decimate 30/60 fps 4K to 2 fps first, then downscale only
+    # the surviving frames (scale-first was ~4x slower on the real 4K HEVC clip).
+    assert odd_cmd[odd_cmd.index("-vf") + 1] == "fps=2.0,scale=-2:720"
+    assert even_cmd[even_cmd.index("-vf") + 1] == "fps=2.0,scale=-2:720"
 
     with pytest.raises(ValueError, match="target_height"):
         client.create_pass1_chunks(
@@ -801,3 +803,103 @@ def test_ffmpeg_client_rejects_sync_http_client_and_interrupts_injected_async_sl
                 timer.cancel()
     finally:
         asyncio.run(injected_client.aclose())
+
+
+def test_encoder_chain_tries_next_hardware_encoder_before_libx264(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    listing = (
+        " V....D h264_nvenc NVIDIA NVENC\n V..... h264_qsv Intel QSV\n"
+        " V....D h264_amf AMD AMF\n V..... libx264 libx264\n"
+    )
+    client, cmds = _recording_client(
+        monkeypatch, encoder_listing=listing, failing_encoders=("h264_nvenc",)
+    )
+    client.create_pass1_chunks(
+        video_path=tmp_path / "m.mp4", probe=_probe(), output_dir=tmp_path / "a"
+    )
+    used = [cmd[cmd.index("-c:v") + 1] for cmd in _mezzanine_commands(cmds)]
+    assert used == ["h264_nvenc", "h264_qsv"], "QSV is tried after NVENC fails, not libx264"
+
+    client.create_pass1_chunks(
+        video_path=tmp_path / "m.mp4", probe=_probe(), output_dir=tmp_path / "b"
+    )
+    used = [cmd[cmd.index("-c:v") + 1] for cmd in _mezzanine_commands(cmds)]
+    assert used == ["h264_nvenc", "h264_qsv", "h264_qsv"], "failed encoders are not retried"
+
+    failing_all, cmds = _recording_client(
+        monkeypatch,
+        encoder_listing=listing,
+        failing_encoders=("h264_nvenc", "h264_qsv", "h264_amf"),
+    )
+    failing_all.create_pass1_chunks(
+        video_path=tmp_path / "m.mp4", probe=_probe(), output_dir=tmp_path / "c"
+    )
+    used = [cmd[cmd.index("-c:v") + 1] for cmd in _mezzanine_commands(cmds)]
+    assert used == ["h264_nvenc", "h264_qsv", "h264_amf", "libx264"]
+
+
+def test_extraction_threads_and_hwaccel_are_independent_of_the_pass1_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_popen(cmd, **kwargs):
+        commands.append(cmd)
+        return _FakeStreamProcess(_raw_frames(1, 32, 18))
+
+    monkeypatch.setattr("video_analyzer.media.ffmpeg_client.subprocess.Popen", fake_popen)
+    common = {
+        "video_path": Path("m.mp4"),
+        "center_sec": 1.0,
+        "half_window_sec": 1.0,
+        "total_duration_sec": 10.0,
+        "sample_fps": 2.0,
+        "frame_width": 32,
+        "frame_height": 18,
+    }
+
+    split = FFmpegClient(hwaccel="auto", extraction_hwaccel="none", extraction_threads=2)
+    split.extract_window_frames(**common)
+    assert "-hwaccel" not in commands[0]
+    assert commands[0][commands[0].index("-threads") + 1] == "2"
+    assert commands[0].index("-threads") < commands[0].index("-i")
+    assert split._hwaccel_args() == ["-hwaccel", "auto"], "Pass 1 keeps hardware decode"
+
+    inherited = FFmpegClient(hwaccel="auto")
+    inherited.extract_window_frames(**common)
+    assert commands[1][commands[1].index("-hwaccel") + 1] == "auto"
+    assert "-threads" not in commands[1], "0 threads keeps the ffmpeg default"
+
+    explicit = FFmpegClient(hwaccel="none", extraction_hwaccel="d3d11va")
+    explicit.extract_window_frames(**common)
+    assert commands[2][commands[2].index("-hwaccel") + 1] == "d3d11va"
+
+
+def test_raw_frame_reading_reuses_one_buffer_without_corrupting_returned_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "video_analyzer.media.ffmpeg_client.subprocess.Popen",
+        lambda cmd, **kwargs: _FakeStreamProcess(_raw_frames(3, 32, 18)),
+    )
+    common = {
+        "video_path": Path("m.mp4"),
+        "center_sec": 1.0,
+        "half_window_sec": 1.0,
+        "total_duration_sec": 10.0,
+        "sample_fps": 2.0,
+        "frame_width": 32,
+        "frame_height": 18,
+    }
+    # Native-size path (frames are copied out of the shared buffer) ...
+    native_frames = FFmpegClient(hwaccel="none").extract_window_frames(**common)
+    assert [int(f.image_bgr.mean()) for f in native_frames] == [10, 20, 30]
+    # ... and the downscaled path (JPEG copy + detection thumbnail) both keep per-frame data.
+    scaled_frames = FFmpegClient(hwaccel="none").extract_window_frames(
+        **common, detector_input_width=16
+    )
+    assert [int(f.image_bgr.mean()) for f in scaled_frames] == [10, 20, 30]
+    for frame, expected in zip(scaled_frames, (10, 20, 30), strict=True):
+        assert abs(int(frame.native_bgr().mean()) - expected) <= 2

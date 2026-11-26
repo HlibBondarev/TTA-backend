@@ -128,6 +128,16 @@ class Settings(BaseSettings):
     ffmpeg_hwaccel: str = Field(default="auto")
     # "auto" probes `ffmpeg -encoders` (nvenc -> qsv -> amf -> libx264); or name an encoder.
     ffmpeg_video_encoder: str = Field(default="auto")
+    # Cap on simultaneous 4K Pass 2 ffmpeg decoders. Each holds roughly 1-1.5 GB (HEVC 10-bit
+    # frame threading), so this bounds peak RAM independently of PASS2_PHASE_A_MAX_CONCURRENCY,
+    # which can stay high to overlap remote detector network I/O.
+    ffmpeg_extraction_max_concurrency: int = Field(default=2, ge=1, le=16)
+    # `-threads` for Pass 2 decoders (0 = ffmpeg default). Fewer threads shrink decoder RAM.
+    ffmpeg_extraction_threads: int = Field(default=2, ge=0, le=64)
+    # Hardware decode for Pass 2 windows. "none" by default: on the Clip 1 benchmark GPU surface
+    # pools cost ~700 MB more RAM per 4K decoder for only ~12% speed. FFMPEG_HWACCEL still
+    # applies to the (single, sequential) Pass 1 mezzanine transcode.
+    ffmpeg_extraction_hwaccel: str = Field(default="none")
     work_dir: str | None = Field(default=None)
 
     @field_validator(
@@ -152,7 +162,9 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("ffmpeg_hwaccel", "ffmpeg_video_encoder", mode="before")
+    @field_validator(
+        "ffmpeg_hwaccel", "ffmpeg_video_encoder", "ffmpeg_extraction_hwaccel", mode="before"
+    )
     @classmethod
     def _normalize_ffmpeg_choice(cls, value: Any) -> Any:
         if isinstance(value, str):
