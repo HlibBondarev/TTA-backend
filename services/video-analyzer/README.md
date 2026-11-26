@@ -7,7 +7,7 @@ Isolated Python microservice (`FastAPI` + `FFmpeg` + pluggable object detector +
 1. **Pass 1 — Global Event & Timing Detection (Gemini VLM)**:
    - Transcodes the source **once** into a 720p H.264 mezzanine (hardware-accelerated when available, mono 16 kHz AAC audio kept for whistles and period buzzers) with a forced keyframe interval (1-5 s) that evenly divides the chunk duration, the overlap and the chunk step. Overlapping chunks are then cut from the mezzanine with `-c copy`, so the 4K source is never re-decoded per chunk.
    - Analyzes chunks in parallel (`PASS1_MAX_CONCURRENCY`) and merges results by chunk index, so output order is deterministic.
-   - Prompts Gemini with exact `promptCode -> eventDefinitionId` mappings so duplicate names (e.g. positive `Goal` `G` vs. negative `Goal` `GC`) and custom user definitions never collide.
+   - Prompts Gemini with deterministic, Python-generated internal `promptCode` values (e.g. `EVT_01_G_POS`) mapped one-to-one to the system `eventDefinitions[].id`, so duplicate names (e.g. positive `Goal` `G` vs. negative `Goal` `GC`) never collide. `.NET` never sends or receives `promptCode`.
    - Deduplicates overlap-zone detections and reconciles period/stoppage anchors (`PeriodStart`, `PeriodEnd`, paired `StoppageStart`/`StoppageEnd`).
 2. **Pass 2 — Targeted 4K Tracking & Cap Number Resolution**:
    - **Phase A** (`PASS2_PHASE_A_MAX_CONCURRENCY`): for every Pass 1 event, streams a narrow window (`±2.5 s` at `4 fps`, about 20 frames) through an ffmpeg `rawvideo` pipe (no temp JPEGs), runs a pluggable object detector (`roboflow`, `local_yolo`, or `onnx`) on frames downscaled to `DETECTOR_INPUT_WIDTH` (boxes are rescaled to native pixels), tracks players with `BoT-SORT` + sparse optical-flow camera motion compensation, and selects the top-K sharpest **native-resolution** cap crops. Native frames are kept only as compact in-memory JPEG copies and decoded on demand for cap crops. Per-frame `BALL` and `GOAL` detections are preserved in the tracker output. Remote detector calls share one global `DETECTOR_MAX_CONCURRENCY` semaphore across all Phase A tasks; local providers run serially.
@@ -52,6 +52,14 @@ Copy-Item .env.example .env
 
 Three Gemini model slots are configured independently: `GEMINI_PASS1_MODEL` (default `gemini-4-hydrogen`), `GEMINI_VERIFIER_MODEL` (default `gemini-4-hydrogen`, reserved for the Pass 1 verifier and unused until #158) and `GEMINI_PASS2_MODEL` (default `gemini-3.5-flash-lite`). Each completed draft includes aggregated Gemini token counters (`promptTokens`, `candidatesTokens`, `thoughtsTokens`, `cachedContentTokens`, `totalTokens`) and an estimated USD cost breakdown (`diagnostics.geminiUsage`). You can override or extend per-1M-token USD pricing estimates via `GEMINI_MODEL_PRICING_USD_PER_1M` (JSON object or path to a JSON file).
 
+### Match Snapshot Contract
+
+The analyzer consumes the response of the `.NET` endpoint `GET api/matches/{matchId}/teams/{teamId}/analysis-snapshot` unchanged: `match`, `teams` (`home`, `guest`, `tracked`, `opponent`), `sport`, `sportConfiguration` (including the `playground` / `shotMap` SVG strings, kept on the model for future coordinate mapping and **never** sent to Gemini), the tracked-team-only `lineup` (`id`, `playerRosterId`, `number`, `positionId`, `positionName`, `positionShortName`) and the active system `eventDefinitions`. The snapshot carries no visual hints: cap colors are optional runtime hints (`runtimeHints.trackedCapColorHint` / `opponentCapColorHint` in the job payload, `--tracked-cap-color` / `--opponent-cap-color` in the CLI).
+
+- `matchLineupId` in the draft output is the snapshot's `lineup[].id`.
+- A snapshot with `lineup: []` parses, but analysis fails fast: `POST /v1/analysis/jobs` returns `422`, and `analyze` exits with code `2` and a clear message before any ffmpeg or Gemini work.
+- Sport-specific behavior (goalkeeper detection from `positionName` / `positionShortName`, prompt wording) lives in a `SportProfile` resolved from `sport`: `WaterPoloProfile` for water polo, a neutral `DefaultProfile` otherwise.
+
 ### Run CLI Analysis on a Local 4K Match Video
 
 ```powershell
@@ -62,7 +70,20 @@ tta-video-analyzer analyze `
   --debug-dir ".\debug\4min"
 ```
 
+Instead of a saved snapshot file you can fetch the snapshot directly from the `.NET` API (mutually exclusive with `--snapshot`):
+
+```powershell
+tta-video-analyzer analyze `
+  --video ".\match.mov" `
+  --match-id "<matchId>" --team-id "<trackedTeamId>" `
+  --api-base-url "http://127.0.0.1:5000" `
+  --out ".\output\draft.json"
+```
+
+`--api-base-url` defaults to `TTA_API_BASE_URL` (timeout `TTA_API_TIMEOUT_SEC`). HTTP and contract errors exit with code `2` and a one-line message.
+
 Useful optional flags:
+- `--tracked-cap-color white` / `--opponent-cap-color blue`: Optional cap-color runtime hints (not part of the snapshot).
 - `--video-start-utc "2026-11-23T15:00:00Z"`: Align timestamps to a known recording start UTC time. If omitted, the pipeline automatically selects a safe past `T0` so `T0 + duration <= UtcNow`.
 - `--skip-pass2`: Quickly validate Pass 1 Gemini event detection and time anchors only.
 - `--generate-presences`: Opt in to emitting closed (`timeOut > timeIn`) player presence intervals for resolved players (disabled by default: `playerPresences: []`).
@@ -148,13 +169,13 @@ tta-video-analyzer evaluate --draft .\output\clip1_draft.json --labels .\eval_la
 
 Metrics (events are matched one-to-one by time within `--tolerance-sec`, closest pair first):
 - **Event precision / recall**: matched events / predicted events and / labeled events.
-- **Label accuracy**: matched pairs with the same `promptCode` / matched pairs.
+- **Label accuracy**: matched pairs with the same `eventDefinitionId` (the canonical system event id; names and internal prompt codes are never used) / matched pairs.
 - **Anchor accuracy**: labeled anchors matched by type (and period when both are known) within the tolerance / labeled anchors.
 - **Cap resolution accuracy**: matched pairs whose `resolvedCapNumber` equals the label's `capNumber` / matched pairs with a labeled `capNumber` (an unresolved cap counts as wrong).
 
 A ratio with a zero denominator is shown as `n/a`.
 
-**Label file schema** (`GroundTruthLabels`, camelCase JSON): `clipId` (required), optional `description`, `events[]` (`timeSec`, `promptCode`, optional `periodNumber`, `capNumber`, `notes`) and `anchors[]` (`timeSec`, `type` = `PeriodStart | PeriodEnd | StoppageStart | StoppageEnd`, optional `periodNumber`). `eval_labels/sample_labels.example.json` is a documented template with placeholder values.
+**Label file schema** (`GroundTruthLabels`, camelCase JSON): `clipId` (required), optional `description`, `events[]` (`timeSec`, `eventDefinitionId`, optional `periodNumber`, `capNumber`, `notes`) and `anchors[]` (`timeSec`, `type` = `PeriodStart | PeriodEnd | StoppageStart | StoppageEnd`, optional `periodNumber`). `eval_labels/sample_labels.example.json` is a documented template with placeholder values.
 
 **Dev / holdout workflow.**
 1. Copy the template to `eval_labels/clip1.json` (dev clip) and `eval_labels/clip2.json` (unseen holdout clip) and fill in the coach's labels. `eval_labels/*` is git-ignored except the example, so real labels never enter the repository.

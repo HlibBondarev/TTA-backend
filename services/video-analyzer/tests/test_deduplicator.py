@@ -5,16 +5,22 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
+from tests.support import (  # noqa: I001
+    CODE_GOAL,
+    CODE_GOAL_CONCEDED,
+    CODE_KEY_PASS,
+    CODE_STEAL,
+)
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.deduplicator import EventDeduplicator
 from video_analyzer.pass1.models import Pass1ChunkResult, Pass1RawEvent
 from video_analyzer.pass2.cap_resolver import CapResolutionResult
 from video_analyzer.pass2.lineup_matcher import LineupMatcher
-from video_analyzer.schemas.request import MatchSnapshot
+from video_analyzer.sport import AnalysisContext
 
 
 def test_deduplicator_preserves_positive_vs_negative_goal_uuids(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     chunk = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
@@ -22,7 +28,7 @@ def test_deduplicator_preserves_positive_vs_negative_goal_uuids(
         period_events=[
             Pass1RawEvent(
                 time_sec=25.0,
-                prompt_code="EVT_01_G_POS",
+                prompt_code=CODE_GOAL,
                 period_number=1,
                 is_lead_to_goal=True,
                 actor_bbox_normalized=[0.4, 0.4, 0.5, 0.6],
@@ -30,7 +36,7 @@ def test_deduplicator_preserves_positive_vs_negative_goal_uuids(
             ),
             Pass1RawEvent(
                 time_sec=50.0,
-                prompt_code="EVT_14_GC_NEG",
+                prompt_code=CODE_GOAL_CONCEDED,
                 period_number=1,
                 is_lead_to_goal=True,
                 confidence=0.88,
@@ -40,7 +46,7 @@ def test_deduplicator_preserves_positive_vs_negative_goal_uuids(
 
     events, raw_count, warnings = EventDeduplicator().process(
         chunk_results=[(chunk, chunk_result)],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=120.0,
         min_confidence=0.65,
     )
@@ -58,7 +64,7 @@ def test_deduplicator_preserves_positive_vs_negative_goal_uuids(
 
 
 def test_deduplicator_merges_overlapping_chunks_and_warns_on_unknown_code(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
@@ -68,7 +74,7 @@ def test_deduplicator_merges_overlapping_chunks_and_warns_on_unknown_code(
         period_events=[
             Pass1RawEvent(
                 time_sec=112.0,  # abs = 112.0s
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 confidence=0.78,
             ),
@@ -80,7 +86,7 @@ def test_deduplicator_merges_overlapping_chunks_and_warns_on_unknown_code(
             ),
             Pass1RawEvent(
                 time_sec=60.0,
-                prompt_code="EVT_03_SP_POS",
+                prompt_code=CODE_KEY_PASS,
                 period_number=1,
                 confidence=0.40,  # below min_confidence
             ),
@@ -90,7 +96,7 @@ def test_deduplicator_merges_overlapping_chunks_and_warns_on_unknown_code(
         period_events=[
             Pass1RawEvent(
                 time_sec=7.8,  # abs = 112.8s (within 2.5s overlap window)
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 is_lead_to_goal=True,
                 actor_bbox_normalized=[0.2, 0.3, 0.3, 0.5],
@@ -101,7 +107,7 @@ def test_deduplicator_merges_overlapping_chunks_and_warns_on_unknown_code(
 
     events, raw_count, warnings = EventDeduplicator(merge_window_sec=2.5).process(
         chunk_results=[(chunk0, res0), (chunk1, res1)],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
@@ -117,7 +123,7 @@ def test_deduplicator_merges_overlapping_chunks_and_warns_on_unknown_code(
 
 
 def test_deduplicator_never_merges_same_chunk_events_and_preserves_bbox_timestamps(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
@@ -128,20 +134,20 @@ def test_deduplicator_never_merges_same_chunk_events_and_preserves_bbox_timestam
         period_events=[
             Pass1RawEvent(
                 time_sec=50.0,
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 confidence=0.80,
             ),
             Pass1RawEvent(
                 time_sec=51.0,
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 confidence=0.85,
             ),
             # Overlap candidate at 112.0s WITH bbox, lower confidence than chunk 1's 112.8s
             Pass1RawEvent(
                 time_sec=112.0,
-                prompt_code="EVT_03_SP_POS",
+                prompt_code=CODE_KEY_PASS,
                 period_number=1,
                 actor_bbox_normalized=[0.1, 0.1, 0.2, 0.2],
                 confidence=0.75,
@@ -153,7 +159,7 @@ def test_deduplicator_never_merges_same_chunk_events_and_preserves_bbox_timestam
             # Overlap candidate at 112.8s WITHOUT bbox, higher confidence
             Pass1RawEvent(
                 time_sec=7.8,
-                prompt_code="EVT_03_SP_POS",
+                prompt_code=CODE_KEY_PASS,
                 period_number=1,
                 actor_bbox_normalized=None,
                 confidence=0.92,
@@ -163,16 +169,16 @@ def test_deduplicator_never_merges_same_chunk_events_and_preserves_bbox_timestam
 
     events, _, warnings = EventDeduplicator(merge_window_sec=2.5).process(
         chunk_results=[(chunk0, res0), (chunk1, res1)],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
 
     assert warnings == []
-    same_chunk_shots = [e for e in events if e.definition.prompt_code == "EVT_02_ST_POS"]
+    same_chunk_shots = [e for e in events if e.definition.prompt_code == CODE_STEAL]
     assert len(same_chunk_shots) == 2
 
-    merged_sprint = [e for e in events if e.definition.prompt_code == "EVT_03_SP_POS"]
+    merged_sprint = [e for e in events if e.definition.prompt_code == CODE_KEY_PASS]
     assert len(merged_sprint) == 1
     assert merged_sprint[0].video_time_sec == 112.8
     # Must NOT attach 112.0s bbox onto the 112.8s retained event
@@ -180,7 +186,7 @@ def test_deduplicator_never_merges_same_chunk_events_and_preserves_bbox_timestam
 
 
 def test_deduplicator_maintains_sorted_order_on_replacement_and_rejects_oob_offsets(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
@@ -191,19 +197,19 @@ def test_deduplicator_maintains_sorted_order_on_replacement_and_rejects_oob_offs
         period_events=[
             Pass1RawEvent(
                 time_sec=110.0,
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 confidence=0.70,
             ),
             Pass1RawEvent(
                 time_sec=111.0,
-                prompt_code="EVT_03_SP_POS",
+                prompt_code=CODE_KEY_PASS,
                 period_number=1,
                 confidence=0.90,
             ),
             Pass1RawEvent(
                 time_sec=145.0,  # exceeds chunk0 duration (120.0s)
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 confidence=0.95,
             ),
@@ -213,7 +219,7 @@ def test_deduplicator_maintains_sorted_order_on_replacement_and_rejects_oob_offs
         period_events=[
             Pass1RawEvent(
                 time_sec=7.4,  # abs = 112.4s -> replaces 110.0s (crosses 111.0s)
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 confidence=0.95,
             )
@@ -223,7 +229,7 @@ def test_deduplicator_maintains_sorted_order_on_replacement_and_rejects_oob_offs
         period_events=[
             Pass1RawEvent(
                 time_sec=4.5,  # abs = 114.5s -> still within 2.5s of 112.4s
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 confidence=0.85,
             )
@@ -232,19 +238,19 @@ def test_deduplicator_maintains_sorted_order_on_replacement_and_rejects_oob_offs
 
     events, _, warnings = EventDeduplicator(merge_window_sec=2.5).process(
         chunk_results=[(chunk0, res0), (chunk1, res1), (chunk2, res2)],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
 
     assert len(warnings) == 1
     assert "out-of-range" in warnings[0]
-    assert len([e for e in events if e.definition.prompt_code == "EVT_02_ST_POS"]) == 1
-    assert len([e for e in events if e.definition.prompt_code == "EVT_03_SP_POS"]) == 1
+    assert len([e for e in events if e.definition.prompt_code == CODE_STEAL]) == 1
+    assert len([e for e in events if e.definition.prompt_code == CODE_KEY_PASS]) == 1
 
 
 def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
@@ -259,7 +265,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=112.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             actor_bbox_normalized=[0.10, 0.35, 0.20, 0.60],
                             confidence=0.88,
@@ -273,7 +279,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=9.0,  # abs = 114.0s
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             actor_bbox_normalized=[0.75, 0.35, 0.85, 0.60],
                             confidence=0.90,
@@ -282,7 +288,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                 ),
             ),
         ],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
@@ -297,7 +303,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=112.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             pool_zone_hint="left_wing_5m",
                             confidence=0.88,
@@ -311,7 +317,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=9.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             pool_zone_hint="right_wing_5m",
                             confidence=0.90,
@@ -320,7 +326,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                 ),
             ),
         ],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
@@ -335,7 +341,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=112.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             cap_color_hint="white",
                             confidence=0.88,
@@ -349,7 +355,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=9.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             cap_color_hint="blue",
                             confidence=0.90,
@@ -358,7 +364,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                 ),
             ),
         ],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
@@ -373,7 +379,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=112.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             confidence=0.88,
                         )
@@ -386,7 +392,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=9.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=2,
                             confidence=0.90,
                         )
@@ -394,7 +400,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                 ),
             ),
         ],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
@@ -410,7 +416,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=119.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             confidence=0.88,
                         )
@@ -423,7 +429,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=1.0,  # abs = 121.0s
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             confidence=0.90,
                         )
@@ -431,7 +437,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                 ),
             ),
         ],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
@@ -446,7 +452,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=112.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             cap_color_hint="white",
                             pool_zone_hint="center_5m",
@@ -462,7 +468,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=9.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             cap_color_hint="White",
                             pool_zone_hint="center 5m",
@@ -473,7 +479,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
                 ),
             ),
         ],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
@@ -484,7 +490,7 @@ def test_deduplicator_does_not_merge_incompatible_cross_chunk_shots(
 
 
 def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
@@ -499,7 +505,7 @@ def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=112.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             confidence=0.86,
                         )
@@ -512,7 +518,7 @@ def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=9.0,  # abs = 114.0s
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             confidence=0.92,
                         )
@@ -520,7 +526,7 @@ def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
                 ),
             ),
         ],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
@@ -538,7 +544,7 @@ def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=112.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             confidence=0.84,
                         )
@@ -551,7 +557,7 @@ def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=9.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             actor_bbox_normalized=[0.4, 0.3, 0.5, 0.6],
                             cap_color_hint="white",
@@ -562,7 +568,7 @@ def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
                 ),
             ),
         ],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
@@ -578,7 +584,7 @@ def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
             candidate_scores={7: 0.95},
             reasoning="Sharp cap #7",
         ),
-        sample_snapshot,
+        sample_context,
         min_cap_confidence=0.80,
     )
     assert outcome.needs_review is True
@@ -586,7 +592,7 @@ def test_deduplicator_flags_ambiguous_missing_hint_cross_chunk_merge_for_review(
 
 
 def test_deduplicator_flags_cross_chunk_shots_with_matching_hints_for_review(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
@@ -601,7 +607,7 @@ def test_deduplicator_flags_cross_chunk_shots_with_matching_hints_for_review(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=112.0,
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             cap_color_hint="white",
                             pool_zone_hint="center_5m",
@@ -617,7 +623,7 @@ def test_deduplicator_flags_cross_chunk_shots_with_matching_hints_for_review(
                     period_events=[
                         Pass1RawEvent(
                             time_sec=9.0,  # abs = 114.0s
-                            prompt_code="EVT_02_ST_POS",
+                            prompt_code=CODE_STEAL,
                             period_number=1,
                             cap_color_hint="white",
                             pool_zone_hint="center_5m",
@@ -628,7 +634,7 @@ def test_deduplicator_flags_cross_chunk_shots_with_matching_hints_for_review(
                 ),
             ),
         ],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=240.0,
         min_confidence=0.65,
     )
@@ -646,7 +652,7 @@ def test_deduplicator_flags_cross_chunk_shots_with_matching_hints_for_review(
             candidate_scores={7: 0.95},
             reasoning="Sharp cap #7",
         ),
-        sample_snapshot,
+        sample_context,
         min_cap_confidence=0.80,
     )
     assert outcome.needs_review is True
@@ -654,7 +660,7 @@ def test_deduplicator_flags_cross_chunk_shots_with_matching_hints_for_review(
 
 
 def test_deduplicator_rejects_bboxes_collapsing_to_zero_after_rounding(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     chunk0 = VideoChunk(index=0, start_sec=0.0, end_sec=120.0, path=tmp_path / "c0.mp4")
@@ -662,28 +668,28 @@ def test_deduplicator_rejects_bboxes_collapsing_to_zero_after_rounding(
         period_events=[
             Pass1RawEvent(
                 time_sec=10.0,
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 actor_bbox_normalized=[0.50000, 0.20000, 0.50004, 0.60000],
                 confidence=0.90,
             ),
             Pass1RawEvent(
                 time_sec=20.0,
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 actor_bbox_normalized=[0.20000, 0.50000, 0.60000, 0.50004],
                 confidence=0.90,
             ),
             Pass1RawEvent(
                 time_sec=30.0,
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 actor_bbox_normalized=[0.50000, 0.20000, 0.50010, 0.60000],
                 confidence=0.90,
             ),
             Pass1RawEvent(
                 time_sec=40.0,
-                prompt_code="EVT_02_ST_POS",
+                prompt_code=CODE_STEAL,
                 period_number=1,
                 actor_bbox_normalized=[0.1, 0.2, float("nan"), 0.5],
                 confidence=0.90,
@@ -693,7 +699,7 @@ def test_deduplicator_rejects_bboxes_collapsing_to_zero_after_rounding(
 
     events, _, warnings = EventDeduplicator().process(
         chunk_results=[(chunk0, res0)],
-        event_definitions=sample_snapshot.event_definitions,
+        event_definitions=sample_context.event_catalog,
         total_duration_sec=120.0,
         min_confidence=0.65,
     )

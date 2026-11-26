@@ -16,6 +16,11 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from tests.support import (  # noqa: I001
+    CODE_GOAL,
+    CODE_GOAL_CONCEDED,
+    CODE_STEAL,
+)
 from video_analyzer.api.app import create_app
 from video_analyzer.cli import main as cli_main
 from video_analyzer.config import Settings
@@ -37,6 +42,7 @@ from video_analyzer.pass2.cap_resolver import (
 from video_analyzer.pipeline.orchestrator import JobCancelledError, VideoAnalysisOrchestrator
 from video_analyzer.schemas.draft import GeminiTokenUsage, TimeAnchorType
 from video_analyzer.schemas.request import AnalyzeJobRequest, MatchSnapshot
+from video_analyzer.sport import AnalysisContext
 
 
 class MockFFmpegClient:
@@ -70,7 +76,7 @@ class MockFFmpegClient:
 
 
 class MockPass1Analyzer(BasePass1Analyzer):
-    def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+    def analyze_chunk(self, context: AnalysisContext, chunk: VideoChunk) -> Pass1ChunkResult:
         return Pass1ChunkResult(
             time_anchors=[
                 Pass1RawAnchor(
@@ -91,7 +97,7 @@ class MockPass1Analyzer(BasePass1Analyzer):
             period_events=[
                 Pass1RawEvent(
                     time_sec=45.0,
-                    prompt_code="EVT_01_G_POS",
+                    prompt_code=CODE_GOAL,
                     period_number=1,
                     is_lead_to_goal=True,
                     actor_bbox_normalized=[0.45, 0.35, 0.55, 0.65],
@@ -100,7 +106,7 @@ class MockPass1Analyzer(BasePass1Analyzer):
                 ),
                 Pass1RawEvent(
                     time_sec=110.0,
-                    prompt_code="EVT_14_GC_NEG",
+                    prompt_code=CODE_GOAL_CONCEDED,
                     period_number=1,
                     is_lead_to_goal=True,
                     actor_bbox_normalized=[0.45, 0.35, 0.55, 0.65],
@@ -181,7 +187,7 @@ def test_sample_snapshot_contains_all_34_seeded_waterpolo_definitions(
     goals = [d for d in sample_snapshot.event_definitions if d.name == "Goal"]
     assert len(goals) == 2
     assert {g.short_name for g in goals} == {"G", "GC"}
-    assert len({g.event_definition_id for g in goals}) == 2
+    assert len({g.id for g in goals}) == 2
 
 
 def test_orchestrator_end_to_end_draft_contract(
@@ -200,13 +206,13 @@ def test_orchestrator_end_to_end_draft_contract(
 
     events = payload["events"]
     assert len(events) == 2
-    assert events[0]["promptCode"] == "EVT_01_G_POS"
+    assert events[0]["promptCode"] == CODE_GOAL
     assert events[0]["isPositive"] is True
     assert events[0]["resolvedCapNumber"] == 7
     assert events[0]["matchLineupId"] is not None
     assert events[0]["needsReview"] is False
 
-    assert events[1]["promptCode"] == "EVT_14_GC_NEG"
+    assert events[1]["promptCode"] == CODE_GOAL_CONCEDED
     assert events[1]["isPositive"] is False
     assert events[1]["matchLineupId"] is None
     assert events[1]["needsReview"] is True
@@ -302,14 +308,14 @@ def test_request_schemas_validate_unique_definition_ids_and_team_consistency(
     dup_defs = [
         sample_snapshot.event_definitions[0],
         sample_snapshot.event_definitions[1].model_copy(
-            update={"event_definition_id": sample_snapshot.event_definitions[0].event_definition_id}
+            update={"id": sample_snapshot.event_definitions[0].id}
         ),
     ]
     duplicate_payload = {
         **sample_snapshot.model_dump(by_alias=True),
         "eventDefinitions": [d.model_dump(by_alias=True) for d in dup_defs],
     }
-    with pytest.raises(ValidationError, match="eventDefinitionId"):
+    with pytest.raises(ValidationError, match="unique id"):
         MatchSnapshot.model_validate(duplicate_payload)
 
     mismatched_payload = {
@@ -390,7 +396,7 @@ def test_orchestrator_flags_cap_color_hint_mismatch_across_resolution_paths(
     tmp_path: Path,
 ) -> None:
     class ColorHintPass1Analyzer(BasePass1Analyzer):
-        def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+        def analyze_chunk(self, context: AnalysisContext, chunk: VideoChunk) -> Pass1ChunkResult:
             return Pass1ChunkResult(
                 time_anchors=[
                     Pass1RawAnchor(
@@ -409,7 +415,7 @@ def test_orchestrator_flags_cap_color_hint_mismatch_across_resolution_paths(
                 period_events=[
                     Pass1RawEvent(
                         time_sec=40.0,
-                        prompt_code="EVT_01_G_POS",
+                        prompt_code=CODE_GOAL,
                         period_number=1,
                         actor_bbox_normalized=[0.45, 0.35, 0.55, 0.65],
                         cap_color_hint="Blue",
@@ -417,7 +423,7 @@ def test_orchestrator_flags_cap_color_hint_mismatch_across_resolution_paths(
                     ),
                     Pass1RawEvent(
                         time_sec=90.0,
-                        prompt_code="EVT_02_ST_POS",
+                        prompt_code=CODE_STEAL,
                         period_number=1,
                         actor_bbox_normalized=[0.45, 0.35, 0.55, 0.65],
                         cap_color_hint="  WHITE ",
@@ -540,8 +546,8 @@ def test_orchestrator_aggregates_gemini_usage_and_cost_in_diagnostics_and_cli(
     tmp_path: Path,
 ) -> None:
     class UsagePass1Analyzer(MockPass1Analyzer):
-        def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
-            base = super().analyze_chunk(snapshot, chunk)
+        def analyze_chunk(self, context: AnalysisContext, chunk: VideoChunk) -> Pass1ChunkResult:
+            base = super().analyze_chunk(context, chunk)
             return base.model_copy(
                 update={
                     "token_usage": GeminiTokenUsage(
@@ -727,13 +733,13 @@ _EVENT_TIMES_SEC = (20.0, 45.0, 70.0, 95.0, 120.0, 145.0)
 class _ManyEventsPass1Analyzer(BasePass1Analyzer):
     """Returns one confident goal event per entry in ``_EVENT_TIMES_SEC`` (single chunk)."""
 
-    def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+    def analyze_chunk(self, context: AnalysisContext, chunk: VideoChunk) -> Pass1ChunkResult:
         return Pass1ChunkResult(
             time_anchors=[],
             period_events=[
                 Pass1RawEvent(
                     time_sec=time_sec,
-                    prompt_code="EVT_01_G_POS",
+                    prompt_code=CODE_GOAL,
                     period_number=1,
                     actor_bbox_normalized=[0.45, 0.35, 0.55, 0.65],
                     confidence=0.93,
@@ -866,7 +872,7 @@ def test_pass1_parallel_merge_is_deterministic_and_concurrency_one_is_sequential
             self.max_active = 0
             self.completion_order: list[int] = []
 
-        def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+        def analyze_chunk(self, context: AnalysisContext, chunk: VideoChunk) -> Pass1ChunkResult:
             with self.lock:
                 self.active += 1
                 self.max_active = max(self.max_active, self.active)
@@ -879,7 +885,7 @@ def test_pass1_parallel_merge_is_deterministic_and_concurrency_one_is_sequential
                 period_events=[
                     Pass1RawEvent(
                         time_sec=5.0,
-                        prompt_code="EVT_01_G_POS",
+                        prompt_code=CODE_GOAL,
                         period_number=1,
                         confidence=0.9,
                     )
@@ -921,10 +927,10 @@ def test_pass1_parallel_merge_is_deterministic_and_concurrency_one_is_sequential
         summarize(par_draft)
         == summarize(seq_draft)
         == [
-            (5.0, "EVT_01_G_POS"),
-            (55.0, "EVT_01_G_POS"),
-            (105.0, "EVT_01_G_POS"),
-            (155.0, "EVT_01_G_POS"),
+            (5.0, CODE_GOAL),
+            (55.0, CODE_GOAL),
+            (105.0, CODE_GOAL),
+            (155.0, CODE_GOAL),
         ]
     )
     assert par_draft.diagnostics.pass1_chunks_processed == 4

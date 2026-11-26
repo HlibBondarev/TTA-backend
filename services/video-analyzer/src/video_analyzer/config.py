@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     callback_allowed_origins: list[str] | str = Field(default_factory=list)
     log_level: str = Field(default="INFO")
 
+    # TTA .NET API used by the CLI to fetch the analysis-snapshot (optional)
+    tta_api_base_url: str = Field(default="")
+    tta_api_timeout_sec: float = Field(default=30.0, gt=0)
+
     # Gemini API
     gemini_api_key: str = Field(default="")
     # Three model slots. The verifier slot is reserved for the Pass 1 verifier clip (#158).

@@ -7,7 +7,7 @@ from math import hypot
 
 from video_analyzer.pass1.models import Pass1EventCandidate
 from video_analyzer.pass2.tracker import Tracklet, TrackletObservation, _bbox_center, _bbox_iou
-from video_analyzer.schemas.request import MatchSnapshot
+from video_analyzer.sport.context import AnalysisContext
 
 MIN_SPATIAL_SCORE: float = 0.15
 
@@ -33,7 +33,7 @@ class ActorMatcher:
         self,
         candidate: Pass1EventCandidate,
         tracklets: list[Tracklet],
-        snapshot: MatchSnapshot,
+        context: AnalysisContext,
         frame_width: int,
         frame_height: int,
     ) -> MatchedTracklet | None:
@@ -53,9 +53,9 @@ class ActorMatcher:
         best: MatchedTracklet | None = None
         is_tied = False
         diag = hypot(frame_width, frame_height)
-        is_gk_event = candidate.definition.name.lower() in {"save", "goalkeeper error"}
+        is_gk_event = context.profile.is_goalkeeper_event(candidate.definition)
         cap_hint = (
-            (candidate.cap_color_hint or snapshot.tracked_team.cap_color_hint or "").strip().lower()
+            (candidate.cap_color_hint or context.hints.tracked_cap_color_hint or "").strip().lower()
         )
         has_spatial_hint = target_bbox_px is not None
 
@@ -71,6 +71,7 @@ class ActorMatcher:
                 diag=diag,
                 cap_hint=cap_hint,
                 is_gk_event=is_gk_event,
+                gk_token=context.profile.goalkeeper_label_token,
                 event_time_sec=candidate.video_time_sec,
                 min_spatial_score=self._min_spatial_score,
             )
@@ -105,6 +106,7 @@ class ActorMatcher:
         diag: float,
         cap_hint: str,
         is_gk_event: bool,
+        gk_token: str | None,
         event_time_sec: float,
         min_spatial_score: float = MIN_SPATIAL_SCORE,
     ) -> float | None:
@@ -114,7 +116,7 @@ class ActorMatcher:
         team_bonus = 0.0
         if cap_hint and cap_hint in raw_label:
             team_bonus += 0.15
-        if is_gk_event and "goalkeeper" in raw_label:
+        if is_gk_event and gk_token is not None and gk_token in raw_label:
             team_bonus += 0.20
 
         if target_bbox_px is None:

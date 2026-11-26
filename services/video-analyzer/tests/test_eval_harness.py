@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
@@ -17,6 +18,8 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "eval"
 DRAFT_FIXTURE = FIXTURES / "synthetic_draft.json"
 LABELS_FIXTURE = FIXTURES / "synthetic_labels.json"
+GOAL_ID = UUID("6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57")
+GOAL_CONCEDED_ID = UUID("6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f72")
 SAMPLE_LABELS = SERVICE_ROOT / "eval_labels" / "sample_labels.example.json"
 
 
@@ -46,7 +49,7 @@ def test_scoring_reports_precision_recall_label_anchor_and_cap_accuracy() -> Non
     assert (report.predicted_events, report.labeled_events, report.matched_events) == (4, 4, 3)
     assert report.event_precision == pytest.approx(0.75)
     assert report.event_recall == pytest.approx(0.75)
-    # Of the 3 matched pairs only the first two have the right promptCode.
+    # Of the 3 matched pairs only the first two have the right eventDefinitionId.
     assert (report.label_correct, report.label_accuracy) == (2, pytest.approx(0.6667, abs=1e-4))
     # Only the PeriodStart anchor is within tolerance (PeriodEnd is 10s off, stoppage missing).
     assert (report.labeled_anchors, report.matched_anchors) == (3, 1)
@@ -135,7 +138,7 @@ def test_label_schema_validation_rejects_malformed_labels() -> None:
         GroundTruthLabels.model_validate({"events": []})  # clipId is required
     with pytest.raises(ValidationError):
         GroundTruthLabels.model_validate(
-            {"clipId": "c", "events": [{"timeSec": -1.0, "promptCode": "EVT_01_G_POS"}]}
+            {"clipId": "c", "events": [{"timeSec": -1.0, "eventDefinitionId": str(GOAL_ID)}]}
         )
     with pytest.raises(ValidationError):
         GroundTruthLabels.model_validate(
@@ -143,7 +146,7 @@ def test_label_schema_validation_rejects_malformed_labels() -> None:
         )
     with pytest.raises(ValidationError):
         GroundTruthLabels.model_validate(
-            {"clipId": "c", "events": [{"timeSec": 1.0, "promptCode": ""}]}
+            {"clipId": "c", "events": [{"timeSec": 1.0, "eventDefinitionId": "not-a-uuid"}]}
         )
 
 
@@ -251,8 +254,8 @@ def test_evaluate_scores_a_real_draft_roundtrip(
         {
             "clipId": "roundtrip",
             "events": [
-                {"timeSec": 45.0, "promptCode": "EVT_01_G_POS", "capNumber": 7},
-                {"timeSec": 110.0, "promptCode": "EVT_14_GC_NEG"},
+                {"timeSec": 45.0, "eventDefinitionId": str(GOAL_ID), "capNumber": 7},
+                {"timeSec": 110.0, "eventDefinitionId": str(GOAL_CONCEDED_ID)},
             ],
             "anchors": [{"timeSec": 5.0, "type": "PeriodStart", "periodNumber": 1}],
         }
@@ -263,3 +266,55 @@ def test_evaluate_scores_a_real_draft_roundtrip(
     assert report.label_accuracy == 1.0
     assert report.cap_resolution_accuracy == 1.0
     assert report.anchor_accuracy == 1.0
+
+
+def _single_event_pair(
+    draft_id: UUID, label_id: UUID, draft_prompt_code: str = "EVT_01_G_POS"
+) -> tuple[EvalDraft, GroundTruthLabels]:
+    draft = EvalDraft.model_validate(
+        {
+            "events": [
+                {
+                    "videoTimeSec": 10.0,
+                    "eventDefinitionId": str(draft_id),
+                    "promptCode": draft_prompt_code,
+                }
+            ]
+        }
+    )
+    labels = GroundTruthLabels.model_validate(
+        {"clipId": "c", "events": [{"timeSec": 10.0, "eventDefinitionId": str(label_id)}]}
+    )
+    return draft, labels
+
+
+def test_label_accuracy_matches_strictly_by_event_definition_id() -> None:
+    # Same id but a different (internal) promptCode and no name: still correct.
+    draft, labels = _single_event_pair(GOAL_ID, GOAL_ID, draft_prompt_code="EVT_99_ANY_POS")
+    assert evaluate_draft(draft, labels).label_correct == 1
+
+    # Different id with an identical promptCode: incorrect (promptCode is never consulted).
+    draft, labels = _single_event_pair(GOAL_CONCEDED_ID, GOAL_ID)
+    report = evaluate_draft(draft, labels)
+    assert (report.matched_events, report.label_correct) == (1, 0)
+    assert report.label_accuracy == 0.0
+
+
+def test_positive_and_negative_goal_are_distinct_by_event_definition_id() -> None:
+    # Both definitions are named "Goal"; only their ids tell them apart.
+    draft, labels = _single_event_pair(GOAL_CONCEDED_ID, GOAL_ID)
+    assert evaluate_draft(draft, labels).label_accuracy == 0.0
+
+
+def test_eval_schemas_require_a_valid_event_definition_id() -> None:
+    with pytest.raises(ValidationError):
+        EvalDraft.model_validate({"events": [{"videoTimeSec": 1.0, "promptCode": "EVT_01_G_POS"}]})
+    with pytest.raises(ValidationError):
+        GroundTruthLabels.model_validate(
+            {"clipId": "c", "events": [{"timeSec": 1.0, "promptCode": "EVT_01_G_POS"}]}
+        )
+
+
+def test_sample_labels_template_uses_event_definition_ids() -> None:
+    labels = GroundTruthLabels.model_validate_json(SAMPLE_LABELS.read_text(encoding="utf-8"))
+    assert {event.event_definition_id for event in labels.events} == {GOAL_ID, GOAL_CONCEDED_ID}

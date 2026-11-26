@@ -18,7 +18,8 @@ from video_analyzer.pass2.failure_reasons import Pass2FailureReason, failure_rea
 from video_analyzer.pass2.lineup_matcher import LineupMatcher
 from video_analyzer.pipeline.orchestrator import VideoAnalysisOrchestrator, _CapOutcome
 from video_analyzer.pipeline.parallel import ordered_parallel_map
-from video_analyzer.schemas.request import AnalysisOptions, MatchSnapshot
+from video_analyzer.schemas.request import AnalysisOptions
+from video_analyzer.sport import AnalysisContext
 
 _INFRA_ENV_VARS = (
     "PASS1_MAX_CONCURRENCY",
@@ -120,9 +121,9 @@ def test_analysis_options_use_fast_pass2_defaults() -> None:
 
 
 def test_lineup_matcher_uses_specific_failure_reason_instead_of_blanket_fallback(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
-    definition = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    definition = next(d for d in sample_context.event_catalog if d.short_name == "G")
     candidate = Pass1EventCandidate(
         video_time_sec=55.0,
         definition=definition,
@@ -138,7 +139,7 @@ def test_lineup_matcher_uses_specific_failure_reason_instead_of_blanket_fallback
         outcome = matcher.resolve(
             candidate,
             None,
-            sample_snapshot,
+            sample_context,
             min_cap_confidence=0.8,
             pass2_failure_reason=reason.value,
         )
@@ -148,13 +149,13 @@ def test_lineup_matcher_uses_specific_failure_reason_instead_of_blanket_fallback
         if reason is not Pass2FailureReason.NO_PLAYER_TRACKLET_MATCHED:
             assert "NO_PLAYER_TRACKLET_MATCHED" not in outcome.review_reasons
 
-    legacy = matcher.resolve(candidate, None, sample_snapshot, min_cap_confidence=0.8)
+    legacy = matcher.resolve(candidate, None, sample_context, min_cap_confidence=0.8)
     assert "NO_PLAYER_TRACKLET_MATCHED" in legacy.review_reasons
 
     with_result = matcher.resolve(
         candidate,
         CapResolutionResult(resolved_cap_number=7, confidence=0.95, candidate_scores={7: 0.95}),
-        sample_snapshot,
+        sample_context,
         min_cap_confidence=0.8,
         pass2_failure_reason="CAP_RESOLUTION_API_ERROR",
     )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from pydantic import Field
 
 from video_analyzer.schemas.draft import CamelCaseModel, TimeAnchorType
@@ -11,7 +13,9 @@ class LabeledEvent(CamelCaseModel):
     """One ground-truth game event marked by a coach."""
 
     time_sec: float = Field(ge=0.0, description="Event time in video seconds.")
-    prompt_code: str = Field(min_length=1, description="TTA event promptCode, e.g. EVT_01_G_POS.")
+    event_definition_id: UUID = Field(
+        description="Canonical TTA event definition id (eventDefinitions[].id in the snapshot)."
+    )
     period_number: int | None = Field(default=None, ge=1)
     cap_number: int | None = Field(
         default=None,
@@ -43,7 +47,7 @@ class EvalDraftEvent(CamelCaseModel):
     """Only the draft event fields the scorer needs (unknown fields are ignored)."""
 
     video_time_sec: float
-    prompt_code: str
+    event_definition_id: UUID
     resolved_cap_number: int | None = None
     period_number: int | None = None
 

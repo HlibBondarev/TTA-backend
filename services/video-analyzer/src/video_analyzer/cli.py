@@ -9,7 +9,7 @@ import math
 import sys
 from datetime import datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import uvicorn
 from pydantic import ValidationError
@@ -24,8 +24,10 @@ from video_analyzer.schemas.request import (
     AnalysisOptions,
     AnalyzeJobRequest,
     MatchSnapshot,
+    RuntimeHints,
     VideoSource,
 )
+from video_analyzer.snapshot_source import SnapshotSourceError, fetch_snapshot, load_snapshot_file
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,11 +44,39 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_cmd.add_argument("--video", required=True, help="Path to local match video file.")
     analyze_cmd.add_argument(
         "--snapshot",
-        required=True,
+        default=None,
         help=(
-            "Path to MatchSnapshot JSON file "
-            "(see sample_snapshots/waterpolo_default_snapshot.json)."
+            "Path to a MatchSnapshot JSON file, i.e. a saved analysis-snapshot response "
+            "(see sample_snapshots/waterpolo_default_snapshot.json). "
+            "Mutually exclusive with --match-id/--team-id."
         ),
+    )
+    analyze_cmd.add_argument(
+        "--match-id",
+        type=UUID,
+        default=None,
+        help="Fetch the snapshot over HTTP for this match (requires --team-id).",
+    )
+    analyze_cmd.add_argument(
+        "--team-id",
+        type=UUID,
+        default=None,
+        help="Tracked team id for the HTTP snapshot fetch (requires --match-id).",
+    )
+    analyze_cmd.add_argument(
+        "--api-base-url",
+        default=None,
+        help="TTA .NET API base URL for the HTTP fetch (default: TTA_API_BASE_URL setting).",
+    )
+    analyze_cmd.add_argument(
+        "--tracked-cap-color",
+        default=None,
+        help="Optional runtime hint: cap color of the tracked team (not part of the snapshot).",
+    )
+    analyze_cmd.add_argument(
+        "--opponent-cap-color",
+        default=None,
+        help="Optional runtime hint: cap color of the opponent team (not part of the snapshot).",
     )
     analyze_cmd.add_argument(
         "--out",
@@ -179,40 +209,77 @@ def _run_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_snapshot(args: argparse.Namespace, settings: Settings) -> MatchSnapshot:
+    """Load the snapshot from the local file or the .NET API (mutually exclusive sources)."""
+    has_http_args = args.match_id is not None or args.team_id is not None
+    if args.snapshot and has_http_args:
+        raise SnapshotSourceError("--snapshot cannot be combined with --match-id/--team-id.")
+    if args.snapshot:
+        snapshot_path = Path(args.snapshot).resolve()
+        if not snapshot_path.is_file():
+            raise SnapshotSourceError(f"snapshot file not found: {snapshot_path}")
+        return load_snapshot_file(snapshot_path)
+    if args.match_id is None or args.team_id is None:
+        raise SnapshotSourceError(
+            "provide either --snapshot <file> or both --match-id and --team-id."
+        )
+    base_url = args.api_base_url or settings.tta_api_base_url
+    if not base_url:
+        raise SnapshotSourceError(
+            "--api-base-url (or TTA_API_BASE_URL) is required with --match-id/--team-id."
+        )
+    return fetch_snapshot(
+        base_url, args.match_id, args.team_id, timeout_sec=settings.tta_api_timeout_sec
+    )
+
+
+def _build_analyze_request(
+    args: argparse.Namespace,
+    snapshot: MatchSnapshot,
+    video_path: Path,
+) -> AnalyzeJobRequest:
+    """Build the job request; an empty lineup fails fast here, before any ffmpeg/Gemini work."""
+    video_start_utc = (
+        datetime.fromisoformat(args.video_start_utc.replace("Z", "+00:00"))
+        if args.video_start_utc
+        else None
+    )
+    return AnalyzeJobRequest(
+        job_id=uuid4(),
+        match_id=snapshot.match.id,
+        tracked_team_id=snapshot.teams.tracked.id,
+        video_source=VideoSource(kind="local_path", local_path=str(video_path)),
+        video_start_utc=video_start_utc,
+        match_snapshot=snapshot,
+        runtime_hints=RuntimeHints(
+            tracked_cap_color_hint=args.tracked_cap_color,
+            opponent_cap_color_hint=args.opponent_cap_color,
+        ),
+        analysis_options=AnalysisOptions(
+            generate_player_presences=args.generate_presences,
+            skip_pass2=args.skip_pass2,
+        ),
+    )
+
+
 def _run_analyze(args: argparse.Namespace, settings: Settings) -> int:
     video_path = Path(args.video).resolve()
-    snapshot_path = Path(args.snapshot).resolve()
     out_path = Path(args.out).resolve()
     debug_dir = Path(args.debug_dir).resolve() if args.debug_dir else None
 
     if not video_path.is_file():
         print(f"Error: video file not found: {video_path}", file=sys.stderr)
         return 2
-    if not snapshot_path.is_file():
-        print(f"Error: snapshot file not found: {snapshot_path}", file=sys.stderr)
+
+    try:
+        snapshot = _resolve_snapshot(args, settings)
+        request = _build_analyze_request(args, snapshot, video_path)
+    except SnapshotSourceError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 2
-
-    snapshot_data = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    snapshot = MatchSnapshot.model_validate(snapshot_data)
-
-    video_start_utc = (
-        datetime.fromisoformat(args.video_start_utc.replace("Z", "+00:00"))
-        if args.video_start_utc
-        else None
-    )
-
-    request = AnalyzeJobRequest(
-        job_id=uuid4(),
-        match_id=uuid4(),
-        tracked_team_id=snapshot.tracked_team.id,
-        video_source=VideoSource(kind="local_path", local_path=str(video_path)),
-        video_start_utc=video_start_utc,
-        match_snapshot=snapshot,
-        analysis_options=AnalysisOptions(
-            generate_player_presences=args.generate_presences,
-            skip_pass2=args.skip_pass2,
-        ),
-    )
+    except (ValidationError, ValueError) as exc:
+        print(f"Error: invalid analysis request: {_first_error_message(exc)}", file=sys.stderr)
+        return 2
 
     def on_progress(stage: str, pct: int) -> None:
         print(f"[{pct:3d}%] {stage}")
@@ -240,6 +307,13 @@ def _run_analyze(args: argparse.Namespace, settings: Settings) -> int:
     if usage_summary is not None:
         print(usage_summary)
     return 0
+
+
+def _first_error_message(exc: ValueError) -> str:
+    """Return a concise, stack-trace-free message from a validation or value error."""
+    if isinstance(exc, ValidationError):
+        return "; ".join(str(error["msg"]).removeprefix("Value error, ") for error in exc.errors())
+    return str(exc)
 
 
 def _format_gemini_usage_summary(gemini_usage: GeminiUsageDiagnostics) -> str | None:

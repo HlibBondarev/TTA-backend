@@ -8,6 +8,9 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from tests.support import (  # noqa: I001
+    CODE_GOAL,
+)
 from video_analyzer.pipeline.timestamp_aligner import (
     resolve_video_start_utc,
     synthesize_closed_presences,
@@ -89,7 +92,7 @@ def test_synthesize_closed_presences_defaults_empty_and_enforces_timeout_gt_time
         DraftEvent(
             id=uuid4(),
             event_definition_id=uuid4(),
-            prompt_code="EVT_01_G_POS",
+            prompt_code=CODE_GOAL,
             event_name="Goal",
             is_positive=True,
             is_shot=True,
@@ -170,7 +173,7 @@ def test_synthesize_closed_presences_skips_intervals_collapsing_after_rounding()
         DraftEvent(
             id=uuid4(),
             event_definition_id=uuid4(),
-            prompt_code="EVT_01_G_POS",
+            prompt_code=CODE_GOAL,
             event_name="Goal",
             is_positive=True,
             is_shot=True,
@@ -186,7 +189,7 @@ def test_synthesize_closed_presences_skips_intervals_collapsing_after_rounding()
         DraftEvent(
             id=uuid4(),
             event_definition_id=uuid4(),
-            prompt_code="EVT_01_G_POS",
+            prompt_code=CODE_GOAL,
             event_name="Goal",
             is_positive=True,
             is_shot=True,
