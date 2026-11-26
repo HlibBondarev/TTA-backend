@@ -100,6 +100,7 @@ All values are environment variables (see `.env.example`). Defaults target a sin
 | `GEMINI_MAX_ESTIMATED_COST_USD` | `3.00` | `0.50` (or empty = unlimited) |
 | `PASS1_MAX_CONCURRENCY` | `3` | `1` |
 | `PASS2_PHASE_A_MAX_CONCURRENCY` / `PASS2_PHASE_B_MAX_CONCURRENCY` | `4` / `4` | `1` / `1` |
+| `PASS2_BATCH_SIZE` (events per Phase A -> Phase B batch) | `48` | `48` |
 | `DETECTOR_MAX_CONCURRENCY` (global semaphore across all Phase A tasks) | `4` | `1` |
 | `DETECTOR_INPUT_WIDTH` | `1280` | same |
 | `ROBOFLOW_MAX_RETRIES`, `ROBOFLOW_RETRY_BASE_SEC` | `3`, `1.0` | same |
@@ -114,7 +115,7 @@ All values are environment variables (see `.env.example`). Defaults target a sin
 
 **Pass 1 transcode speed.** The mezzanine filter is `fps=...,scale=...` (decimate first, then downscale): on a 4K 30 fps HEVC clip, scaling every frame before dropping ~93% of them was about 4x slower. At 2 fps the encoder is never the bottleneck, so the cost is dominated by decoding the 4K source; on the 4-minute Clip 1 the mezzanine takes about 60 s on a laptop with only an Intel iGPU (QSV is picked after NVENC fails).
 
-**Pass 2 memory.** Each concurrent 4K decoder holds roughly 1-1.7 GB with default threading and hardware surface pools, so they are throttled by their own semaphore (`FFMPEG_EXTRACTION_MAX_CONCURRENCY`) rather than by `PASS2_PHASE_A_MAX_CONCURRENCY`, which can stay higher to overlap remote detector latency. With the defaults (2 decoders, 2 threads each, software decode) the 14-window Clip 1 benchmark peaks at about 1.2 GB for Python plus all ffmpeg processes (previously about 7 GB) with the same wall-clock time. Raw frames are read one at a time into a single reusable buffer, downscaled immediately, and only compact JPEG copies of native frames are kept until Phase A for that event finishes.
+**Pass 2 memory.** Each concurrent 4K decoder holds roughly 1-1.7 GB with default threading and hardware surface pools, so they are throttled by their own semaphore (`FFMPEG_EXTRACTION_MAX_CONCURRENCY`) rather than by `PASS2_PHASE_A_MAX_CONCURRENCY`, which can stay higher to overlap remote detector latency. With the defaults (2 decoders, 2 threads each, software decode) the 14-window Clip 1 benchmark peaks at about 1.2 GB for Python plus all ffmpeg processes (previously about 7 GB) with the same wall-clock time. Raw frames are read one at a time into a single reusable buffer, downscaled immediately, and only compact JPEG copies of native frames are kept until Phase A for that event finishes. Events are processed in batches of `PASS2_BATCH_SIZE`: Phase A and Phase B run per batch and each cap-crop bundle (crops plus contact sheet) is released as soon as its cap number is resolved, so peak crop memory is bounded by the batch size instead of the match length.
 
 **Error handling (shared by Pass 1 and Pass 2).**
 - Transient failures (HTTP 500/502/503/504, timeouts) and short per-minute `429`s (`retryDelay <= 60 s`, honoring the server delay) are retried with jittered exponential backoff.

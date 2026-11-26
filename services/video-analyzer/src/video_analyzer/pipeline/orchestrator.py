@@ -64,10 +64,12 @@ _GEMINI_CAP_RESOLVER_PROVIDER = "gemini_crop_grid"
 
 _PASS1_PROGRESS_BASE = 15
 _PASS1_PROGRESS_SPAN = 35
-_PHASE_A_PROGRESS_BASE = 55
-_PHASE_A_PROGRESS_SPAN = 30
-_PHASE_B_PROGRESS_BASE = 85
-_PHASE_B_PROGRESS_SPAN = 10
+# Pass 2 shares one progress range: Phase A (3 units per event) and Phase B (1 unit per event)
+# interleave batch by batch, so a single monotonic counter covers both.
+_PASS2_PROGRESS_BASE = 55
+_PASS2_PROGRESS_SPAN = 40
+_PHASE_A_PROGRESS_UNITS = 3
+_PHASE_B_PROGRESS_UNITS = 1
 
 
 class JobCancelledError(RuntimeError):
@@ -176,7 +178,7 @@ class _CapBreakerState:
 
 
 class _ProgressTracker:
-    """Thread-safe progress reporter advancing one step per completed task."""
+    """Thread-safe progress reporter; each completed task advances ``total`` by some units."""
 
     def __init__(
         self,
@@ -194,15 +196,16 @@ class _ProgressTracker:
         self._done = 0
         self._lock = threading.Lock()
 
-    def advance(self) -> None:
+    def advance(self, stage: str | None = None, units: int = 1) -> None:
+        """Record ``units`` of finished work, optionally reporting under a different ``stage``."""
         if self._callback is None:
             return
         # Percentage computation and delivery share one critical section so concurrent workers
         # can never emit updates out of order (e.g. 60 % arriving after 65 %).
         with self._lock:
-            self._done += 1
+            self._done += units
             pct = self._base + int((self._done / self._total) * self._span)
-            self._callback(self._stage, pct)
+            self._callback(stage or self._stage, pct)
 
 
 class VideoAnalysisOrchestrator:
@@ -554,8 +557,7 @@ class VideoAnalysisOrchestrator:
             prepared = [self._skipped_event(i, cand) for i, cand in enumerate(candidates, 1)]
             outcomes = [_CapOutcome() for _ in prepared]
         else:
-            prepared = self._run_phase_a(candidates, ctx, progress_callback)
-            outcomes = self._run_phase_b(prepared, ctx, progress_callback)
+            prepared, outcomes = self._run_pass2_batches(candidates, ctx, progress_callback)
             result.windows_processed = len(prepared)
 
         for item, outcome in zip(prepared, outcomes, strict=True):
@@ -593,31 +595,57 @@ class VideoAnalysisOrchestrator:
             "pass2CapOcr": round(cap_sec, 3),
         }
 
+    def _run_pass2_batches(
+        self,
+        candidates: list[Pass1EventCandidate],
+        ctx: _Pass2Context,
+        progress_callback: Callable[[str, int], None] | None,
+    ) -> tuple[list[_PreparedEvent], list[_CapOutcome]]:
+        """Run Phase A then Phase B over bounded batches of events.
+
+        Every event still goes through Phase A (tracking, crop selection) before Phase B (cap
+        resolution), but only ``PASS2_BATCH_SIZE`` crop bundles are alive at once, so peak memory
+        no longer grows with match length. The breaker state is shared by all batches, so a
+        tripped Gemini breaker keeps affecting the remaining events.
+        """
+        batch_size = self._settings.pass2_batch_size
+        progress = _ProgressTracker(
+            progress_callback,
+            "pass2_tracking",
+            len(candidates) * (_PHASE_A_PROGRESS_UNITS + _PHASE_B_PROGRESS_UNITS),
+            _PASS2_PROGRESS_BASE,
+            _PASS2_PROGRESS_SPAN,
+        )
+        state = _CapBreakerState()
+        prepared: list[_PreparedEvent] = []
+        outcomes: list[_CapOutcome] = []
+        for offset in range(0, len(candidates), batch_size):
+            batch = self._run_phase_a(
+                candidates[offset : offset + batch_size], ctx, progress, first_index=offset + 1
+            )
+            outcomes.extend(self._run_phase_b(batch, ctx, state, progress))
+            prepared.extend(batch)
+        return prepared, outcomes
+
     # -------------------------------------------------------- Pass 2 / Phase A
 
     def _run_phase_a(
         self,
         candidates: list[Pass1EventCandidate],
         ctx: _Pass2Context,
-        progress_callback: Callable[[str, int], None] | None,
+        progress: _ProgressTracker,
+        first_index: int = 1,
     ) -> list[_PreparedEvent]:
-        """Extract frames, detect, track and select crops for every event."""
-        progress = _ProgressTracker(
-            progress_callback,
-            "pass2_tracking",
-            len(candidates),
-            _PHASE_A_PROGRESS_BASE,
-            _PHASE_A_PROGRESS_SPAN,
-        )
+        """Extract frames, detect, track and select crops for every event of one batch."""
 
         def prepare(indexed: tuple[int, Pass1EventCandidate]) -> _PreparedEvent:
             prepared = self._prepare_event(indexed[0], indexed[1], ctx)
-            progress.advance()
+            progress.advance("pass2_tracking", _PHASE_A_PROGRESS_UNITS)
             return prepared
 
         return ordered_parallel_map(
             prepare,
-            list(enumerate(candidates, start=1)),
+            list(enumerate(candidates, start=first_index)),
             self._settings.pass2_phase_a_max_concurrency,
             before_task=lambda: self._check_cancelled(ctx.cancel_event),
         )
@@ -726,23 +754,16 @@ class VideoAnalysisOrchestrator:
         self,
         prepared: list[_PreparedEvent],
         ctx: _Pass2Context,
-        progress_callback: Callable[[str, int], None] | None,
+        state: _CapBreakerState,
+        progress: _ProgressTracker,
     ) -> list[_CapOutcome]:
-        """Resolve cap numbers for all prepared events.
+        """Resolve cap numbers for all prepared events of one batch.
 
         Operates on the full list of prepared Phase A items so a batched multi-event OCR call
         can replace the per-item ``resolve`` later without touching Phase A. A breaker trip
         never discards Phase A work: affected events keep their crops and get an explicit
         failure reason (or the local OCR fallback result).
         """
-        state = _CapBreakerState()
-        progress = _ProgressTracker(
-            progress_callback,
-            "pass2_cap_resolution",
-            len(prepared),
-            _PHASE_B_PROGRESS_BASE,
-            _PHASE_B_PROGRESS_SPAN,
-        )
 
         def resolve(item: _PreparedEvent) -> _CapOutcome:
             try:
@@ -751,7 +772,7 @@ class VideoAnalysisOrchestrator:
                 # Release the crop bundle as soon as its outcome is recorded; later stages only
                 # need the outcome, so memory does not accumulate across a long match.
                 item.selected_crops = None
-            progress.advance()
+            progress.advance("pass2_cap_resolution", _PHASE_B_PROGRESS_UNITS)
             return outcome
 
         return ordered_parallel_map(

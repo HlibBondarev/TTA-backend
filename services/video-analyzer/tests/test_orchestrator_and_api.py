@@ -1029,6 +1029,66 @@ def test_phase_a_and_phase_b_concurrency_are_independently_configurable(
     assert resolver.max_active == 1
 
 
+def test_pass2_batches_bound_phase_a_lookahead_and_keep_progress_monotonic(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    ffmpeg = _CountingFFmpeg()
+    extractions_seen_by_resolver: list[int] = []
+
+    class RecordingResolver(_AlwaysSevenCapResolver):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            extractions_seen_by_resolver.append(len(ffmpeg.extract_calls))
+            return super().resolve(selected_crops, allowed_cap_numbers, cap_color_hint)
+
+    reported: list[tuple[str, int]] = []
+    draft = _orchestrator_with(
+        tmp_path,
+        ffmpeg=ffmpeg,
+        cap_resolver=RecordingResolver(),
+        pass2_batch_size=2,
+        pass2_phase_a_max_concurrency=1,
+        pass2_phase_b_max_concurrency=1,
+    ).run(
+        sample_job_request,
+        progress_callback=lambda stage, pct: reported.append((stage, pct)),
+    )
+
+    # Phase A never runs more than one batch ahead of Phase B (6 events, batches of 2).
+    assert extractions_seen_by_resolver == [2, 2, 4, 4, 6, 6]
+    assert [event.video_time_sec for event in draft.events] == list(_EVENT_TIMES_SEC)
+    assert all(event.resolved_cap_number == 7 for event in draft.events)
+    assert draft.diagnostics.pass2_windows_processed == len(_EVENT_TIMES_SEC)
+
+    pass2_pcts = [pct for stage, pct in reported if stage.startswith("pass2_")]
+    assert pass2_pcts == sorted(pass2_pcts), "interleaved batches must not move progress backwards"
+    assert pass2_pcts[-1] == 95
+    assert {stage for stage, _ in reported} >= {"pass2_tracking", "pass2_cap_resolution"}
+
+
+def test_breaker_opened_in_one_batch_still_applies_to_later_batches(
+    sample_job_request: AnalyzeJobRequest,
+    tmp_path: Path,
+) -> None:
+    class BlockedResolver(BaseCapResolver):
+        calls = 0
+
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+            BlockedResolver.calls += 1
+            raise GeminiCallBlockedError("pass2", BreakerReason.QUOTA_EXHAUSTED, "daily quota")
+
+    draft = _orchestrator_with(
+        tmp_path,
+        cap_resolver=BlockedResolver(),
+        pass2_batch_size=2,
+        pass2_phase_a_max_concurrency=1,
+        pass2_phase_b_max_concurrency=1,
+    ).run(sample_job_request)
+
+    assert BlockedResolver.calls == 1, "later batches must not probe Gemini again"
+    assert all("CAP_RESOLUTION_QUOTA_EXHAUSTED" in e.review_reasons for e in draft.events)
+
+
 def test_breaker_trip_preserves_phase_a_and_marks_remaining_events_explicitly(
     sample_job_request: AnalyzeJobRequest,
     tmp_path: Path,

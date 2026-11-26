@@ -24,6 +24,7 @@ _INFRA_ENV_VARS = (
     "PASS1_MAX_CONCURRENCY",
     "PASS2_PHASE_A_MAX_CONCURRENCY",
     "PASS2_PHASE_B_MAX_CONCURRENCY",
+    "PASS2_BATCH_SIZE",
     "DETECTOR_MAX_CONCURRENCY",
     "DETECTOR_INPUT_WIDTH",
     "FFMPEG_HWACCEL",
@@ -56,6 +57,7 @@ def test_infrastructure_setting_defaults_match_the_tier_1_profile(
 
     assert (settings.pass1_max_concurrency, settings.pass2_phase_a_max_concurrency) == (3, 4)
     assert settings.pass2_phase_b_max_concurrency == 4
+    assert settings.pass2_batch_size == 48
     assert (settings.detector_max_concurrency, settings.detector_input_width) == (4, 1280)
     assert (settings.ffmpeg_hwaccel, settings.ffmpeg_video_encoder) == ("auto", "auto")
     # Pass 2 4K decoders: capped concurrency, few threads, software decode (RAM benchmark).

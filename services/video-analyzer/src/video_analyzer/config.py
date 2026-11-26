@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     pass1_max_concurrency: int = Field(default=3, ge=1, le=16)
     pass2_phase_a_max_concurrency: int = Field(default=4, ge=1, le=16)
     pass2_phase_b_max_concurrency: int = Field(default=4, ge=1, le=16)
+    # Events per Phase A -> Phase B batch; bounds how many crop bundles are alive at once.
+    pass2_batch_size: int = Field(default=48, ge=1, le=1000)
 
     # Pluggable Object Detector
     detector_provider: Literal["roboflow", "local_yolo", "onnx"] = Field(default="roboflow")
