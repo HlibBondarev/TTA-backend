@@ -202,3 +202,21 @@ def test_water_polo_prompt_keeps_baseline_wording(
         "| foulImpact=PersonalFoul (18s)",
     ):
         assert baseline in prompt
+
+
+def test_parses_system_text_json_style_payload_from_net() -> None:
+    """Mirror System.Text.Json output: camelCase, int enums, offset-less dates, explicit nulls."""
+    raw = _raw_sample()
+    raw["match"]["scheduledAt"] = "2026-11-23T15:00:00"  # DateTime with Unspecified kind
+    raw["match"].update({"matchNumber": None, "venue": None, "temperature": None})
+    raw["sportConfiguration"].update({"fieldLength": 25, "fieldWidth": 20, "shotMap": None})
+    raw["sportConfiguration"]["maxPersonalFouls"] = None
+    for definition in raw["eventDefinitions"]:
+        assert isinstance(definition["foulImpact"], int)  # .NET DTO field is `int`, not an enum
+
+    snapshot = MatchSnapshot.model_validate(raw)
+
+    assert snapshot.sport_configuration.shot_map is None
+    assert snapshot.sport_configuration.field_length == 25.0
+    assert snapshot.match.scheduled_at.year == 2026
+    assert snapshot.match.venue is None
