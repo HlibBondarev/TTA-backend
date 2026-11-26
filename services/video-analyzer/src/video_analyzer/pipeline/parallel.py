@@ -6,17 +6,13 @@ import contextvars
 import threading
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from typing import TypeVar
-
-T = TypeVar("T")
-R = TypeVar("R")
 
 
 class _AbortedError(RuntimeError):
     """Internal marker for tasks skipped because a sibling task already failed."""
 
 
-def ordered_parallel_map(  # noqa: UP047 - keep Python 3.11 compatible TypeVar generics
+def ordered_parallel_map[T, R](
     fn: Callable[[T], R],
     items: Iterable[T],
     max_workers: int,
@@ -63,7 +59,7 @@ def ordered_parallel_map(  # noqa: UP047 - keep Python 3.11 compatible TypeVar g
     return _collect_results(futures)
 
 
-def _collect_results(futures: list[Future[R]]) -> list[R]:  # noqa: UP047
+def _collect_results[R](futures: list[Future[R]]) -> list[R]:
     """Return results in item order, raising the earliest real (non-skip) failure."""
     for future in futures:
         error = None if future.cancelled() else future.exception()
@@ -72,7 +68,7 @@ def _collect_results(futures: list[Future[R]]) -> list[R]:  # noqa: UP047
     return [future.result() for future in futures]
 
 
-def _run_sequentially(  # noqa: UP047
+def _run_sequentially[T, R](
     fn: Callable[[T], R],
     items: list[T],
     before_task: Callable[[], None] | None,

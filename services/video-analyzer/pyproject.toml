@@ -7,7 +7,7 @@ name = "tta-video-analyzer"
 version = "0.1.0"
 description = "Hybrid two-pass post-match video analysis microservice for TTA Water Polo."
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",

@@ -27,7 +27,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, TypeVar
+from typing import Any
 
 import httpx
 
@@ -35,8 +35,6 @@ from video_analyzer.config import Settings, parse_gemini_model_pricing
 from video_analyzer.usage import estimate_call_cost_usd, extract_usage_metadata
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 SHORT_RETRY_DELAY_LIMIT_SEC: float = 60.0
 MAX_BACKOFF_SEC: float = 60.0
@@ -442,7 +440,7 @@ class GeminiResilience:
         exponential = min(MAX_BACKOFF_SEC, self._retry_base_sec * (2.0**attempt))
         return exponential * (0.5 + 0.5 * self._rng())
 
-    def call(self, fn: Callable[[], T], *, paced: bool = True, counted: bool = True) -> T:
+    def call[T](self, fn: Callable[[], T], *, paced: bool = True, counted: bool = True) -> T:
         """Run ``fn`` (one Gemini API request) under pacing, retry, and breaker policies.
 
         Args:
