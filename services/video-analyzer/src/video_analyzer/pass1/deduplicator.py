@@ -9,7 +9,7 @@ from math import hypot, isfinite
 
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.models import Pass1ChunkResult, Pass1EventCandidate
-from video_analyzer.schemas.request import EventDefinitionSnapshot
+from video_analyzer.sport.events import EventDefinition
 
 _MAX_COMPATIBLE_BBOX_CENTER_DIST: float = 0.25
 _AMBIGUOUS_OVERLAP_MERGE_REASON: str = "AMBIGUOUS_OVERLAP_MERGE"
@@ -30,11 +30,11 @@ class EventDeduplicator:
     def process(
         self,
         chunk_results: Sequence[tuple[VideoChunk, Pass1ChunkResult]],
-        event_definitions: Sequence[EventDefinitionSnapshot],
+        event_definitions: Sequence[EventDefinition],
         total_duration_sec: float,
         min_confidence: float,
     ) -> tuple[list[Pass1EventCandidate], int, list[str]]:
-        """Map promptCodes to EventDefinitionSnapshot and deduplicate overlap-zone events."""
+        """Map promptCodes to EventDefinition and deduplicate overlap-zone events."""
         by_prompt_code = {item.prompt_code: item for item in event_definitions}
         warnings: list[str] = []
         raw_candidates: list[tuple[int, Pass1EventCandidate]] = []

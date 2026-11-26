@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
 
 from video_analyzer.schemas.draft import GeminiTokenUsage, TimeAnchorType
-from video_analyzer.schemas.request import EventDefinitionSnapshot
+from video_analyzer.sport.events import EventDefinition
 
 
 class Pass1RawEvent(BaseModel):
@@ -85,7 +85,7 @@ class Pass1EventCandidate:
     """Absolute-time deduplicated Pass 1 candidate mapped to an authoritative EventDefinition."""
 
     video_time_sec: float
-    definition: EventDefinitionSnapshot
+    definition: EventDefinition
     period_number: int
     is_lead_to_goal: bool
     actor_bbox_normalized: list[float] | None

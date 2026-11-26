@@ -3,10 +3,10 @@
   "clipId": "synthetic-fixture",
   "description": "Synthetic labels used only by unit tests. Not real match data.",
   "events": [
-    { "timeSec": 10.0, "promptCode": "EVT_01_G_POS", "periodNumber": 1, "capNumber": 7 },
-    { "timeSec": 40.0, "promptCode": "EVT_02_ST_POS", "periodNumber": 1, "capNumber": 4 },
-    { "timeSec": 75.0, "promptCode": "EVT_14_GC_NEG", "periodNumber": 1, "capNumber": null },
-    { "timeSec": 120.0, "promptCode": "EVT_01_G_POS", "periodNumber": 1, "capNumber": 9 }
+    { "timeSec": 10.0, "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57", "periodNumber": 1, "capNumber": 7 },
+    { "timeSec": 40.0, "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f51", "periodNumber": 1, "capNumber": 4 },
+    { "timeSec": 75.0, "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f72", "periodNumber": 1, "capNumber": null },
+    { "timeSec": 120.0, "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57", "periodNumber": 1, "capNumber": 9 }
   ],
   "anchors": [
     { "timeSec": 2.0, "type": "PeriodStart", "periodNumber": 1 },

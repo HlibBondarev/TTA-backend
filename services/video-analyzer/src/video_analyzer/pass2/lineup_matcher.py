@@ -9,7 +9,9 @@ from uuid import UUID
 from video_analyzer.pass1.models import Pass1EventCandidate
 from video_analyzer.pass2.cap_resolver import CapResolutionResult
 from video_analyzer.schemas.draft import CandidateLineup
-from video_analyzer.schemas.request import LineupEntry, MatchSnapshot
+from video_analyzer.schemas.request import LineupEntry
+from video_analyzer.sport.context import AnalysisContext
+from video_analyzer.sport.profile import SportProfile
 
 _LOW_EVENT_CONFIDENCE_THRESHOLD = 0.80
 _MISSING_SPATIAL_HINT_REASON = "MISSING_ACTOR_SPATIAL_HINT"
@@ -56,7 +58,7 @@ class LineupMatcher:
         self,
         candidate: Pass1EventCandidate,
         cap_result: CapResolutionResult | None,
-        snapshot: MatchSnapshot,
+        context: AnalysisContext,
         min_cap_confidence: float,
         max_candidates: int = 5,
         has_spatial_hint: bool = True,
@@ -71,9 +73,7 @@ class LineupMatcher:
                 ``Pass2FailureReason``). When omitted and ``cap_result`` is None, the legacy
                 ``NO_PLAYER_TRACKLET_MATCHED`` reason is used.
         """
-        team_lineup = [
-            entry for entry in snapshot.lineup if entry.team_id == snapshot.tracked_team.id
-        ]
+        team_lineup = list(context.lineup)
         by_number: dict[int, list[LineupEntry]] = defaultdict(list)
         for entry in team_lineup:
             by_number[entry.number].append(entry)
@@ -90,7 +90,7 @@ class LineupMatcher:
                 resolved_cap_number=None,
                 cap_confidence=None,
                 candidate_lineup_ids=self._fallback_candidates(
-                    candidate, team_lineup, max_candidates
+                    candidate, team_lineup, max_candidates, context.profile
                 ),
                 needs_review=True,
                 review_reasons=review_reasons,
@@ -102,6 +102,7 @@ class LineupMatcher:
             team_lineup=team_lineup,
             candidate=candidate,
             max_candidates=max_candidates,
+            profile=context.profile,
         )
         if missing_spatial_hint:
             _add_reason(review_reasons, _MISSING_SPATIAL_HINT_REASON)
@@ -131,7 +132,7 @@ class LineupMatcher:
 
         chosen = matching_entries[0]
         return LineupMatchOutcome(
-            match_lineup_id=chosen.match_lineup_id,
+            match_lineup_id=chosen.id,
             resolved_cap_number=chosen.number,
             cap_confidence=round(cap_result.confidence, 4),
             candidate_lineup_ids=ranked_candidates,
@@ -162,6 +163,7 @@ class LineupMatcher:
         team_lineup: list[LineupEntry],
         candidate: Pass1EventCandidate,
         max_candidates: int,
+        profile: SportProfile,
     ) -> list[CandidateLineup]:
         scored: list[CandidateLineup] = []
         seen_ids: set[UUID] = set()
@@ -172,16 +174,18 @@ class LineupMatcher:
             for entry in by_number.get(num, []):
                 scored.append(
                     CandidateLineup(
-                        match_lineup_id=entry.match_lineup_id,
+                        match_lineup_id=entry.id,
                         cap_number=entry.number,
                         score=round(max(0.0, min(1.0, score)), 4),
                         reason=cap_result.reasoning or f"Matched cap #{entry.number}",
                     )
                 )
-                seen_ids.add(entry.match_lineup_id)
+                seen_ids.add(entry.id)
 
         if not scored:
-            return LineupMatcher._fallback_candidates(candidate, team_lineup, max_candidates)
+            return LineupMatcher._fallback_candidates(
+                candidate, team_lineup, max_candidates, profile
+            )
 
         return scored[:max_candidates]
 
@@ -190,25 +194,29 @@ class LineupMatcher:
         candidate: Pass1EventCandidate,
         team_lineup: list[LineupEntry],
         max_candidates: int,
+        profile: SportProfile,
     ) -> list[CandidateLineup]:
-        is_gk_event = candidate.definition.name.lower() in {"save", "goalkeeper error"}
-        if is_gk_event:
-            gks = [e for e in team_lineup if e.is_goalkeeper]
-            others = [e for e in team_lineup if not e.is_goalkeeper]
+        if profile.is_goalkeeper_event(candidate.definition):
+            gks = [e for e in team_lineup if profile.is_goalkeeper(e)]
+            others = [e for e in team_lineup if not profile.is_goalkeeper(e)]
             ordered = gks + others
             return [
                 CandidateLineup(
-                    match_lineup_id=e.match_lineup_id,
+                    match_lineup_id=e.id,
                     cap_number=e.number,
-                    score=0.45 if e.is_goalkeeper else 0.1,
-                    reason="Goalkeeper role heuristic" if e.is_goalkeeper else "Roster fallback",
+                    score=0.45 if profile.is_goalkeeper(e) else 0.1,
+                    reason=(
+                        "Goalkeeper role heuristic"
+                        if profile.is_goalkeeper(e)
+                        else "Roster fallback"
+                    ),
                 )
                 for e in ordered[:max_candidates]
             ]
 
         return [
             CandidateLineup(
-                match_lineup_id=e.match_lineup_id,
+                match_lineup_id=e.id,
                 cap_number=e.number,
                 score=0.1,
                 reason="Team lineup candidate",

@@ -1,4 +1,33 @@
 {
+  "match": {
+    "id": "30000000-0000-0000-0000-000000000001",
+    "tournamentId": "40000000-0000-0000-0000-000000000001",
+    "tournamentName": "Sample Tournament",
+    "scheduledAt": "2026-11-23T15:00:00Z",
+    "matchNumber": "1",
+    "venue": "Sample Pool",
+    "temperature": null,
+    "homeScore": null,
+    "guestScore": null
+  },
+  "teams": {
+    "home": {
+      "id": "aaaaaaaa-bbbb-cccc-dddd-000000000001",
+      "name": "Home Squad"
+    },
+    "guest": {
+      "id": "aaaaaaaa-bbbb-cccc-dddd-000000000002",
+      "name": "Opponent Squad"
+    },
+    "tracked": {
+      "id": "aaaaaaaa-bbbb-cccc-dddd-000000000001",
+      "name": "Home Squad"
+    },
+    "opponent": {
+      "id": "aaaaaaaa-bbbb-cccc-dddd-000000000002",
+      "name": "Opponent Squad"
+    }
+  },
   "sport": {
     "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f",
     "name": "Waterpolo",
@@ -9,86 +38,508 @@
     "usesCleanTime": true,
     "periodsCount": 4,
     "periodDurationMinutes": 8,
+    "fieldSize": "25x20 m",
+    "rosterLimit": 15,
+    "lineupLimit": 15,
     "activePlayersLimit": 7,
-    "lineupLimit": 13,
     "fieldLength": 25.0,
     "fieldWidth": 20.0,
-    "maxPersonalFouls": 3
-  },
-  "trackedTeam": {
-    "id": "aaaaaaaa-bbbb-cccc-dddd-000000000001",
-    "name": "Home Squad",
-    "side": "Home",
-    "capColorHint": "white"
-  },
-  "opponentTeam": {
-    "id": "aaaaaaaa-bbbb-cccc-dddd-000000000002",
-    "name": "Opponent Squad",
-    "side": "Guest",
-    "capColorHint": "blue"
+    "maxPersonalFouls": 3,
+    "playground": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 25 20\"><rect width=\"25\" height=\"20\" fill=\"none\" stroke=\"black\"/></svg>",
+    "shotMap": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 3 1\"><rect width=\"3\" height=\"1\" fill=\"none\" stroke=\"black\"/></svg>"
   },
   "lineup": [
-    { "matchLineupId": "10000000-0000-0000-0001-000000000001", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 1, "firstName": "Home Player", "lastName": "1", "positionName": "Goalkeeper", "isGoalkeeper": true },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000002", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 2, "firstName": "Home Player", "lastName": "2", "positionName": "Driver", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000003", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 3, "firstName": "Home Player", "lastName": "3", "positionName": "Center Back", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000004", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 4, "firstName": "Home Player", "lastName": "4", "positionName": "Wing", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000005", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 5, "firstName": "Home Player", "lastName": "5", "positionName": "Driver", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000006", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 6, "firstName": "Home Player", "lastName": "6", "positionName": "Center Forward", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000007", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 7, "firstName": "Home Player", "lastName": "7", "positionName": "Wing", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000008", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 8, "firstName": "Home Player", "lastName": "8", "positionName": "Utility", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000009", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 9, "firstName": "Home Player", "lastName": "9", "positionName": "Driver", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000010", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 10, "firstName": "Home Player", "lastName": "10", "positionName": "Center Forward", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000011", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 11, "firstName": "Home Player", "lastName": "11", "positionName": "Wing", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000012", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 12, "firstName": "Home Player", "lastName": "12", "positionName": "Center Back", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0001-000000000013", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000001", "number": 13, "firstName": "Home Player", "lastName": "13", "positionName": "Goalkeeper", "isGoalkeeper": true },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000001", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 1, "firstName": "Guest Player", "lastName": "1", "positionName": "Goalkeeper", "isGoalkeeper": true },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000002", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 2, "firstName": "Guest Player", "lastName": "2", "positionName": "Driver", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000003", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 3, "firstName": "Guest Player", "lastName": "3", "positionName": "Center Back", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000004", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 4, "firstName": "Guest Player", "lastName": "4", "positionName": "Wing", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000005", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 5, "firstName": "Guest Player", "lastName": "5", "positionName": "Driver", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000006", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 6, "firstName": "Guest Player", "lastName": "6", "positionName": "Center Forward", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000007", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 7, "firstName": "Guest Player", "lastName": "7", "positionName": "Wing", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000008", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 8, "firstName": "Guest Player", "lastName": "8", "positionName": "Utility", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000009", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 9, "firstName": "Guest Player", "lastName": "9", "positionName": "Driver", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000010", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 10, "firstName": "Guest Player", "lastName": "10", "positionName": "Center Forward", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000011", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 11, "firstName": "Guest Player", "lastName": "11", "positionName": "Wing", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000012", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 12, "firstName": "Guest Player", "lastName": "12", "positionName": "Center Back", "isGoalkeeper": false },
-    { "matchLineupId": "10000000-0000-0000-0002-000000000013", "teamId": "aaaaaaaa-bbbb-cccc-dddd-000000000002", "number": 13, "firstName": "Guest Player", "lastName": "13", "positionName": "Goalkeeper", "isGoalkeeper": true }
+    {
+      "id": "10000000-0000-0000-0001-000000000001",
+      "playerRosterId": "20000000-0000-0000-0001-000000000001",
+      "firstName": "Home Player",
+      "lastName": "1",
+      "number": 1,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61",
+      "positionName": "Goalkeeper",
+      "positionShortName": "GK"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000002",
+      "playerRosterId": "20000000-0000-0000-0001-000000000002",
+      "firstName": "Home Player",
+      "lastName": "2",
+      "number": 2,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64",
+      "positionName": "Driver",
+      "positionShortName": "D"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000003",
+      "playerRosterId": "20000000-0000-0000-0001-000000000003",
+      "firstName": "Home Player",
+      "lastName": "3",
+      "number": 3,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63",
+      "positionName": "Center Back",
+      "positionShortName": "CB"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000004",
+      "playerRosterId": "20000000-0000-0000-0001-000000000004",
+      "firstName": "Home Player",
+      "lastName": "4",
+      "number": 4,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65",
+      "positionName": "Wing",
+      "positionShortName": "W"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000005",
+      "playerRosterId": "20000000-0000-0000-0001-000000000005",
+      "firstName": "Home Player",
+      "lastName": "5",
+      "number": 5,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64",
+      "positionName": "Driver",
+      "positionShortName": "D"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000006",
+      "playerRosterId": "20000000-0000-0000-0001-000000000006",
+      "firstName": "Home Player",
+      "lastName": "6",
+      "number": 6,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62",
+      "positionName": "Center Forward",
+      "positionShortName": "CF"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000007",
+      "playerRosterId": "20000000-0000-0000-0001-000000000007",
+      "firstName": "Home Player",
+      "lastName": "7",
+      "number": 7,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65",
+      "positionName": "Wing",
+      "positionShortName": "W"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000008",
+      "playerRosterId": "20000000-0000-0000-0001-000000000008",
+      "firstName": "Home Player",
+      "lastName": "8",
+      "number": 8,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66",
+      "positionName": "Utility",
+      "positionShortName": "UTL"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000009",
+      "playerRosterId": "20000000-0000-0000-0001-000000000009",
+      "firstName": "Home Player",
+      "lastName": "9",
+      "number": 9,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64",
+      "positionName": "Driver",
+      "positionShortName": "D"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000010",
+      "playerRosterId": "20000000-0000-0000-0001-000000000010",
+      "firstName": "Home Player",
+      "lastName": "10",
+      "number": 10,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62",
+      "positionName": "Center Forward",
+      "positionShortName": "CF"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000011",
+      "playerRosterId": "20000000-0000-0000-0001-000000000011",
+      "firstName": "Home Player",
+      "lastName": "11",
+      "number": 11,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65",
+      "positionName": "Wing",
+      "positionShortName": "W"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000012",
+      "playerRosterId": "20000000-0000-0000-0001-000000000012",
+      "firstName": "Home Player",
+      "lastName": "12",
+      "number": 12,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63",
+      "positionName": "Center Back",
+      "positionShortName": "CB"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000013",
+      "playerRosterId": "20000000-0000-0000-0001-000000000013",
+      "firstName": "Home Player",
+      "lastName": "13",
+      "number": 13,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61",
+      "positionName": "Goalkeeper",
+      "positionShortName": "GK"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000014",
+      "playerRosterId": "20000000-0000-0000-0001-000000000014",
+      "firstName": "Home Player",
+      "lastName": "14",
+      "number": 14,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64",
+      "positionName": "Driver",
+      "positionShortName": "D"
+    },
+    {
+      "id": "10000000-0000-0000-0001-000000000015",
+      "playerRosterId": "20000000-0000-0000-0001-000000000015",
+      "firstName": "Home Player",
+      "lastName": "15",
+      "number": 15,
+      "positionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66",
+      "positionName": "Utility",
+      "positionShortName": "UTL"
+    }
   ],
   "eventDefinitions": [
-    { "promptCode": "EVT_01_G_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57", "name": "Goal", "shortName": "G", "isPositive": true, "isShot": true, "score": 1, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_02_ST_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f51", "name": "Steal", "shortName": "ST", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_03_SP_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f52", "name": "Key Pass", "shortName": "SP", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_04_DA_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f53", "name": "Dribble Advance", "shortName": "DA", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_05_SOG_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f54", "name": "Shot on Goal", "shortName": "SOG", "isPositive": true, "isShot": true, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_06_ASV_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f55", "name": "Save", "shortName": "ASV", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_07_FB_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f56", "name": "Field Block", "shortName": "FB", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_08_A_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f58", "name": "Assist", "shortName": "A", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_09_FT_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f59", "name": "Fast Transition", "shortName": "FT", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_10_EE_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f60", "name": "Exclusion Earned", "shortName": "EE", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_11_CAS_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61", "name": "Counter-Attack Stopped", "shortName": "CAS", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_12_SW_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62", "name": "Sprint Won", "shortName": "SW", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_13_PE_POS", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63", "name": "Penalty Earned", "shortName": "PE", "isPositive": true, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_14_GC_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f72", "name": "Goal", "shortName": "GC", "isPositive": false, "isShot": true, "score": 1, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_15_TO_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64", "name": "Turnover", "shortName": "TO", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_16_BP_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65", "name": "Bad Pass", "shortName": "BP", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_17_PEO_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66", "name": "Positional Error in Offense", "shortName": "PEO", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_18_PED_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f67", "name": "Positional Error in Defense", "shortName": "PED", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_19_PB_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f68", "name": "Player Beaten", "shortName": "PB", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_20_OF_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f69", "name": "Offensive Foul", "shortName": "OF", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_21_MS_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70", "name": "Missed Shot", "shortName": "MS", "isPositive": false, "isShot": true, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_22_SB_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f71", "name": "Shot Blocked", "shortName": "SB", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_23_GKE_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f81", "name": "Goalkeeper Error", "shortName": "GKE", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_24_E_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f73", "name": "Exclusion", "shortName": "E", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "PersonalFoul", "penaltyDurationSeconds": 18 },
-    { "promptCode": "EVT_25_STO_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f74", "name": "Slow Transition Offense", "shortName": "STO", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_26_STD_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f75", "name": "Slow Transition Defense", "shortName": "STD", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_27_CAC_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f76", "name": "Counter-Attack Conceded", "shortName": "CAC", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_28_BU_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f77", "name": "Ball Under", "shortName": "BU", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_29_SL_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f78", "name": "Sprint Lost", "shortName": "SL", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "None", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_30_PC_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f79", "name": "Penalty Committed", "shortName": "PC", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "PersonalFoul", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_31_RC18_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f83", "name": "Red Card (18s)", "shortName": "RC18", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "DisqualificationWithSub", "penaltyDurationSeconds": 18 },
-    { "promptCode": "EVT_32_RC4M_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f80", "name": "Red Card (4 Min)", "shortName": "RC4M", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "DisqualificationWithSub", "penaltyDurationSeconds": 240 },
-    { "promptCode": "EVT_33_RCP_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f84", "name": "Red Card (Penalty)", "shortName": "RCP", "isPositive": false, "isShot": false, "score": 0, "foulImpact": "DisqualificationWithSub", "penaltyDurationSeconds": null },
-    { "promptCode": "EVT_34_OG_NEG", "eventDefinitionId": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82", "name": "Own Goal", "shortName": "OG", "isPositive": false, "isShot": true, "score": 1, "foulImpact": "None", "penaltyDurationSeconds": null }
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f57",
+      "name": "Goal",
+      "shortName": "G",
+      "isPositive": true,
+      "isShot": true,
+      "score": 1,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f51",
+      "name": "Steal",
+      "shortName": "ST",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f52",
+      "name": "Key Pass",
+      "shortName": "SP",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f53",
+      "name": "Dribble Advance",
+      "shortName": "DA",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f54",
+      "name": "Shot on Goal",
+      "shortName": "SOG",
+      "isPositive": true,
+      "isShot": true,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f55",
+      "name": "Save",
+      "shortName": "ASV",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f56",
+      "name": "Field Block",
+      "shortName": "FB",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f58",
+      "name": "Assist",
+      "shortName": "A",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f59",
+      "name": "Fast Transition",
+      "shortName": "FT",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f60",
+      "name": "Exclusion Earned",
+      "shortName": "EE",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61",
+      "name": "Counter-Attack Stopped",
+      "shortName": "CAS",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f62",
+      "name": "Sprint Won",
+      "shortName": "SW",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f63",
+      "name": "Penalty Earned",
+      "shortName": "PE",
+      "isPositive": true,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f72",
+      "name": "Goal",
+      "shortName": "GC",
+      "isPositive": false,
+      "isShot": true,
+      "score": 1,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f64",
+      "name": "Turnover",
+      "shortName": "TO",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f65",
+      "name": "Bad Pass",
+      "shortName": "BP",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66",
+      "name": "Positional Error in Offense",
+      "shortName": "PEO",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f67",
+      "name": "Positional Error in Defense",
+      "shortName": "PED",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f68",
+      "name": "Player Beaten",
+      "shortName": "PB",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f69",
+      "name": "Offensive Foul",
+      "shortName": "OF",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70",
+      "name": "Missed Shot",
+      "shortName": "MS",
+      "isPositive": false,
+      "isShot": true,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f71",
+      "name": "Shot Blocked",
+      "shortName": "SB",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f81",
+      "name": "Goalkeeper Error",
+      "shortName": "GKE",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f73",
+      "name": "Exclusion",
+      "shortName": "E",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 1,
+      "penaltyDurationSeconds": 18
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f74",
+      "name": "Slow Transition Offense",
+      "shortName": "STO",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f75",
+      "name": "Slow Transition Defense",
+      "shortName": "STD",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f76",
+      "name": "Counter-Attack Conceded",
+      "shortName": "CAC",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f77",
+      "name": "Ball Under",
+      "shortName": "BU",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f78",
+      "name": "Sprint Lost",
+      "shortName": "SL",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f79",
+      "name": "Penalty Committed",
+      "shortName": "PC",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 1,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f83",
+      "name": "Red Card (18s)",
+      "shortName": "RC18",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 2,
+      "penaltyDurationSeconds": 18
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f80",
+      "name": "Red Card (4 Min)",
+      "shortName": "RC4M",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 2,
+      "penaltyDurationSeconds": 240
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f84",
+      "name": "Red Card (Penalty)",
+      "shortName": "RCP",
+      "isPositive": false,
+      "isShot": false,
+      "score": 0,
+      "foulImpact": 2,
+      "penaltyDurationSeconds": null
+    },
+    {
+      "id": "6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f82",
+      "name": "Own Goal",
+      "shortName": "OG",
+      "isPositive": false,
+      "isShot": true,
+      "score": 1,
+      "foulImpact": 0,
+      "penaltyDurationSeconds": null
+    }
   ]
 }

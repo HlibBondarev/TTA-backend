@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from tests.support import (  # noqa: I001
+    CODE_GOAL,
+    make_context,
+)
 from video_analyzer.pass1.models import (
     Pass1ChunkResult,
     Pass1EventCandidate,
@@ -13,11 +17,12 @@ from video_analyzer.pass1.models import (
 from video_analyzer.pass2.cap_resolver import CapResolutionResult
 from video_analyzer.pass2.lineup_matcher import LineupMatcher
 from video_analyzer.schemas.draft import TimeAnchorType
-from video_analyzer.schemas.request import AnalyzeJobRequest, LineupEntry, MatchSnapshot
+from video_analyzer.schemas.request import AnalyzeJobRequest, LineupEntry
+from video_analyzer.sport import AnalysisContext
 
 
-def _event_candidate(snapshot: MatchSnapshot, short_name: str = "G") -> Pass1EventCandidate:
-    defn = next(d for d in snapshot.event_definitions if d.short_name == short_name)
+def _event_candidate(context: AnalysisContext, short_name: str = "G") -> Pass1EventCandidate:
+    defn = next(d for d in context.event_catalog if d.short_name == short_name)
     return Pass1EventCandidate(
         video_time_sec=55.0,
         definition=defn,
@@ -30,9 +35,9 @@ def _event_candidate(snapshot: MatchSnapshot, short_name: str = "G") -> Pass1Eve
     )
 
 
-def test_lineup_matcher_resolves_high_confidence_cap(sample_snapshot: MatchSnapshot) -> None:
+def test_lineup_matcher_resolves_high_confidence_cap(sample_context: AnalysisContext) -> None:
     matcher = LineupMatcher()
-    cand = _event_candidate(sample_snapshot)
+    cand = _event_candidate(sample_context)
     cap_res = CapResolutionResult(
         resolved_cap_number=7,
         confidence=0.91,
@@ -40,22 +45,19 @@ def test_lineup_matcher_resolves_high_confidence_cap(sample_snapshot: MatchSnaps
         reasoning="5/6 sharp crops matched cap #7",
     )
 
-    outcome = matcher.resolve(cand, cap_res, sample_snapshot, min_cap_confidence=0.80)
-    expected_entry = next(
-        e
-        for e in sample_snapshot.lineup
-        if e.team_id == sample_snapshot.tracked_team.id and e.number == 7
-    )
+    outcome = matcher.resolve(cand, cap_res, sample_context, min_cap_confidence=0.80)
+    expected_entry = next(e for e in sample_context.lineup if e.number == 7)
 
-    assert outcome.match_lineup_id == expected_entry.match_lineup_id
+    # matchLineupId in the draft output comes from the snapshot's lineup[].id.
+    assert outcome.match_lineup_id == expected_entry.id
     assert outcome.resolved_cap_number == 7
     assert outcome.needs_review is False
     assert outcome.review_reasons == []
 
 
-def test_lineup_matcher_never_guesses_on_low_confidence(sample_snapshot: MatchSnapshot) -> None:
+def test_lineup_matcher_never_guesses_on_low_confidence(sample_context: AnalysisContext) -> None:
     matcher = LineupMatcher()
-    cand = _event_candidate(sample_snapshot)
+    cand = _event_candidate(sample_context)
     cap_res = CapResolutionResult(
         resolved_cap_number=4,
         confidence=0.52,
@@ -63,7 +65,7 @@ def test_lineup_matcher_never_guesses_on_low_confidence(sample_snapshot: MatchSn
         reasoning="Partial digit visibility due to splash",
     )
 
-    outcome = matcher.resolve(cand, cap_res, sample_snapshot, min_cap_confidence=0.80)
+    outcome = matcher.resolve(cand, cap_res, sample_context, min_cap_confidence=0.80)
 
     assert outcome.match_lineup_id is None
     assert outcome.resolved_cap_number is None
@@ -73,20 +75,22 @@ def test_lineup_matcher_never_guesses_on_low_confidence(sample_snapshot: MatchSn
 
 
 def test_lineup_matcher_flags_duplicate_cap_number_collision(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
     duplicate_entry = LineupEntry(
-        match_lineup_id=uuid4(),
-        team_id=sample_snapshot.tracked_team.id,
+        id=uuid4(),
+        player_roster_id=uuid4(),
         number=7,
         first_name="Duplicate",
         last_name="Seven",
+        position_id=uuid4(),
         position_name="Driver",
-        is_goalkeeper=False,
+        position_short_name="D",
     )
-    modified = sample_snapshot.model_copy(
-        update={"lineup": [*sample_snapshot.lineup, duplicate_entry]}
+    modified_snapshot = sample_context.snapshot.model_copy(
+        update={"lineup": [*sample_context.lineup, duplicate_entry]}
     )
+    modified = make_context(modified_snapshot)
     cand = _event_candidate(modified)
     cap_res = CapResolutionResult(
         resolved_cap_number=7,
@@ -104,10 +108,10 @@ def test_lineup_matcher_flags_duplicate_cap_number_collision(
 
 
 def test_lineup_matcher_prioritizes_goalkeeper_on_save_without_tracklet(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
-    cand = _event_candidate(sample_snapshot, short_name="ASV")  # Save
-    outcome = LineupMatcher().resolve(cand, None, sample_snapshot, min_cap_confidence=0.80)
+    cand = _event_candidate(sample_context, short_name="ASV")  # Save
+    outcome = LineupMatcher().resolve(cand, None, sample_context, min_cap_confidence=0.80)
 
     assert outcome.match_lineup_id is None
     assert outcome.needs_review is True
@@ -116,9 +120,9 @@ def test_lineup_matcher_prioritizes_goalkeeper_on_save_without_tracklet(
 
 
 def test_lineup_matcher_never_auto_confirms_unhinted_match(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
-    cand = _event_candidate(sample_snapshot)
+    cand = _event_candidate(sample_context)
     cand.actor_bbox_normalized = None
     cap_res = CapResolutionResult(
         resolved_cap_number=7,
@@ -130,7 +134,7 @@ def test_lineup_matcher_never_auto_confirms_unhinted_match(
     outcome = LineupMatcher().resolve(
         cand,
         cap_res,
-        sample_snapshot,
+        sample_context,
         min_cap_confidence=0.80,
         has_spatial_hint=False,
     )
@@ -156,7 +160,7 @@ def test_orchestrator_leaves_unhinted_event_unresolved_with_candidates(
     from video_analyzer.pipeline.orchestrator import VideoAnalysisOrchestrator
 
     class UnhintedPass1Analyzer(BasePass1Analyzer):
-        def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+        def analyze_chunk(self, context: AnalysisContext, chunk: VideoChunk) -> Pass1ChunkResult:
             return Pass1ChunkResult(
                 time_anchors=[
                     Pass1RawAnchor(
@@ -175,7 +179,7 @@ def test_orchestrator_leaves_unhinted_event_unresolved_with_candidates(
                 period_events=[
                     Pass1RawEvent(
                         time_sec=45.0,
-                        prompt_code="EVT_01_G_POS",
+                        prompt_code=CODE_GOAL,
                         period_number=1,
                         actor_bbox_normalized=None,
                         confidence=0.94,

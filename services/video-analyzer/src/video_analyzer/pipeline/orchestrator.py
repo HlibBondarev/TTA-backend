@@ -56,6 +56,7 @@ from video_analyzer.schemas.draft import (
     VideoMetadata,
 )
 from video_analyzer.schemas.request import AnalyzeJobRequest
+from video_analyzer.sport.context import AnalysisContext, build_analysis_context
 from video_analyzer.usage import build_gemini_usage_diagnostics
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,7 @@ class _Pass2Context:
     video_path: Path
     probe: VideoProbeResult
     request: AnalyzeJobRequest
+    analysis: AnalysisContext
     allowed_caps: list[int]
     cap_color_hint: str | None
     cancel_event: threading.Event | None
@@ -322,10 +324,12 @@ class VideoAnalysisOrchestrator:
             )
             warnings.extend(start_warnings)
 
+            analysis = build_analysis_context(request.match_snapshot, request.runtime_hints)
             chunk_results, pass1_timings = self._run_pass1(
                 video_path=video_path,
                 probe=probe,
                 request=request,
+                analysis=analysis,
                 work_dir=work_dir,
                 cancel_event=cancel_event,
                 progress_callback=progress_callback,
@@ -334,7 +338,7 @@ class VideoAnalysisOrchestrator:
 
             events_cand, raw_count, dedup_warnings = self._deduplicator.process(
                 chunk_results=chunk_results,
-                event_definitions=request.match_snapshot.event_definitions,
+                event_definitions=analysis.event_catalog,
                 total_duration_sec=probe.duration_sec,
                 min_confidence=request.analysis_options.min_event_confidence,
             )
@@ -349,6 +353,7 @@ class VideoAnalysisOrchestrator:
                 video_path=video_path,
                 probe=probe,
                 request=request,
+                analysis=analysis,
                 candidates=events_cand,
                 video_start_utc=video_start_utc,
                 cancel_event=cancel_event,
@@ -472,6 +477,7 @@ class VideoAnalysisOrchestrator:
         video_path: Path,
         probe: VideoProbeResult,
         request: AnalyzeJobRequest,
+        analysis: AnalysisContext,
         work_dir: Path,
         cancel_event: threading.Event | None,
         progress_callback: Callable[[str, int], None] | None,
@@ -503,7 +509,7 @@ class VideoAnalysisOrchestrator:
         )
 
         def analyze(chunk: VideoChunk) -> tuple[VideoChunk, Pass1ChunkResult]:
-            result = self._pass1.analyze_chunk(request.match_snapshot, chunk)
+            result = self._pass1.analyze_chunk(analysis, chunk)
             progress.advance()
             return chunk, result
 
@@ -530,6 +536,7 @@ class VideoAnalysisOrchestrator:
         video_path: Path,
         probe: VideoProbeResult,
         request: AnalyzeJobRequest,
+        analysis: AnalysisContext,
         candidates: list[Pass1EventCandidate],
         video_start_utc: datetime,
         cancel_event: threading.Event | None,
@@ -541,14 +548,9 @@ class VideoAnalysisOrchestrator:
             video_path=video_path,
             probe=probe,
             request=request,
-            allowed_caps=sorted(
-                {
-                    entry.number
-                    for entry in request.match_snapshot.lineup
-                    if entry.team_id == request.tracked_team_id
-                }
-            ),
-            cap_color_hint=request.match_snapshot.tracked_team.cap_color_hint,
+            analysis=analysis,
+            allowed_caps=sorted({entry.number for entry in analysis.lineup}),
+            cap_color_hint=analysis.tracked_cap_color_hint,
             cancel_event=cancel_event,
             debug_dir=debug_dir,
         )
@@ -565,7 +567,9 @@ class VideoAnalysisOrchestrator:
             warnings.extend(outcome.warnings)
             if outcome.token_usage is not None:
                 result.usages.append(outcome.token_usage)
-            result.events.append(self._build_draft_event(item, outcome, request, video_start_utc))
+            result.events.append(
+                self._build_draft_event(item, outcome, request, analysis, video_start_utc)
+            )
         warnings.extend(self._fallback_summary(outcomes, result.events))
         result.timings = self._pass2_timings(prepared, outcomes)
         return result
@@ -711,7 +715,7 @@ class VideoAnalysisOrchestrator:
         matched = self._actor_matcher.match(
             candidate=prepared.candidate,
             tracklets=tracking.tracklets,
-            snapshot=ctx.request.match_snapshot,
+            context=ctx.analysis,
             frame_width=frames[0].native_width,
             frame_height=frames[0].native_height,
         )
@@ -883,6 +887,7 @@ class VideoAnalysisOrchestrator:
         item: _PreparedEvent,
         outcome: _CapOutcome,
         request: AnalyzeJobRequest,
+        analysis: AnalysisContext,
         video_start_utc: datetime,
     ) -> DraftEvent:
         cand = item.candidate
@@ -890,16 +895,14 @@ class VideoAnalysisOrchestrator:
         lineup = self._lineup_matcher.resolve(
             candidate=cand,
             cap_result=outcome.cap_result,
-            snapshot=request.match_snapshot,
+            context=analysis,
             min_cap_confidence=request.analysis_options.min_cap_confidence,
             has_spatial_hint=item.has_spatial_hint,
             actor_match_tied=item.actor_match_tied,
             cap_ambiguous=item.cap_ambiguous,
             pass2_failure_reason=str(failure) if failure is not None else None,
         )
-        lineup = self._apply_cap_color_guard(
-            lineup, cand, request.match_snapshot.tracked_team.cap_color_hint
-        )
+        lineup = self._apply_cap_color_guard(lineup, cand, analysis.tracked_cap_color_hint)
         return DraftEvent(
             id=uuid4(),
             event_definition_id=cand.definition.event_definition_id,

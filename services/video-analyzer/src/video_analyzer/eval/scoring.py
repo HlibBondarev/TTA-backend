@@ -4,7 +4,7 @@ Metric definitions
 ------------------
 * Events are matched one-to-one by time only (greedy, closest pair first, within the tolerance).
 * ``event_precision`` = matched / predicted events; ``event_recall`` = matched / labeled events.
-* ``label_accuracy`` = matched pairs whose ``promptCode`` is equal / matched pairs.
+* ``label_accuracy`` = matched pairs whose ``eventDefinitionId`` is equal / matched pairs.
 * ``anchor_accuracy`` = labeled anchors matched by type (and period when both are known) within
   the tolerance / labeled anchors.
 * ``cap_resolution_accuracy`` = matched pairs whose draft ``resolvedCapNumber`` equals the label's
@@ -110,7 +110,9 @@ def _score_events(
         tolerance_sec,
     )
     label_correct = sum(
-        1 for p_idx, l_idx in pairs if predicted[p_idx].prompt_code == labeled[l_idx].prompt_code
+        1
+        for p_idx, l_idx in pairs
+        if predicted[p_idx].event_definition_id == labeled[l_idx].event_definition_id
     )
     cap_pairs = [(p, lb) for p, lb in pairs if labeled[lb].cap_number is not None]
     cap_correct = sum(

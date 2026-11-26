@@ -17,7 +17,7 @@ from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.pass1.models import Pass1ChunkResult
 from video_analyzer.pass1.prompt_builder import Pass1PromptBuilder
 from video_analyzer.schemas.draft import GeminiTokenUsage, TimeAnchorType
-from video_analyzer.schemas.request import MatchSnapshot
+from video_analyzer.sport.context import AnalysisContext
 from video_analyzer.usage import aggregate_token_usage, extract_usage_metadata
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ class BasePass1Analyzer(ABC):
     """Interface for Pass 1 global chunk analyzers (facilitates testing and model swaps)."""
 
     @abstractmethod
-    def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+    def analyze_chunk(self, context: AnalysisContext, chunk: VideoChunk) -> Pass1ChunkResult:
         """Analyze one overlapping chunk and return chunk-relative candidate events and anchors."""
 
 
@@ -120,14 +120,14 @@ class GeminiPass1Analyzer(BasePass1Analyzer):
         self._thinking_level = thinking_level
         self._resilience = resilience or GeminiResilience("pass1", model_name)
 
-    def analyze_chunk(self, snapshot: MatchSnapshot, chunk: VideoChunk) -> Pass1ChunkResult:
+    def analyze_chunk(self, context: AnalysisContext, chunk: VideoChunk) -> Pass1ChunkResult:
         if not self._api_key and self._client is None:
             raise RuntimeError("GEMINI_API_KEY must be set to run Pass 1 video analysis.")
 
         from google.genai import types
 
         client = self._get_client()
-        prompt = self._prompt_builder.build_chunk_prompt(snapshot, chunk)
+        prompt = self._prompt_builder.build_chunk_prompt(context, chunk)
 
         uploaded_file = self._resilience.call(
             lambda: client.files.upload(file=str(chunk.path)),

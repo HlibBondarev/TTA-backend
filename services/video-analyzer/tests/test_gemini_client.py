@@ -29,7 +29,7 @@ from video_analyzer.pass2.cap_resolver import (
 )
 from video_analyzer.pass2.crop_selector import CropCandidate, SelectedCrops
 from video_analyzer.pipeline.factory import build_default_orchestrator
-from video_analyzer.schemas.request import MatchSnapshot
+from video_analyzer.sport import AnalysisContext
 
 
 def _build_analyzer_with_response(response: object) -> GeminiPass1Analyzer:
@@ -53,7 +53,7 @@ def _build_analyzer_with_response(response: object) -> GeminiPass1Analyzer:
 
 def test_gemini_pass1_raises_on_empty_response_without_parsed_result(
     monkeypatch: pytest.MonkeyPatch,
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr("video_analyzer.pass1.gemini_client.time.sleep", lambda _: None)
@@ -61,15 +61,15 @@ def test_gemini_pass1_raises_on_empty_response_without_parsed_result(
 
     analyzer_none = _build_analyzer_with_response(SimpleNamespace(parsed=None, text=None))
     with pytest.raises(RuntimeError, match="empty response"):
-        analyzer_none.analyze_chunk(sample_snapshot, chunk)
+        analyzer_none.analyze_chunk(sample_context, chunk)
 
     analyzer_blank = _build_analyzer_with_response(SimpleNamespace(parsed=None, text="   \n "))
     with pytest.raises(RuntimeError, match="empty response"):
-        analyzer_blank.analyze_chunk(sample_snapshot, chunk)
+        analyzer_blank.analyze_chunk(sample_context, chunk)
 
 
 def test_gemini_pass1_accepts_explicit_valid_empty_lists(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     chunk = VideoChunk(index=0, start_sec=0.0, end_sec=60.0, path=tmp_path / "c0.mp4")
@@ -77,14 +77,14 @@ def test_gemini_pass1_accepts_explicit_valid_empty_lists(
     analyzer_parsed = _build_analyzer_with_response(
         SimpleNamespace(parsed=Pass1ChunkResult(period_events=[], time_anchors=[]), text=None)
     )
-    res_parsed = analyzer_parsed.analyze_chunk(sample_snapshot, chunk)
+    res_parsed = analyzer_parsed.analyze_chunk(sample_context, chunk)
     assert res_parsed.period_events == []
     assert res_parsed.time_anchors == []
 
     analyzer_json = _build_analyzer_with_response(
         SimpleNamespace(parsed=None, text='{"period_events": [], "time_anchors": []}')
     )
-    res_json = analyzer_json.analyze_chunk(sample_snapshot, chunk)
+    res_json = analyzer_json.analyze_chunk(sample_context, chunk)
     assert res_json.period_events == []
     assert res_json.time_anchors == []
 
@@ -101,7 +101,7 @@ def _contains_key(obj: object, target_key: str) -> bool:
 
 def test_gemini_clients_configure_http_timeout_and_default_free_schemas(
     monkeypatch: pytest.MonkeyPatch,
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     captured_client_kwargs: list[dict[str, object]] = []
@@ -133,7 +133,7 @@ def test_gemini_clients_configure_http_timeout_and_default_free_schemas(
 
     pass1 = GeminiPass1Analyzer(api_key="test-key", timeout_sec=45.0)
     chunk = VideoChunk(index=0, start_sec=0.0, end_sec=30.0, path=tmp_path / "c0.mp4")
-    pass1.analyze_chunk(sample_snapshot, chunk)
+    pass1.analyze_chunk(sample_context, chunk)
 
     pass2 = GeminiCropGridCapResolver(api_key="test-key", timeout_sec=60.0)
     crop = np.zeros((32, 32, 3), dtype=np.uint8)
@@ -156,7 +156,7 @@ def test_gemini_clients_configure_http_timeout_and_default_free_schemas(
 
 def test_gemini_pass1_requires_explicit_top_level_keys_in_dict_and_json(
     monkeypatch: pytest.MonkeyPatch,
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr("video_analyzer.pass1.gemini_client.time.sleep", lambda _: None)
@@ -170,19 +170,19 @@ def test_gemini_pass1_requires_explicit_top_level_keys_in_dict_and_json(
     ):
         analyzer = _build_analyzer_with_response(bad_response)
         with pytest.raises(RuntimeError, match="missing required keys"):
-            analyzer.analyze_chunk(sample_snapshot, chunk)
+            analyzer.analyze_chunk(sample_context, chunk)
 
     dict_empty = _build_analyzer_with_response(
         SimpleNamespace(parsed={"period_events": [], "time_anchors": []}, text=None)
     )
-    res_dict = dict_empty.analyze_chunk(sample_snapshot, chunk)
+    res_dict = dict_empty.analyze_chunk(sample_context, chunk)
     assert res_dict.period_events == []
     assert res_dict.time_anchors == []
 
 
 def test_gemini_pass1_retries_malformed_json_inside_retry_loop(
     monkeypatch: pytest.MonkeyPatch,
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr("video_analyzer.pass1.gemini_client.time.sleep", lambda _: None)
@@ -218,7 +218,7 @@ def test_gemini_pass1_retries_malformed_json_inside_retry_loop(
             SimpleNamespace(parsed=None, text='{"period_events": [], "time_anchors": []}'),
         ]
     )
-    res = recovering_analyzer.analyze_chunk(sample_snapshot, chunk)
+    res = recovering_analyzer.analyze_chunk(sample_context, chunk)
     assert res.period_events == []
     assert res.time_anchors == []
     assert recovering_calls == [1, 2, 3]
@@ -232,30 +232,30 @@ def test_gemini_pass1_retries_malformed_json_inside_retry_loop(
         ]
     )
     with pytest.raises(RuntimeError, match="invalid JSON for chunk 1"):
-        failing_analyzer.analyze_chunk(sample_snapshot, chunk)
+        failing_analyzer.analyze_chunk(sample_context, chunk)
     assert failing_calls == [1, 2, 3]
 
 
 def test_pass1_prompt_builder_uses_full_unrounded_chunk_duration(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     builder = Pass1PromptBuilder()
 
     chunk_precise = VideoChunk(index=0, start_sec=0.0, end_sec=10.126, path=tmp_path / "c0.mp4")
-    prompt_precise = builder.build_chunk_prompt(sample_snapshot, chunk_precise)
+    prompt_precise = builder.build_chunk_prompt(sample_context, chunk_precise)
     assert "(duration 10.126s)" in prompt_precise
     assert "(0.0 to 10.126)" in prompt_precise
     assert "(0.0 to 10.13)" not in prompt_precise
 
     chunk_sub = VideoChunk(index=1, start_sec=105.1, end_sec=120.3, path=tmp_path / "c1.mp4")
-    prompt_sub = builder.build_chunk_prompt(sample_snapshot, chunk_sub)
+    prompt_sub = builder.build_chunk_prompt(sample_context, chunk_sub)
     assert "(duration 15.2s)" in prompt_sub
     assert "(0.0 to 15.2)" in prompt_sub
 
 
 def test_gemini_clients_extract_usage_metadata_from_responses(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     chunk = VideoChunk(index=0, start_sec=0.0, end_sec=60.0, path=tmp_path / "c0.mp4")
@@ -273,7 +273,7 @@ def test_gemini_clients_extract_usage_metadata_from_responses(
             usage_metadata=pass1_usage_meta,
         )
     )
-    pass1_res = analyzer.analyze_chunk(sample_snapshot, chunk)
+    pass1_res = analyzer.analyze_chunk(sample_context, chunk)
     assert pass1_res.token_usage is not None
     assert pass1_res.token_usage.call_count == 1
     assert pass1_res.token_usage.prompt_tokens == 4000
@@ -322,7 +322,7 @@ def test_gemini_clients_extract_usage_metadata_from_responses(
 
 def test_gemini_pass1_accumulates_usage_across_retries_without_double_counting(
     monkeypatch: pytest.MonkeyPatch,
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr("video_analyzer.pass1.gemini_client.time.sleep", lambda _: None)
@@ -373,7 +373,7 @@ def test_gemini_pass1_accumulates_usage_across_retries_without_double_counting(
         models = SimpleNamespace(generate_content=_generate_content)
 
     analyzer = GeminiPass1Analyzer(api_key="test-key", client=FakeClient())
-    res = analyzer.analyze_chunk(sample_snapshot, chunk)
+    res = analyzer.analyze_chunk(sample_context, chunk)
     assert res.token_usage is not None
     assert res.token_usage.call_count == 2
     assert res.token_usage.prompt_tokens == 2200
@@ -479,12 +479,12 @@ def _chunk(tmp_path: Path) -> VideoChunk:
 
 
 def test_unset_thinking_level_omits_thinking_config_but_still_disables_afc(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     pass1_client = _RecordingGeminiClient(_EMPTY_PASS1_JSON)
     GeminiPass1Analyzer(api_key="k", client=pass1_client).analyze_chunk(
-        sample_snapshot, _chunk(tmp_path)
+        sample_context, _chunk(tmp_path)
     )
 
     pass2_client = _RecordingGeminiClient(_CAP_JSON)
@@ -500,12 +500,12 @@ def test_unset_thinking_level_omits_thinking_config_but_still_disables_afc(
 
 
 def test_configured_thinking_level_sends_only_thinking_level(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     pass1_client = _RecordingGeminiClient(_EMPTY_PASS1_JSON)
     GeminiPass1Analyzer(api_key="k", client=pass1_client, thinking_level="LOW").analyze_chunk(
-        sample_snapshot, _chunk(tmp_path)
+        sample_context, _chunk(tmp_path)
     )
     pass2_client = _RecordingGeminiClient(_CAP_JSON)
     GeminiCropGridCapResolver(api_key="k", client=pass2_client, thinking_level="minimal").resolve(
@@ -547,7 +547,7 @@ def test_factories_wire_per_slot_models_thinking_levels_and_resilience() -> None
 
 
 def test_pass1_transient_errors_are_retried_by_resilience_and_succeed(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     client = _RecordingGeminiClient(
@@ -555,7 +555,7 @@ def test_pass1_transient_errors_are_retried_by_resilience_and_succeed(
     )
     analyzer = GeminiPass1Analyzer(api_key="k", client=client, resilience=_fast_resilience())
 
-    result = analyzer.analyze_chunk(sample_snapshot, _chunk(tmp_path))
+    result = analyzer.analyze_chunk(sample_context, _chunk(tmp_path))
     assert result.period_events == []
     assert client.generate_calls == 3
 
@@ -571,7 +571,7 @@ def test_pass1_transient_errors_are_retried_by_resilience_and_succeed(
     ],
 )
 def test_pass1_non_retryable_error_is_not_retried_and_blocks_later_chunks(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
     error: Exception,
     reason: BreakerReason,
@@ -582,13 +582,13 @@ def test_pass1_non_retryable_error_is_not_retried_and_blocks_later_chunks(
 
     with job_scope(GeminiJobScope()):
         with pytest.raises(GeminiCallBlockedError) as exc_info:
-            analyzer.analyze_chunk(sample_snapshot, chunk)
+            analyzer.analyze_chunk(sample_context, chunk)
         assert exc_info.value.reason is reason
         assert client.generate_calls == 1, "the previous 3-attempt blanket retry is gone"
 
         uploads_before = client.upload_calls
         with pytest.raises(GeminiCallBlockedError):
-            analyzer.analyze_chunk(sample_snapshot, chunk)
+            analyzer.analyze_chunk(sample_context, chunk)
         assert client.generate_calls == 1
         assert client.upload_calls == uploads_before, "an open breaker also stops file uploads"
 
@@ -612,16 +612,16 @@ def test_pass2_resolver_uses_resilience_and_stops_calling_when_breaker_is_open()
 
 
 def test_gemini_calls_count_against_the_per_job_call_budget(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
     tmp_path: Path,
 ) -> None:
     client = _RecordingGeminiClient(_EMPTY_PASS1_JSON)
     analyzer = GeminiPass1Analyzer(api_key="k", client=client, resilience=_fast_resilience())
     chunk = _chunk(tmp_path)
     with job_scope(GeminiJobScope(max_calls=2)):
-        analyzer.analyze_chunk(sample_snapshot, chunk)
-        analyzer.analyze_chunk(sample_snapshot, chunk)
+        analyzer.analyze_chunk(sample_context, chunk)
+        analyzer.analyze_chunk(sample_context, chunk)
         with pytest.raises(GeminiCallBlockedError) as exc_info:
-            analyzer.analyze_chunk(sample_snapshot, chunk)
+            analyzer.analyze_chunk(sample_context, chunk)
     assert exc_info.value.reason is BreakerReason.BUDGET_EXCEEDED
     assert client.generate_calls == 2

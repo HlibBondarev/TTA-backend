@@ -23,7 +23,7 @@ from video_analyzer.pass2.tracker import (
     _TrackState,
     _warp_bbox,
 )
-from video_analyzer.schemas.request import MatchSnapshot
+from video_analyzer.sport import AnalysisContext
 
 
 class SyntheticDetector(BaseObjectDetector):
@@ -85,7 +85,7 @@ def test_botsort_tracker_maintains_track_across_panning_frames() -> None:
 
 
 def test_actor_matcher_and_crop_selector_prefer_sharp_frames(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
     # Build two frames: frame 0 sharp, frame 1 heavily blurred
     sharp = np.zeros((300, 400, 3), dtype=np.uint8)
@@ -106,7 +106,7 @@ def test_actor_matcher_and_crop_selector_prefer_sharp_frames(
     }
 
     tracklets = BoTSortTracker().track_window(frames, SyntheticDetector(boxes))
-    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    defn = next(d for d in sample_context.event_catalog if d.short_name == "G")
     cand = Pass1EventCandidate(
         video_time_sec=20.0,
         definition=defn,
@@ -119,7 +119,7 @@ def test_actor_matcher_and_crop_selector_prefer_sharp_frames(
     )
 
     matched = ActorMatcher().match(
-        cand, tracklets, sample_snapshot, frame_width=400, frame_height=300
+        cand, tracklets, sample_context, frame_width=400, frame_height=300
     )
     assert matched is not None
 
@@ -170,9 +170,9 @@ def test_cap_resolvers_constrain_to_roster() -> None:
 
 
 def test_actor_matcher_rejects_spatially_incompatible_tracklet_despite_label_bonuses(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
-    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "ASV")
+    defn = next(d for d in sample_context.event_catalog if d.short_name == "ASV")
     cand = Pass1EventCandidate(
         video_time_sec=20.0,
         definition=defn,
@@ -197,15 +197,15 @@ def test_actor_matcher_rejects_spatially_incompatible_tracklet_despite_label_bon
     )
 
     matched = ActorMatcher().match(
-        cand, [far_tracklet], sample_snapshot, frame_width=1000, frame_height=1000
+        cand, [far_tracklet], sample_context, frame_width=1000, frame_height=1000
     )
     assert matched is None
 
 
 def test_actor_matcher_marks_unhinted_match_without_spatial_hint(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
-    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    defn = next(d for d in sample_context.event_catalog if d.short_name == "G")
     cand = Pass1EventCandidate(
         video_time_sec=20.0,
         definition=defn,
@@ -230,7 +230,7 @@ def test_actor_matcher_marks_unhinted_match_without_spatial_hint(
     )
 
     matched = ActorMatcher().match(
-        cand, [tracklet], sample_snapshot, frame_width=400, frame_height=300
+        cand, [tracklet], sample_context, frame_width=400, frame_height=300
     )
     assert matched is not None
     assert matched.has_spatial_hint is False
@@ -373,9 +373,9 @@ def test_warp_bbox_transforms_all_four_corners_under_rotation() -> None:
 
 
 def test_actor_matcher_preserves_low_iou_overlapping_tracklet_without_label_bonus(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
-    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    defn = next(d for d in sample_context.event_catalog if d.short_name == "G")
     cand = Pass1EventCandidate(
         video_time_sec=20.0,
         definition=defn,
@@ -414,7 +414,7 @@ def test_actor_matcher_preserves_low_iou_overlapping_tracklet_without_label_bonu
     matched = ActorMatcher().match(
         cand,
         [overlapping_tracklet, distant_tracklet],
-        sample_snapshot,
+        sample_context,
         frame_width=400,
         frame_height=300,
     )
@@ -425,9 +425,9 @@ def test_actor_matcher_preserves_low_iou_overlapping_tracklet_without_label_bonu
 
 
 def test_actor_matcher_filters_ineligible_non_overlapping_track_before_ranking(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
-    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    defn = next(d for d in sample_context.event_catalog if d.short_name == "G")
     cand = Pass1EventCandidate(
         video_time_sec=20.0,
         definition=defn,
@@ -471,7 +471,7 @@ def test_actor_matcher_filters_ineligible_non_overlapping_track_before_ranking(
         matched = ActorMatcher().match(
             cand,
             ordered,
-            sample_snapshot,
+            sample_context,
             frame_width=400,
             frame_height=300,
         )
@@ -509,7 +509,7 @@ def test_gemini_cap_resolver_rejects_contradictory_or_non_top_consensus() -> Non
 
 
 def test_cross_player_cap_ambiguity_blocks_auto_assignment(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
     img = np.zeros((300, 400, 3), dtype=np.uint8)
     frames = [
@@ -544,7 +544,7 @@ def test_cross_player_cap_ambiguity_blocks_auto_assignment(
     assert selected is not None
     assert selected.has_ambiguous_cap is True
 
-    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    defn = next(d for d in sample_context.event_catalog if d.short_name == "G")
     cand = Pass1EventCandidate(
         video_time_sec=10.0,
         definition=defn,
@@ -565,7 +565,7 @@ def test_cross_player_cap_ambiguity_blocks_auto_assignment(
             candidate_scores={7: 0.95},
             reasoning="Sharp upper-body crop",
         ),
-        sample_snapshot,
+        sample_context,
         min_cap_confidence=0.80,
         cap_ambiguous=selected.has_ambiguous_cap,
     )
@@ -577,9 +577,9 @@ def test_cross_player_cap_ambiguity_blocks_auto_assignment(
 
 
 def test_actor_matcher_flags_tied_tracks_and_blocks_auto_confirmation(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
-    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    defn = next(d for d in sample_context.event_catalog if d.short_name == "G")
     cand = Pass1EventCandidate(
         video_time_sec=20.0,
         definition=defn,
@@ -600,7 +600,7 @@ def test_actor_matcher_flags_tied_tracks_and_blocks_auto_confirmation(
     )
 
     matched = ActorMatcher().match(
-        cand, [t1, t2], sample_snapshot, frame_width=400, frame_height=300
+        cand, [t1, t2], sample_context, frame_width=400, frame_height=300
     )
     assert matched is not None
     assert matched.is_tied is True
@@ -615,7 +615,7 @@ def test_actor_matcher_flags_tied_tracks_and_blocks_auto_confirmation(
             candidate_scores={7: 0.95},
             reasoning="Cap #7",
         ),
-        sample_snapshot,
+        sample_context,
         min_cap_confidence=0.80,
         actor_match_tied=matched.is_tied,
     )
@@ -627,7 +627,7 @@ def test_actor_matcher_flags_tied_tracks_and_blocks_auto_confirmation(
 
 
 def test_fallback_crop_overlapping_neighbor_cap_marks_ambiguous_and_blocks_auto_assign(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
     img = np.zeros((240, 300, 3), dtype=np.uint8)
     frames = [
@@ -667,7 +667,7 @@ def test_fallback_crop_overlapping_neighbor_cap_marks_ambiguous_and_blocks_auto_
     assert selected is not None
     assert selected.has_ambiguous_cap is True
 
-    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    defn = next(d for d in sample_context.event_catalog if d.short_name == "G")
     cand = Pass1EventCandidate(
         video_time_sec=10.2,
         definition=defn,
@@ -688,7 +688,7 @@ def test_fallback_crop_overlapping_neighbor_cap_marks_ambiguous_and_blocks_auto_
             candidate_scores={7: 0.95},
             reasoning="Clear cap #7 inside padded crop",
         ),
-        sample_snapshot,
+        sample_context,
         min_cap_confidence=0.80,
         cap_ambiguous=selected.has_ambiguous_cap,
     )
@@ -726,7 +726,7 @@ def test_fallback_crop_overlapping_neighbor_cap_marks_ambiguous_and_blocks_auto_
 
 
 def test_unique_cap_crop_overlapping_neighbor_unowned_head_marks_ambiguous(
-    sample_snapshot: MatchSnapshot,
+    sample_context: AnalysisContext,
 ) -> None:
     img = np.zeros((240, 300, 3), dtype=np.uint8)
     frames = [ExtractedFrame(index=0, video_time_sec=10.0, image_bgr=img)]
@@ -753,7 +753,7 @@ def test_unique_cap_crop_overlapping_neighbor_unowned_head_marks_ambiguous(
     assert selected is not None
     assert selected.has_ambiguous_cap is True
 
-    defn = next(d for d in sample_snapshot.event_definitions if d.short_name == "G")
+    defn = next(d for d in sample_context.event_catalog if d.short_name == "G")
     cand = Pass1EventCandidate(
         video_time_sec=10.0,
         definition=defn,
@@ -774,7 +774,7 @@ def test_unique_cap_crop_overlapping_neighbor_unowned_head_marks_ambiguous(
             candidate_scores={7: 0.95},
             reasoning="Clear cap #7 in crop overlapping neighbor head",
         ),
-        sample_snapshot,
+        sample_context,
         min_cap_confidence=0.80,
         cap_ambiguous=selected.has_ambiguous_cap,
     )
