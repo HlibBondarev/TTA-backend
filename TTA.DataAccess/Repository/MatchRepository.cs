@@ -59,6 +59,44 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
     }
 
     /// <inheritdoc />
+    public async Task<MatchAnalysisSnapshotProjection?> GetMatchAnalysisSnapshotAsync(
+        Guid matchId,
+        Guid teamId,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add(SqlParameters.MatchId, matchId);
+        parameters.Add(SqlParameters.TeamId, teamId);
+
+        using var connection = await OpenConnectionAsync(cancellationToken);
+
+        var context = await connection.QueryFirstOrDefaultAsync<MatchAnalysisContextProjection>(new CommandDefinition(
+            SqlStatements.ForMatches.GetMatchAnalysisContext,
+            parameters,
+            cancellationToken: cancellationToken));
+
+        if (context is null)
+        {
+            return null;
+        }
+
+        var lineup = await connection.QueryAsync<MatchAnalysisLineupProjection>(new CommandDefinition(
+            SqlStatements.ForMatches.GetMatchAnalysisLineup,
+            parameters,
+            cancellationToken: cancellationToken));
+
+        var sportParameters = new DynamicParameters();
+        sportParameters.Add(SqlParameters.SportId, context.SportId);
+
+        var eventDefinitions = await connection.QueryAsync<MatchAnalysisEventDefinitionProjection>(new CommandDefinition(
+            SqlStatements.ForMatches.GetSystemEventDefinitionsBySport,
+            sportParameters,
+            cancellationToken: cancellationToken));
+
+        return new MatchAnalysisSnapshotProjection(context, lineup.AsList(), eventDefinitions.AsList());
+    }
+
+    /// <inheritdoc />
     public async Task<Match?> CreateQuickMatchAsync(
         Guid matchId,
         Guid sportId,

@@ -14,6 +14,9 @@ public static class SqlParameters
     /// <summary>Parameter name for the match identifier.</summary>
     public const string MatchId = "p_match_id";
 
+    /// <summary>Parameter name for the team identifier.</summary>
+    public const string TeamId = "p_team_id";
+
     /// <summary>Parameter name for the sport identifier.</summary>
     public const string SportId = "p_sport_id";
 

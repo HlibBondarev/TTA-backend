@@ -1599,6 +1599,130 @@ BEGIN
 END;$$ LANGUAGE plpgsql;
 
 /**********************************************************************************
+ * Match analysis snapshot (1/3): match context.
+ * Returns the match, its participating teams, the sport and the ACTUAL sport
+ * configuration resolved through tournaments.configurationid (not the sport default).
+ * Returns zero rows when the match does not exist OR the tracked team (p_team_id)
+ * is neither the home nor the guest team of the match.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_analysis_context(
+    p_match_id UUID,
+    p_team_id UUID
+)
+RETURNS TABLE (
+    matchid UUID,
+    tournamentid UUID,
+    tournamentname VARCHAR,
+    scheduledat TIMESTAMPTZ,
+    matchnumber VARCHAR,
+    venue VARCHAR,
+    temperature DOUBLE PRECISION,
+    homescore INT,
+    guestscore INT,
+    hometeamid UUID,
+    hometeamname VARCHAR,
+    guestteamid UUID,
+    guestteamname VARCHAR,
+    sportid UUID,
+    sportname VARCHAR,
+    sportshortname VARCHAR,
+    configurationid UUID,
+    usescleantime BOOLEAN,
+    periodscount INT,
+    perioddurationminutes INT,
+    fieldsize VARCHAR,
+    rosterlimit INT,
+    lineuplimit INT,
+    activeplayerslimit INT,
+    playground TEXT,
+    shotmap TEXT,
+    fieldlength NUMERIC,
+    fieldwidth NUMERIC,
+    maxpersonalfouls INT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        m.id, m.tournamentid, t.name,
+        m.scheduledat, m.matchnumber, m.venue, m.temperature, m.homescore, m.guestscore,
+        m.hometeamid, ht.name, m.guestteamid, gt.name,
+        s.id, s.name, s.shortname,
+        sc.id, sc.usescleantime, sc.periodscount, sc.perioddurationminutes, sc.fieldsize,
+        sc.rosterlimit, sc.lineuplimit, sc.activeplayerslimit,
+        sc.playground, sc.shotmap, sc.fieldlength, sc.fieldwidth, sc.maxpersonalfouls
+    FROM public.matches m
+    INNER JOIN public.tournaments t ON m.tournamentid = t.id
+    INNER JOIN public.teams ht ON m.hometeamid = ht.id
+    INNER JOIN public.teams gt ON m.guestteamid = gt.id
+    INNER JOIN public.sports s ON t.sportid = s.id
+    INNER JOIN public.sportconfigurations sc ON t.configurationid = sc.id AND t.sportid = sc.sportid
+    WHERE m.id = p_match_id
+      AND (m.hometeamid = p_team_id OR m.guestteamid = p_team_id);
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Match analysis snapshot (2/3): tracked team lineup.
+ * Returns the match lineup of a single team including position id, name and short name.
+ * Returns zero rows (not an error) when the team has no lineup entries.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_match_analysis_lineup(
+    p_match_id UUID,
+    p_team_id UUID
+)
+RETURNS TABLE (
+    id UUID,
+    playerrosterid UUID,
+    firstname VARCHAR,
+    lastname VARCHAR,
+    number INT,
+    positionid UUID,
+    positionname VARCHAR,
+    positionshortname VARCHAR
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        ml.id, ml.playerrosterid, p.firstname, p.lastname, ml.number,
+        ml.positionid, ppd.name, ppd.shortname
+    FROM public.matchlineups ml
+    INNER JOIN public.playerrosters pr ON ml.playerrosterid = pr.id
+    INNER JOIN public.players p ON pr.playerid = p.id
+    INNER JOIN public.playerpositiondefinitions ppd ON ml.positionid = ppd.id
+    WHERE ml.matchid = p_match_id AND pr.teamid = p_team_id
+    ORDER BY ml.number;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
+ * Match analysis snapshot (3/3): system event definitions.
+ * Returns ONLY active system-level event definitions (ownerid IS NULL, not soft-deleted)
+ * for the given sport. Custom user-defined definitions are never returned.
+ **********************************************************************************/
+CREATE OR REPLACE FUNCTION public.get_system_event_definitions_by_sport(
+    p_sport_id UUID
+)
+RETURNS TABLE (
+    id UUID,
+    name VARCHAR,
+    shortname VARCHAR,
+    ispositive BOOLEAN,
+    isshot BOOLEAN,
+    score INT,
+    foulimpact INT,
+    penaltydurationseconds INT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        ed.id, ed.name, ed.shortname, ed.ispositive, ed.isshot,
+        ed.score, ed.foulimpact, ed.penaltydurationseconds
+    FROM public.eventdefinitions ed
+    WHERE ed.sportid = p_sport_id
+      AND ed.ownerid IS NULL
+      AND ed.issoftdeleted = FALSE
+    ORDER BY ed.ispositive DESC, ed.defaultposition ASC NULLS LAST, ed.name ASC;
+END;$$ LANGUAGE plpgsql;
+
+/**********************************************************************************
  * Removes a player from the match lineup.
  * Returns the number of rows affected (1 if deleted, 0 if not found).
  * Due to ON DELETE CASCADE settings, related records in playerpresences 

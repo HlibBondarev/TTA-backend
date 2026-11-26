@@ -97,6 +97,43 @@ public class MatchesController(
     }
 
     /// <summary>
+    /// Retrieves the sport-agnostic match analysis snapshot for a match and a tracked team: match context, teams,
+    /// sport, the actual sport configuration, the tracked team lineup and the system-level event definitions.
+    /// </summary>
+    /// <param name="matchId">The unique identifier of the match.</param>
+    /// <param name="teamId">The unique identifier of the tracked team.</param>
+    /// <param name="validator">The validator for the snapshot query.</param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
+    /// <returns>The match analysis snapshot; the lineup is an empty collection when the tracked team has no lineup entries.</returns>
+    /// <response code="200">Returns the match analysis snapshot.</response>
+    /// <response code="400">If the match or team identifier is empty.</response>
+    /// <response code="404">If the match was not found or the team is not a participant.</response>
+    [AllowAnonymous]
+    [HttpGet("{matchId:guid}/teams/{teamId:guid}/analysis-snapshot")]
+    [ProducesResponseType(typeof(MatchAnalysisSnapshotResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetMatchAnalysisSnapshot(
+        [FromRoute] Guid matchId,
+        [FromRoute] Guid teamId,
+        [FromServices] IValidator<GetMatchAnalysisSnapshotQuery> validator,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Retrieving analysis snapshot for team {TeamId} in match {MatchId}.", teamId, matchId);
+
+        var query = new GetMatchAnalysisSnapshotQuery(matchId, teamId);
+        var validationResult = await validator.ValidateAsync(query, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            return BadRequest(validationResult.ToDictionary());
+        }
+
+        var result = await _mediator.Send(query, cancellationToken);
+
+        return Ok(result);
+    }
+
+    /// <summary>
     /// Adds a player from the tournament roster to the match protocol.
     /// </summary>
     /// <param name="matchId">The unique identifier of the match.</param>
