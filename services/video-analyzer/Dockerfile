@@ -5,15 +5,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/app/src
 
+# Install system dependencies and create a dedicated unprivileged runtime user
+# (its home directory hosts library caches/config).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
     libgl1 \
     libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Dedicated unprivileged runtime user; the home directory hosts library caches/config.
-RUN groupadd --system app \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system app \
     && useradd --system --gid app --create-home --home-dir /home/app app
 
 WORKDIR /app
