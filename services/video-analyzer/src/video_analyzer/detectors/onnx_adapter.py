@@ -201,13 +201,13 @@ class OnnxDetector(BaseObjectDetector):
         if self._output_layout == "channels_last":
             return False
 
-        for hint in (
-            self._transpose_hint_from_class_count(tensor),
-            self._transpose_hint_from_declared_shape(),
-            self._transpose_hint_from_score_ranges(tensor),
-        ):
-            if hint is not None:
-                return hint
+        hint = self._transpose_hint_from_class_count(tensor)
+        if hint is None:
+            hint = self._transpose_hint_from_declared_shape()
+        if hint is None:
+            hint = self._transpose_hint_from_score_ranges(tensor)
+        if hint is not None:
+            return hint
 
         if tensor.shape[0] != tensor.shape[1]:
             return tensor.shape[0] < tensor.shape[1]

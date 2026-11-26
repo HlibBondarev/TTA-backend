@@ -20,11 +20,10 @@ WORKDIR /app
 
 # Install only fully pinned, hash-verified wheels. The lock files in requirements/ are generated
 # from pyproject.toml; the application itself is imported from /app/src via PYTHONPATH.
-# Switch INSTALL_EXTRAS to "yolo,onnx" when running local Ultralytics weights in Docker.
+# Supported INSTALL_EXTRAS values: "onnx" (default), "yolo", "yolo,onnx" (or "onnx,yolo").
 ARG INSTALL_EXTRAS=onnx
 COPY requirements ./requirements
-RUN pip install --only-binary :all: --require-hashes \
-    -r "requirements/$(echo "${INSTALL_EXTRAS}" | tr ',' '-').txt"
+RUN extras="$(printf '%s' "${INSTALL_EXTRAS}" | tr -d '[:space:]')"     && case "${extras}" in         onnx) lock_file="requirements/onnx.txt" ;;         yolo) lock_file="requirements/yolo.txt" ;;         yolo,onnx|onnx,yolo) lock_file="requirements/yolo-onnx.txt" ;;         *) echo "Unsupported INSTALL_EXTRAS='${INSTALL_EXTRAS}'. Use one of: onnx, yolo, yolo,onnx" >&2; exit 1 ;;     esac     && pip install --only-binary :all: --require-hashes -r "${lock_file}"
 
 COPY --chown=app:app src ./src
 
