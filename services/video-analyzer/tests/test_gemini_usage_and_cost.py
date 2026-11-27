@@ -604,3 +604,33 @@ def test_missing_metadata_calls_keep_aggregate_totals_unknown_instead_of_zero() 
     assert total.prompt_tokens is None
     assert total.candidates_tokens is None
     assert total.total_tokens is None
+
+
+def test_mixed_metadata_and_blind_calls_keep_optional_counters_unknown() -> None:
+    reported = GeminiTokenUsage(
+        call_count=1,
+        prompt_tokens=100,
+        candidates_tokens=10,
+        thoughts_tokens=20,
+        cached_content_tokens=30,
+        total_tokens=130,
+    )
+    blind = extract_usage_or_unknown(SimpleNamespace(text="ok"))
+
+    total = aggregate_token_usage([reported, blind])
+
+    assert total.call_count == 2
+    assert total.thoughts_tokens is None
+    assert total.cached_content_tokens is None
+
+
+def test_optional_counters_still_sum_when_every_call_reported_metadata() -> None:
+    first = GeminiTokenUsage(
+        call_count=1, prompt_tokens=1, candidates_tokens=1, thoughts_tokens=20, total_tokens=22
+    )
+    second = GeminiTokenUsage(call_count=1, prompt_tokens=1, candidates_tokens=1, total_tokens=2)
+
+    total = aggregate_token_usage([first, second])
+
+    assert total.thoughts_tokens == 20  # a call that omits thoughts is not a blind call
+    assert total.cached_content_tokens is None
