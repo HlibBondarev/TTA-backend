@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from video_analyzer.media.ffmpeg_client import VideoChunk
-from video_analyzer.pass1.anchor_reconciler import AnchorReconciler
-from video_analyzer.pass1.models import Pass1ChunkResult, Pass1RawAnchor
+from video_analyzer.pass1.anchor_reconciler import AnchorReconciler, _StoppageInterval
+from video_analyzer.pass1.models import Pass1AnchorCandidate, Pass1ChunkResult, Pass1RawAnchor
 from video_analyzer.schemas.draft import TimeAnchorType
 
 
@@ -592,3 +592,45 @@ def test_anchor_reconciler_retains_latest_prior_period_end_across_shorter_period
     assert p1_end.needs_review is True
     assert p3_start.needs_review is True
     assert p3_end.needs_review is False
+
+
+def _candidate(time_sec: float, anchor_type: TimeAnchorType) -> Pass1AnchorCandidate:
+    return Pass1AnchorCandidate(
+        video_time_sec=time_sec, period_number=1, type=anchor_type, confidence=0.9
+    )
+
+
+def test_leftover_start_before_a_completed_interval_is_dropped_not_kept_as_trailing() -> None:
+    completed = _StoppageInterval(
+        start=_candidate(50.0, TimeAnchorType.STOPPAGE_START),
+        end=_candidate(60.0, TimeAnchorType.STOPPAGE_END),
+    )
+    early_start = _candidate(10.0, TimeAnchorType.STOPPAGE_START)
+    warnings: list[str] = []
+
+    paired, trailing = AnchorReconciler._pair_cross_chunk_endpoints(
+        1, [early_start], [], [completed], warnings, keep_trailing_start=True
+    )
+
+    assert paired == []
+    assert trailing == []
+    assert early_start.needs_review is False
+    assert warnings == ["Period 1: dropped unpaired StoppageStart at 10.0s."]
+
+
+def test_leftover_start_after_every_completed_interval_is_kept_and_flagged() -> None:
+    completed = _StoppageInterval(
+        start=_candidate(10.0, TimeAnchorType.STOPPAGE_START),
+        end=_candidate(20.0, TimeAnchorType.STOPPAGE_END),
+    )
+    late_start = _candidate(50.0, TimeAnchorType.STOPPAGE_START)
+    warnings: list[str] = []
+
+    paired, trailing = AnchorReconciler._pair_cross_chunk_endpoints(
+        1, [late_start], [], [completed], warnings, keep_trailing_start=True
+    )
+
+    assert paired == []
+    assert trailing == [late_start]
+    assert late_start.needs_review is True
+    assert "kept trailing unpaired StoppageStart" in warnings[0]

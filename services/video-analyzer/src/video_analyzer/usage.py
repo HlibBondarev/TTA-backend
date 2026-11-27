@@ -61,6 +61,17 @@ def extract_usage_metadata(response: Any) -> GeminiTokenUsage | None:
     )
 
 
+def extract_usage_or_unknown(response: Any) -> GeminiTokenUsage:
+    """Return the response's token usage, or a one-call entry with unknown counters.
+
+    A completed Gemini call must always be counted. When the response carries no usable
+    ``usage_metadata`` the entry keeps ``call_count=1`` while every token counter stays ``None``,
+    so aggregated totals read as unknown (incomplete) instead of silently reporting ``0``.
+    """
+    usage = extract_usage_metadata(response)
+    return usage if usage is not None else GeminiTokenUsage(call_count=1)
+
+
 def _has_unaccounted_non_thought_tokens(item: GeminiTokenUsage) -> bool:
     """Return True when unaccounted tokens exist while thoughts_tokens is absent."""
     if item.has_unaccounted_tokens:
@@ -70,6 +81,20 @@ def _has_unaccounted_non_thought_tokens(item: GeminiTokenUsage) -> bool:
     if item.prompt_tokens is None or item.candidates_tokens is None or item.total_tokens is None:
         return False
     return item.total_tokens > (item.prompt_tokens + item.candidates_tokens)
+
+
+def _has_no_usage_metadata(item: GeminiTokenUsage) -> bool:
+    """Return True for a counted call that carried no usable token counters at all."""
+    return all(
+        getattr(item, attr) is None
+        for attr in (
+            "prompt_tokens",
+            "candidates_tokens",
+            "thoughts_tokens",
+            "cached_content_tokens",
+            "total_tokens",
+        )
+    )
 
 
 def _sum_strict_counter(items: list[GeminiTokenUsage], attr: str) -> int | None:
@@ -87,19 +112,31 @@ def _sum_optional_counter(items: list[GeminiTokenUsage], attr: str) -> int | Non
 
 
 def aggregate_token_usage(usages: Iterable[GeminiTokenUsage | None]) -> GeminiTokenUsage:
-    """Sum token counters across multiple Gemini API calls, ignoring None and zero-call entries."""
+    """Sum token counters across multiple Gemini API calls, ignoring None and zero-call entries.
+
+    A call without any usable metadata keeps every counter unknown in the aggregate, including the
+    optional thoughts and cached counters, so totals are never understated.
+    """
     active = [item for item in usages if item is not None and item.call_count > 0]
     if not active:
         return GeminiTokenUsage()
 
     has_unaccounted = any(_has_unaccounted_non_thought_tokens(item) for item in active)
-    thoughts_tokens = None if has_unaccounted else _sum_optional_counter(active, "thoughts_tokens")
+    has_blind_call = any(_has_no_usage_metadata(item) for item in active)
+    thoughts_tokens = (
+        None
+        if has_unaccounted or has_blind_call
+        else _sum_optional_counter(active, "thoughts_tokens")
+    )
+    cached_tokens = (
+        None if has_blind_call else _sum_optional_counter(active, "cached_content_tokens")
+    )
     return GeminiTokenUsage(
         call_count=sum(item.call_count for item in active),
         prompt_tokens=_sum_strict_counter(active, "prompt_tokens"),
         candidates_tokens=_sum_strict_counter(active, "candidates_tokens"),
         thoughts_tokens=thoughts_tokens,
-        cached_content_tokens=_sum_optional_counter(active, "cached_content_tokens"),
+        cached_content_tokens=cached_tokens,
         total_tokens=_sum_strict_counter(active, "total_tokens"),
         has_unaccounted_tokens=has_unaccounted,
     )

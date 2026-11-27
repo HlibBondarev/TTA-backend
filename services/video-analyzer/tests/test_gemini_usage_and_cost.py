@@ -24,6 +24,7 @@ from video_analyzer.usage import (
     estimate_call_cost_usd,
     estimate_stage_cost,
     extract_usage_metadata,
+    extract_usage_or_unknown,
 )
 
 # Fixed rates keep the arithmetic assertions independent of the shipped default price list.
@@ -89,7 +90,8 @@ def test_thinking_level_defaults_and_unset_values(monkeypatch: pytest.MonkeyPatc
 
     defaults = Settings(_env_file=None)
     assert defaults.gemini_pass1_thinking_level == "LOW"
-    assert defaults.gemini_verifier_thinking_level is None
+    # An unset level would let the verifier think with the model's large default budget.
+    assert defaults.gemini_verifier_thinking_level == "LOW"
     assert defaults.gemini_pass2_thinking_level is None
 
     monkeypatch.setenv("GEMINI_PASS1_THINKING_LEVEL", "none")
@@ -181,7 +183,11 @@ def test_estimate_call_cost_usd_is_zero_without_pricing_or_metadata() -> None:
 def test_pass1_chunk_result_json_schema_excludes_token_usage() -> None:
     schema = Pass1ChunkResult.model_json_schema()
     assert "token_usage" not in schema.get("properties", {})
-    assert set(schema.get("properties", {}).keys()) == {"period_events", "time_anchors"}
+    assert set(schema.get("properties", {}).keys()) == {
+        "tracked_attack_direction",
+        "period_events",
+        "time_anchors",
+    }
 
     chunk = Pass1ChunkResult(
         period_events=[],
@@ -572,3 +578,59 @@ def test_aggregate_preserves_unavailable_cost_across_mixed_partial_calls() -> No
     assert diag.estimated_cost is not None
     assert diag.estimated_cost.pricing_configured is True
     assert diag.estimated_cost.total_cost_usd is None
+
+
+def test_extract_usage_or_unknown_counts_calls_without_usable_metadata() -> None:
+    unknown = extract_usage_or_unknown(SimpleNamespace(text="ok"))
+
+    assert unknown.call_count == 1
+    assert unknown.prompt_tokens is None
+    assert unknown.total_tokens is None
+
+    known = extract_usage_or_unknown(
+        SimpleNamespace(usage_metadata=SimpleNamespace(prompt_token_count=5))
+    )
+    assert known.call_count == 1
+    assert known.prompt_tokens == 5
+
+
+def test_missing_metadata_calls_keep_aggregate_totals_unknown_instead_of_zero() -> None:
+    full = GeminiTokenUsage(call_count=1, prompt_tokens=100, candidates_tokens=10, total_tokens=110)
+    unknown = extract_usage_or_unknown(SimpleNamespace(text="ok"))
+
+    total = aggregate_token_usage([full, unknown])
+
+    assert total.call_count == 2
+    assert total.prompt_tokens is None
+    assert total.candidates_tokens is None
+    assert total.total_tokens is None
+
+
+def test_mixed_metadata_and_blind_calls_keep_optional_counters_unknown() -> None:
+    reported = GeminiTokenUsage(
+        call_count=1,
+        prompt_tokens=100,
+        candidates_tokens=10,
+        thoughts_tokens=20,
+        cached_content_tokens=30,
+        total_tokens=130,
+    )
+    blind = extract_usage_or_unknown(SimpleNamespace(text="ok"))
+
+    total = aggregate_token_usage([reported, blind])
+
+    assert total.call_count == 2
+    assert total.thoughts_tokens is None
+    assert total.cached_content_tokens is None
+
+
+def test_optional_counters_still_sum_when_every_call_reported_metadata() -> None:
+    first = GeminiTokenUsage(
+        call_count=1, prompt_tokens=1, candidates_tokens=1, thoughts_tokens=20, total_tokens=22
+    )
+    second = GeminiTokenUsage(call_count=1, prompt_tokens=1, candidates_tokens=1, total_tokens=2)
+
+    total = aggregate_token_usage([first, second])
+
+    assert total.thoughts_tokens == 20  # a call that omits thoughts is not a blind call
+    assert total.cached_content_tokens is None

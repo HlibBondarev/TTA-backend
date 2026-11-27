@@ -191,7 +191,7 @@ def test_water_polo_prompt_keeps_baseline_wording(
         make_context(sample_snapshot), _chunk(tmp_path)
     )
     for baseline in (
-        "(plus negative events conceded by the tracked team, such as Goal Conceded / GC) "
+        "(plus negative events conceded by the tracked team, such as a conceded goal) "
         "and match timeline anchors.",
         "- Active players per team in water: 7",
         "audio cues (referee whistles, period horn/buzzer, goal whistle, shot-clock horn) "

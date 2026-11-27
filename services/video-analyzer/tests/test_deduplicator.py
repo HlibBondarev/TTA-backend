@@ -704,7 +704,9 @@ def test_deduplicator_rejects_bboxes_collapsing_to_zero_after_rounding(
         min_confidence=0.65,
     )
 
-    assert warnings == []
+    # Discarded boxes are reported instead of vanishing silently.
+    assert len(warnings) == 3
+    assert all("Discarded invalid actorBboxNormalized" in w for w in warnings)
     assert len(events) == 4
     assert events[0].actor_bbox_normalized is None
     assert events[1].actor_bbox_normalized is None

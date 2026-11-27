@@ -80,14 +80,14 @@ def test_create_pass1_chunks_normalizes_odd_target_height_and_preserves_even(
         probe=_probe(),
         output_dir=tmp_path / "odd",
         target_height=721,
-        fps=2.0,
+        mezzanine_fps=2.0,
     )
     client.create_pass1_chunks(
         video_path=video_path,
         probe=_probe(),
         output_dir=tmp_path / "even",
         target_height=720,
-        fps=2.0,
+        mezzanine_fps=2.0,
     )
 
     odd_cmd, even_cmd = _mezzanine_commands(recorded_cmds)
@@ -146,7 +146,7 @@ def test_mezzanine_forces_keyframes_that_divide_chunk_overlap_and_step(
         output_dir=tmp_path / "chunks",
         chunk_duration_sec=120,
         overlap_sec=15,
-        fps=2.0,
+        mezzanine_fps=2.0,
     )
     mezzanine = _mezzanine_commands(cmds)[0]
     expression = mezzanine[mezzanine.index("-force_key_frames") + 1]
@@ -293,11 +293,12 @@ def test_libx264_failure_and_cancellation_are_not_masked_by_fallback(
     assert len(calls) == 1
 
 
-def test_compute_chunk_windows_backs_up_short_tail_to_a_full_chunk() -> None:
-    # 230s: natural windows (0,120), (105,225), (210,230); the 20s tail is < 50% of a chunk.
-    windows = FFmpegClient.compute_chunk_windows(230.0, 120, 15)
-    assert windows == [(0.0, 120.0), (105.0, 225.0), (110.0, 230.0)]
-    assert windows[-1][1] - windows[-1][0] == 120.0
+def test_compute_chunk_windows_extends_previous_window_over_a_short_tail() -> None:
+    # 230s: natural windows (0,120), (105,225), (210,230); the 20s tail is < 50% of a chunk, so
+    # the previous window is extended to the clip end instead of adding an overlapping chunk.
+    assert FFmpegClient.compute_chunk_windows(230.0, 120, 15) == [(0.0, 120.0), (105.0, 230.0)]
+    # Clip 1 of the dev set: 105 s of redundant overlap used to be re-analyzed.
+    assert FFmpegClient.compute_chunk_windows(240.24, 120, 15) == [(0.0, 120.0), (105.0, 240.24)]
 
     # A tail of at least half a chunk is left untouched.
     assert FFmpegClient.compute_chunk_windows(290.0, 120, 15) == [
@@ -307,10 +308,10 @@ def test_compute_chunk_windows_backs_up_short_tail_to_a_full_chunk() -> None:
     ]
 
 
-def test_compute_chunk_windows_aligns_backed_up_start_to_keyframe_grid() -> None:
-    windows = FFmpegClient.compute_chunk_windows(233.0, 120, 15, align_sec=5.0)
-    assert windows[-1] == (110.0, 233.0)
-    assert windows[-1][0] % 5.0 == 0.0
+def test_compute_chunk_windows_keeps_every_start_on_the_keyframe_grid() -> None:
+    windows = FFmpegClient.compute_chunk_windows(233.0, 120, 15)
+    assert windows[-1] == (105.0, 233.0)
+    assert all(start % 5.0 == 0.0 for start, _ in windows)
 
 
 def test_compute_chunk_windows_never_emits_duplicate_or_subsumed_windows() -> None:
@@ -332,7 +333,7 @@ def test_compute_chunk_windows_clamps_start_and_handles_short_clips() -> None:
     assert FFmpegClient.compute_chunk_windows(120.0, 120, 15) == [(0.0, 120.0)]
     windows = FFmpegClient.compute_chunk_windows(130.0, 120, 100)
     assert all(start >= 0.0 for start, _ in windows)
-    assert FFmpegClient.compute_chunk_windows(60.0, 60, 5, align_sec=5.0) == [(0.0, 60.0)]
+    assert FFmpegClient.compute_chunk_windows(60.0, 60, 5) == [(0.0, 60.0)]
 
 
 class _FakeStreamProcess:

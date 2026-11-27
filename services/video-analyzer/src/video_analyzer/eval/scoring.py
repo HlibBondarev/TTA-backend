@@ -7,6 +7,11 @@ Metric definitions
 * ``label_accuracy`` = matched pairs whose ``eventDefinitionId`` is equal / matched pairs.
 * ``anchor_accuracy`` = labeled anchors matched by type (and period when both are known) within
   the tolerance / labeled anchors.
+* ``anchor_precision`` = predicted anchors matched to a labeled anchor / predicted anchors.
+* ``auto_confirmed_wrong`` = matched events the pipeline auto-confirmed (``needsReview`` is
+  false) whose ``eventDefinitionId`` differs from the label or whose resolved cap number differs
+  from a labeled ``capNumber``; ``auto_confirmed_wrong_rate`` divides it by the matched events
+  that were auto-confirmed.
 * ``cap_resolution_accuracy`` = matched pairs whose draft ``resolvedCapNumber`` equals the label's
   ``capNumber`` / matched pairs whose label has a ``capNumber`` (unresolved counts as incorrect).
 
@@ -43,9 +48,14 @@ class EvaluationReport:
     event_recall: float | None
     label_correct: int
     label_accuracy: float | None
+    predicted_anchors: int
     labeled_anchors: int
     matched_anchors: int
     anchor_accuracy: float | None
+    anchor_precision: float | None
+    auto_confirmed_events: int
+    auto_confirmed_wrong: int
+    auto_confirmed_wrong_rate: float | None
     cap_labeled_matches: int
     cap_correct: int
     cap_resolution_accuracy: float | None
@@ -97,6 +107,24 @@ def _anchors_compatible(predicted: EvalDraftAnchor, labeled: LabeledAnchor) -> b
     if predicted.period_number is None or labeled.period_number is None:
         return True
     return predicted.period_number == labeled.period_number
+
+
+def _is_wrong(predicted: EvalDraftEvent, labeled: LabeledEvent) -> bool:
+    """Return True when the predicted label or (if labeled) cap number is incorrect."""
+    if predicted.event_definition_id != labeled.event_definition_id:
+        return True
+    return labeled.cap_number is not None and predicted.resolved_cap_number != labeled.cap_number
+
+
+def _score_auto_confirmed(
+    predicted: list[EvalDraftEvent],
+    labeled: list[LabeledEvent],
+    pairs: list[tuple[int, int]],
+) -> tuple[int, int]:
+    """Return (auto-confirmed matched events, those of them with a wrong label or cap)."""
+    confirmed = [(p, lb) for p, lb in pairs if predicted[p].needs_review is False]
+    wrong = sum(1 for p_idx, l_idx in confirmed if _is_wrong(predicted[p_idx], labeled[l_idx]))
+    return len(confirmed), wrong
 
 
 def _score_events(
@@ -159,6 +187,7 @@ def evaluate_draft(
         draft.events, labels.events, tolerance_sec
     )
     matched_anchors = _score_anchors(draft.time_anchors, labels.anchors, tolerance_sec)
+    confirmed, confirmed_wrong = _score_auto_confirmed(draft.events, labels.events, pairs)
     return EvaluationReport(
         tolerance_sec=tolerance_sec,
         predicted_events=len(draft.events),
@@ -168,9 +197,14 @@ def evaluate_draft(
         event_recall=_ratio(len(pairs), len(labels.events)),
         label_correct=label_correct,
         label_accuracy=_ratio(label_correct, len(pairs)),
+        predicted_anchors=len(draft.time_anchors),
         labeled_anchors=len(labels.anchors),
         matched_anchors=matched_anchors,
         anchor_accuracy=_ratio(matched_anchors, len(labels.anchors)),
+        anchor_precision=_ratio(matched_anchors, len(draft.time_anchors)),
+        auto_confirmed_events=confirmed,
+        auto_confirmed_wrong=confirmed_wrong,
+        auto_confirmed_wrong_rate=_ratio(confirmed_wrong, confirmed),
         cap_labeled_matches=cap_labeled,
         cap_correct=cap_correct,
         cap_resolution_accuracy=_ratio(cap_correct, cap_labeled),
@@ -198,6 +232,14 @@ def format_report(report: EvaluationReport, clip_id: str | None = None) -> str:
         + _format_metric(report.label_accuracy, report.label_correct, report.matched_events),
         "  Anchor accuracy:         "
         + _format_metric(report.anchor_accuracy, report.matched_anchors, report.labeled_anchors),
+        "  Anchor precision:        "
+        + _format_metric(report.anchor_precision, report.matched_anchors, report.predicted_anchors),
+        "  Auto-confirmed wrong:    "
+        + _format_metric(
+            report.auto_confirmed_wrong_rate,
+            report.auto_confirmed_wrong,
+            report.auto_confirmed_events,
+        ),
         "  Cap resolution accuracy: "
         + _format_metric(
             report.cap_resolution_accuracy, report.cap_correct, report.cap_labeled_matches

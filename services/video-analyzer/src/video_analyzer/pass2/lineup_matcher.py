@@ -15,6 +15,7 @@ from video_analyzer.sport.profile import SportProfile
 
 _LOW_EVENT_CONFIDENCE_THRESHOLD = 0.80
 _MISSING_SPATIAL_HINT_REASON = "MISSING_ACTOR_SPATIAL_HINT"
+_GOALKEEPER_EVENT_NON_GOALKEEPER_REASON = "GOALKEEPER_EVENT_NON_GOALKEEPER_ACTOR"
 
 
 def _add_reason(review_reasons: list[str], reason: str) -> None:
@@ -82,18 +83,13 @@ class LineupMatcher:
         review_reasons = self._initial_review_reasons(candidate, actor_match_tied, cap_ambiguous)
 
         if cap_result is None:
-            _add_reason(review_reasons, pass2_failure_reason or "NO_PLAYER_TRACKLET_MATCHED")
-            if missing_spatial_hint:
-                _add_reason(review_reasons, _MISSING_SPATIAL_HINT_REASON)
-            return LineupMatchOutcome(
-                match_lineup_id=None,
-                resolved_cap_number=None,
-                cap_confidence=None,
-                candidate_lineup_ids=self._fallback_candidates(
-                    candidate, team_lineup, max_candidates, context.profile
-                ),
-                needs_review=True,
-                review_reasons=review_reasons,
+            return self._no_cap_outcome(
+                candidate,
+                context,
+                review_reasons,
+                missing_spatial_hint,
+                max_candidates,
+                pass2_failure_reason,
             )
 
         ranked_candidates = self._build_ranked_candidates(
@@ -116,11 +112,7 @@ class LineupMatcher:
             return _needs_review_outcome(cap_result.confidence, ranked_candidates, review_reasons)
 
         # Strict non-guessing threshold guard
-        if (
-            resolved_num is None
-            or len(matching_entries) == 0
-            or cap_result.confidence < min_cap_confidence
-        ):
+        if not matching_entries or cap_result.confidence < min_cap_confidence:
             _add_reason(review_reasons, "LOW_CAP_CONFIDENCE")
             return _needs_review_outcome(cap_result.confidence, ranked_candidates, review_reasons)
 
@@ -131,12 +123,53 @@ class LineupMatcher:
             )
 
         chosen = matching_entries[0]
+        if self._is_goalkeeper_event_on_field_player(candidate, chosen, context.profile):
+            _add_reason(review_reasons, _GOALKEEPER_EVENT_NON_GOALKEEPER_REASON)
+            return _needs_review_outcome(
+                round(cap_result.confidence, 4), ranked_candidates, review_reasons
+            )
+
         return LineupMatchOutcome(
             match_lineup_id=chosen.id,
             resolved_cap_number=chosen.number,
             cap_confidence=round(cap_result.confidence, 4),
             candidate_lineup_ids=ranked_candidates,
             needs_review=candidate.needs_review or len(review_reasons) > 0,
+            review_reasons=review_reasons,
+        )
+
+    @staticmethod
+    def _is_goalkeeper_event_on_field_player(
+        candidate: Pass1EventCandidate,
+        chosen: LineupEntry,
+        profile: SportProfile,
+    ) -> bool:
+        """Return True when a goalkeeper-only event would be confirmed on a field player."""
+        return profile.is_goalkeeper_event(candidate.definition) and not profile.is_goalkeeper(
+            chosen
+        )
+
+    def _no_cap_outcome(
+        self,
+        candidate: Pass1EventCandidate,
+        context: AnalysisContext,
+        review_reasons: list[str],
+        missing_spatial_hint: bool,
+        max_candidates: int,
+        pass2_failure_reason: str | None,
+    ) -> LineupMatchOutcome:
+        """Build the unresolved outcome used when Pass 2 produced no cap reading."""
+        _add_reason(review_reasons, pass2_failure_reason or "NO_PLAYER_TRACKLET_MATCHED")
+        if missing_spatial_hint:
+            _add_reason(review_reasons, _MISSING_SPATIAL_HINT_REASON)
+        return LineupMatchOutcome(
+            match_lineup_id=None,
+            resolved_cap_number=None,
+            cap_confidence=None,
+            candidate_lineup_ids=self._fallback_candidates(
+                candidate, list(context.lineup), max_candidates, context.profile
+            ),
+            needs_review=True,
             review_reasons=review_reasons,
         )
 

@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import ValidationError
 
@@ -14,7 +14,7 @@ from video_analyzer.config import DEFAULT_GEMINI_MODEL
 from video_analyzer.gemini.request_config import build_generate_content_config
 from video_analyzer.gemini.resilience import GeminiResilience, GeminiResilienceError
 from video_analyzer.media.ffmpeg_client import VideoChunk
-from video_analyzer.pass1.models import Pass1ChunkResult
+from video_analyzer.pass1.models import ActingTeam, AttackDirection, Pass1ChunkResult
 from video_analyzer.pass1.prompt_builder import Pass1PromptBuilder
 from video_analyzer.schemas.draft import GeminiTokenUsage, TimeAnchorType
 from video_analyzer.sport.context import AnalysisContext
@@ -46,6 +46,10 @@ def _build_pass1_response_schema(types_module: Any) -> Any:
                 type=types_module.Type.STRING,
                 nullable=True,
             ),
+            "acting_team": types_module.Schema(
+                type=types_module.Type.STRING,
+                enum=list(get_args(ActingTeam)),
+            ),
             "confidence": types_module.Schema(type=types_module.Type.NUMBER),
             "evidence": types_module.Schema(
                 type=types_module.Type.STRING,
@@ -74,6 +78,10 @@ def _build_pass1_response_schema(types_module: Any) -> Any:
     return types_module.Schema(
         type=types_module.Type.OBJECT,
         properties={
+            "tracked_attack_direction": types_module.Schema(
+                type=types_module.Type.STRING,
+                enum=list(get_args(AttackDirection)),
+            ),
             "period_events": types_module.Schema(
                 type=types_module.Type.ARRAY,
                 items=event_schema,

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 
 from video_analyzer.media.ffmpeg_client import VideoChunk
 from video_analyzer.sport.context import AnalysisContext
 from video_analyzer.sport.events import EventDefinition
+from video_analyzer.sport.profile import PromptRuleBlock
 
 
 def _format_definition_line(definition: EventDefinition) -> str:
@@ -19,6 +21,28 @@ def _format_definition_line(definition: EventDefinition) -> str:
         f"| isShot={str(definition.is_shot).lower()} | score={definition.score} "
         f"| foulImpact={definition.foul_impact}{penalty}"
     )
+
+
+def _polarity_example(catalog: Sequence[EventDefinition]) -> str:
+    """Build an example pair of same-name definitions with opposite polarity (or empty text)."""
+    by_name: dict[str, dict[bool, EventDefinition]] = {}
+    for definition in catalog:
+        by_name.setdefault(definition.name.strip().casefold(), {}).setdefault(
+            definition.is_positive, definition
+        )
+    for variants in by_name.values():
+        if True in variants and False in variants:
+            positive, negative = variants[True], variants[False]
+            return (
+                f" (for example `{positive.prompt_code}` ({positive.name}, POSITIVE) vs "
+                f"`{negative.prompt_code}` ({negative.name}, NEGATIVE))"
+            )
+    return ""
+
+
+def _format_rule_blocks(blocks: Sequence[PromptRuleBlock]) -> str:
+    sections = [block.format() for block in blocks]
+    return "\n\n".join(sections) + "\n\n" if sections else ""
 
 
 class Pass1PromptBuilder:
@@ -59,21 +83,27 @@ class Pass1PromptBuilder:
             f"(cap color hint: {tracked_caps})\n"
             f"- Opponent Team ({context.opponent_side}): {opponent.name} "
             f"(cap color hint: {opponent_caps})\n"
-            f"- Chunk Timeline Window: {chunk.start_sec:.2f}s to {chunk.end_sec:.2f}s "
-            f"(duration {chunk_duration_str}s)\n\n"
+            f"- Clip duration: {chunk_duration_str}s\n\n"
             "### Critical Rules\n"
-            "1. ALWAYS return `time_sec` relative to the START of THIS chunk (0.0 to "
-            f"{chunk_duration_str}).\n"
+            "1. ALWAYS return `time_sec` in seconds relative to the START of THIS clip "
+            f"(0.0 is the first frame, valid range 0.0 to {chunk_duration_str}). NEVER use "
+            "the time in the full match video.\n"
             "2. ALWAYS identify actions using the exact `promptCode` from the catalog below. "
-            "NEVER invent codes or confuse positive vs negative definitions with the same name "
-            "(for example, positive Goal vs negative Goal Conceded).\n"
+            "NEVER invent codes or confuse positive vs negative definitions with the same name"
+            f"{_polarity_example(context.event_catalog)}.\n"
             f"3. Use BOTH visual action AND audio cues {text.audio_cues} to pinpoint "
             "timestamps.\n"
-            "4. For `actor_bbox_normalized`, provide `[x1, y1, x2, y2]` in `[0.0, 1.0]` around "
-            "the acting player of the tracked team when visible; otherwise null.\n"
+            "4. `actor_bbox_normalized` is REQUIRED for every event whenever the acting "
+            "player is visible in the frame at the event moment: provide `[x1, y1, x2, y2]` as "
+            "fractions of the frame width/height in `[0.0, 1.0]` (not pixels, not 0-1000) with "
+            "x1 < x2 and y1 < y2, around the acting player. Use null only when the actor is "
+            "truly not visible.\n"
             f"5. Detect `time_anchors` using types `PeriodStart` ({text.period_start_cue}), "
             f"`PeriodEnd` ({text.period_end_cue}), `StoppageStart` ({text.stoppage_start_cue}), "
-            f"and `StoppageEnd` ({text.stoppage_end_cue}).\n\n"
+            f"and `StoppageEnd` ({text.stoppage_end_cue}).\n"
+            "6. Set `acting_team` for every event to `tracked`, `opponent` or `unknown`, and "
+            "`tracked_attack_direction` once per clip (`left`, `right` or `unknown`).\n\n"
+            f"{_format_rule_blocks(context.profile.pass1_rules)}"
             "### Event Definition Catalog (`promptCode`)\n"
             f"{definitions_block}\n"
         )

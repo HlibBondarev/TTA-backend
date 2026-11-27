@@ -71,13 +71,15 @@ class Settings(BaseSettings):
 
     # Gemini API
     gemini_api_key: str = Field(default="")
-    # Three model slots. The verifier slot is reserved for the Pass 1 verifier clip (#158).
+    # Three model slots. The verifier slot judges short clips cut around Pass 1 candidates.
     gemini_pass1_model: str = Field(default=DEFAULT_GEMINI_MODEL)
     gemini_verifier_model: str = Field(default=DEFAULT_GEMINI_MODEL)
     gemini_pass2_model: str = Field(default=DEFAULT_GEMINI_PASS2_MODEL)
-    # Per-slot thinking level; unset (None) omits thinking_config from the request entirely.
+    # Per-slot thinking level; unset (None) omits thinking_config from the request entirely,
+    # which lets the model think with its (large) default budget. The verifier judges many short
+    # clips per job, so it is capped at LOW by default (unset it explicitly to opt out).
     gemini_pass1_thinking_level: ThinkingLevelName | None = Field(default="LOW")
-    gemini_verifier_thinking_level: ThinkingLevelName | None = Field(default=None)
+    gemini_verifier_thinking_level: ThinkingLevelName | None = Field(default="LOW")
     gemini_pass2_thinking_level: ThinkingLevelName | None = Field(default=None)
     gemini_request_timeout_sec: float = Field(default=180.0, gt=0)
     gemini_model_pricing_usd_per_1m: dict[str, dict[str, float]] | str = Field(
@@ -91,6 +93,14 @@ class Settings(BaseSettings):
     gemini_retry_base_sec: float = Field(default=2.0, gt=0)
     gemini_max_calls_per_job: int | None = Field(default=120, ge=1)
     gemini_max_estimated_cost_usd: float | None = Field(default=3.0, ge=0.0)
+
+    # Clip-based Pass 1 verifier: re-checks every candidate on a short 4 fps clip before Pass 2.
+    verifier_enabled: bool = Field(default=True)
+    # Upper bound on candidates (events + anchors) sent to the verifier; the rest stay UNVERIFIED.
+    verifier_max_candidates: int = Field(default=80, ge=1, le=1000)
+    # Clips per Gemini call (3-5 keeps each request small while amortizing the prompt).
+    verifier_batch_size: int = Field(default=4, ge=3, le=5)
+    verifier_max_concurrency: int = Field(default=2, ge=1, le=16)
 
     # Pipeline parallelism
     pass1_max_concurrency: int = Field(default=3, ge=1, le=16)

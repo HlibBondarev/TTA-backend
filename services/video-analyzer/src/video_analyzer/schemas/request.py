@@ -164,7 +164,9 @@ class AnalysisOptions(CamelCaseModel):
     pass1_chunk_duration_sec: int = Field(default=120, ge=15, le=600)
     pass1_overlap_sec: int = Field(default=15, ge=0, le=120)
     pass1_target_height: int = Field(default=720, ge=240, le=1080)
-    pass1_fps: float = Field(default=2.0, gt=0.0, le=15.0)
+    # Mezzanine frame rate. Verification clips are cut from the mezzanine, so it keeps 4 real fps
+    # while Gemini's own sampling (and therefore Pass 1 token cost) is unaffected.
+    mezzanine_fps: float = Field(default=4.0, gt=0.0, le=15.0)
     pass2_window_half_sec: float = Field(default=2.5, ge=1.0, le=15.0)
     pass2_sample_fps: float = Field(default=4.0, gt=0.0, le=30.0)
     pass2_max_crops_per_track: int = Field(default=6, ge=1, le=12)

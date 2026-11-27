@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
 
 from video_analyzer.schemas.draft import GeminiTokenUsage, TimeAnchorType
 from video_analyzer.sport.events import EventDefinition
+
+ActingTeam = Literal["tracked", "opponent", "unknown"]
+AttackDirection = Literal["left", "right", "unknown"]
+ACTING_TEAM_TRACKED: ActingTeam = "tracked"
+ACTING_TEAM_OPPONENT: ActingTeam = "opponent"
+ACTING_TEAM_UNKNOWN: ActingTeam = "unknown"
+ATTACK_DIRECTION_UNKNOWN: AttackDirection = "unknown"
 
 
 class Pass1RawEvent(BaseModel):
@@ -44,6 +51,10 @@ class Pass1RawEvent(BaseModel):
         default=None,
         description="Observed cap color of the acting player (e.g., white, blue, red).",
     )
+    acting_team: ActingTeam = Field(
+        default=ACTING_TEAM_UNKNOWN,
+        description="Team of the acting player: tracked, opponent or unknown (internal field).",
+    )
     confidence: float = Field(ge=0.0, le=1.0)
     evidence: str | None = Field(
         default=None,
@@ -72,6 +83,10 @@ class Pass1RawAnchor(BaseModel):
 class Pass1ChunkResult(BaseModel):
     """Structured JSON response expected from Gemini for each chunk."""
 
+    tracked_attack_direction: AttackDirection = Field(
+        default=ATTACK_DIRECTION_UNKNOWN,
+        description="Goal side (left/right) the tracked team attacks at chunk start (internal).",
+    )
     period_events: list[Pass1RawEvent] = Field(default_factory=list)
     time_anchors: list[Pass1RawAnchor] = Field(default_factory=list)
     token_usage: Annotated[GeminiTokenUsage | None, SkipJsonSchema()] = Field(
@@ -95,6 +110,9 @@ class Pass1EventCandidate:
     evidence: str | None = None
     needs_review: bool = False
     review_reasons: list[str] = field(default_factory=list)
+    acting_team: ActingTeam = ACTING_TEAM_UNKNOWN
+    # Goal side the tracked team attacks, as reported for the chunk the event came from.
+    tracked_attack_direction: AttackDirection = ATTACK_DIRECTION_UNKNOWN
 
 
 @dataclass(slots=True)
@@ -107,3 +125,16 @@ class Pass1AnchorCandidate:
     confidence: float
     needs_review: bool = False
     evidence: str | None = None
+    # True only after the clip verifier explicitly confirmed this anchor (keep verdict).
+    verified: bool = False
+
+
+@dataclass(slots=True)
+class LabelConflictGroup:
+    """Candidates from different chunks that overlap in time but carry different labels.
+
+    The deduplicator never merges such candidates (they have different event definitions), so
+    the verifier receives the group to settle which label is correct.
+    """
+
+    candidates: list[Pass1EventCandidate]
