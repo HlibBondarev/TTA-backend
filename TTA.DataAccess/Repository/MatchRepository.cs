@@ -106,11 +106,11 @@ public class MatchRepository(IDbConnectionFactory connectionFactory)
         CancellationToken cancellationToken = default)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("MatchId", matchId);
-        parameters.Add("SportId", sportId);
-        parameters.Add("UserId", userId);
-        parameters.Add("ConfigurationId", configurationId);
-        parameters.Add("IsGuestTeam", isGuestTeam);
+        parameters.Add(SqlParameters.MatchId, matchId);
+        parameters.Add(SqlParameters.SportId, sportId);
+        parameters.Add(SqlParameters.UserId, userId);
+        parameters.Add(SqlParameters.ConfigurationId, configurationId);
+        parameters.Add(SqlParameters.IsGuestTeam, isGuestTeam);
 
         using var connection = await OpenConnectionAsync(cancellationToken);
         return await connection.QueryFirstOrDefaultAsync<Match>(new CommandDefinition(

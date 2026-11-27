@@ -945,14 +945,19 @@ $$ LANGUAGE plpgsql;
 
 /***************************************************************************************************
  * Function: public.create_quick_match
- * Description: Provisions JIT teams, tournament container (marked with isjit = TRUE), player rosters 
- *              (capped by rosterlimit for both Home and Guest teams), AND creates the match entity 
- *              using client-generated p_match_id.
- *              Executes JIT garbage collection for previous empty orphan matches owned by p_user_id.
- *              Ensures base geography and default club exist JIT to guarantee idempotency.
- *              Requires an authenticated user identifier (p_user_id) to set as fallback owner.
- *              Assigns Global FullControl Admin as tournament owner if available.
- *              Enforces mandatory p_configuration_id and p_is_guest_team flag for atomic tracking.
+ * Description: Sport-agnostic Quick Match creation. Does NOT provision any teams, tournaments,
+ *              positions or rosters. It relies on the seeded Quick Match sandbox
+ *              (see section 6 of 03-Infrastructure-and-Seed.sql) for (p_sport_id, p_configuration_id):
+ *                - a JIT tournament (isjit = TRUE) bound to the sport configuration,
+ *                - the 'Home Squad' and 'Opponent Squad' teams, each with a non-empty roster in that tournament.
+ *              Steps: validates input parameters, executes JIT garbage collection for previous empty
+ *              orphan matches owned by p_user_id, verifies the configuration belongs to the sport,
+ *              resolves the seeded sandbox, inserts the match using the client-generated p_match_id
+ *              and tracks it for the user (Home or Guest team based on p_is_guest_team).
+ *              Raises:
+ *                - 22004: match, user or configuration identifier is missing.
+ *                - P0005: configuration was not found or does not belong to the sport.
+ *                - P0006: the Quick Match sandbox is not provisioned for the sport and configuration.
  *              Returns full match entity record matching public.matches structure.
  ***************************************************************************************************/
 CREATE OR REPLACE FUNCTION public.create_quick_match(
@@ -967,19 +972,11 @@ LANGUAGE plpgsql
 AS $$
 #variable_conflict use_column
 DECLARE
-    v_club_id UUID := '11111111-1111-1111-1111-000000000001';
-    v_city_id UUID := 'c0000000-0000-0000-0000-000000000005';
-    v_owner_id VARCHAR(64);
-    v_country_id INT;
-    v_region_id INT;
-    v_effective_config_id UUID;
     v_home_team_id UUID;
     v_guest_team_id UUID;
     v_tournament_id UUID;
     v_match_id UUID := p_match_id;
     v_now TIMESTAMP WITH TIME ZONE := CURRENT_TIMESTAMP;
-    v_position_id UUID;
-    v_roster_limit INT;
 BEGIN
     -- Validation: Ensure match ID, user ID, and configuration ID are provided
     IF p_match_id IS NULL OR p_match_id = '00000000-0000-0000-0000-000000000000'::uuid THEN
@@ -1023,150 +1020,52 @@ BEGIN
           AND other_utm.userid <> p_user_id
     );
 
-    -- 0. Resolve tournament owner: 
-    -- Search for Global FullControl (Admin) policy (targettype = 0 AND role = 0)
-    SELECT userid INTO v_owner_id
-    FROM auth.accesspolicies
-    WHERE targettype = 0 AND role = 0 AND (expiresat IS NULL OR expiresat > CURRENT_TIMESTAMP)
-    ORDER BY createdat ASC
-    LIMIT 1;
-
-    -- Fallback to caller p_user_id if no Global Admin exists
-    IF v_owner_id IS NULL THEN
-        v_owner_id := p_user_id;
-    END IF;
-
-    -- 1. Ensure JIT base infrastructure (Geography, Base Club) exists if missing
-    INSERT INTO public.countries (name, code)
-    SELECT 'country', 'CTR' WHERE NOT EXISTS (SELECT 1 FROM public.countries c WHERE c.name = 'country');
-    
-    SELECT c.id INTO v_country_id FROM public.countries c WHERE c.name = 'country' LIMIT 1;
-
-    INSERT INTO public.regions (countryid, name)
-    SELECT v_country_id, 'region' WHERE NOT EXISTS (SELECT 1 FROM public.regions r WHERE r.name = 'region' AND r.countryid = v_country_id);
-    
-    SELECT r.id INTO v_region_id FROM public.regions r WHERE r.name = 'region' AND r.countryid = v_country_id LIMIT 1;
-
-    INSERT INTO public.cities (id, regionid, name)
-    VALUES (v_city_id, v_region_id, 'city')
-    ON CONFLICT (regionid, name) DO NOTHING;
-
-    INSERT INTO public.clubs (id, cityid, name, createdat)
-    VALUES (v_club_id, v_city_id, 'TTA Training Club', v_now)
-    ON CONFLICT DO NOTHING;
-
-    -- 2. Determine effective configuration ID
-    v_effective_config_id := p_configuration_id;
-
-    -- Validate that configuration exists AND belongs to the specified sport, retrieve rosterlimit
-    SELECT sc.rosterlimit INTO v_roster_limit
-    FROM public.sportconfigurations sc 
-    WHERE sc.id = v_effective_config_id AND sc.sportid = p_sport_id;
-
-    IF v_roster_limit IS NULL THEN
-        RAISE EXCEPTION 'Configuration % was not found or does not belong to sport %.', v_effective_config_id, p_sport_id
+    -- Validate that configuration exists AND belongs to the specified sport
+    IF NOT EXISTS (
+        SELECT 1 FROM public.sportconfigurations sc
+        WHERE sc.id = p_configuration_id AND sc.sportid = p_sport_id
+    ) THEN
+        RAISE EXCEPTION 'Configuration % was not found or does not belong to sport %.', p_configuration_id, p_sport_id
             USING ERRCODE = 'P0005';
     END IF;
 
-    -- Concurrency Protection: Acquire transactional advisory lock scoped to sport and configuration
-    PERFORM pg_advisory_xact_lock(hashtext(p_sport_id::text), hashtext(v_effective_config_id::text));
-
-    -- 3. Ensure Home Squad team exists for the given sportId (with gender = 0)
-    SELECT t.id INTO v_home_team_id
-    FROM public.teams t
-    WHERE t.clubid = v_club_id AND t.sportid = p_sport_id AND t.name = 'Home Squad'
-    LIMIT 1;
-
-    IF v_home_team_id IS NULL THEN
-        v_home_team_id := gen_random_uuid();
-        INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat)
-        VALUES (v_home_team_id, v_club_id, p_sport_id, 'Home Squad', 0, v_now);
-    END IF;
-
-    -- 4. Ensure Opponent Squad team exists for the given sportId (with gender = 0)
-    SELECT t.id INTO v_guest_team_id
-    FROM public.teams t
-    WHERE t.clubid = v_club_id AND t.sportid = p_sport_id AND t.name = 'Opponent Squad'
-    LIMIT 1;
-
-    IF v_guest_team_id IS NULL THEN
-        v_guest_team_id := gen_random_uuid();
-        INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat)
-        VALUES (v_guest_team_id, v_club_id, p_sport_id, 'Opponent Squad', 0, v_now);
-    END IF;
-
-    -- 5. Ensure Training Tournament exists for the effective configurationId
+    -- Resolve the seeded JIT sandbox tournament for the sport configuration
     SELECT t.id INTO v_tournament_id
     FROM public.tournaments t
-    WHERE t.configurationid = v_effective_config_id AND t.isjit = TRUE
-    ORDER BY t.createdat ASC
+    WHERE t.sportid = p_sport_id AND t.configurationid = p_configuration_id AND t.isjit = TRUE
+    ORDER BY t.createdat ASC, t.id ASC
     LIMIT 1;
 
-    IF v_tournament_id IS NULL THEN
-        v_tournament_id := gen_random_uuid();
-        INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, isjit, startdate, createdat)
-        VALUES (v_tournament_id, p_sport_id, v_effective_config_id, v_city_id, v_owner_id, 'Training & Friendly Matches', TRUE, CURRENT_DATE, v_now);
-    END IF;
-
-    -- 6. Get or create a default position definition for this sport
-    SELECT ppd.id INTO v_position_id
-    FROM public.playerpositiondefinitions ppd
-    WHERE ppd.sportid = p_sport_id
+    -- Resolve the seeded Home Squad among teams that have a roster in the sandbox tournament
+    SELECT tm.id INTO v_home_team_id
+    FROM public.teams tm
+    WHERE tm.sportid = p_sport_id
+      AND tm.name = 'Home Squad'
+      AND EXISTS (
+          SELECT 1 FROM public.playerrosters pr
+          WHERE pr.tournamentid = v_tournament_id AND pr.teamid = tm.id
+      )
+    ORDER BY tm.createdat ASC, tm.id ASC
     LIMIT 1;
 
-    IF v_position_id IS NULL THEN
-        v_position_id := gen_random_uuid();
-        INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname)
-        VALUES (v_position_id, p_sport_id, 'Universal', 'UNI');
+    -- Resolve the seeded Opponent Squad among teams that have a roster in the sandbox tournament
+    SELECT tm.id INTO v_guest_team_id
+    FROM public.teams tm
+    WHERE tm.sportid = p_sport_id
+      AND tm.name = 'Opponent Squad'
+      AND EXISTS (
+          SELECT 1 FROM public.playerrosters pr
+          WHERE pr.tournamentid = v_tournament_id AND pr.teamid = tm.id
+      )
+    ORDER BY tm.createdat ASC, tm.id ASC
+    LIMIT 1;
+
+    IF v_tournament_id IS NULL OR v_home_team_id IS NULL OR v_guest_team_id IS NULL THEN
+        RAISE EXCEPTION 'Quick match sandbox is not provisioned for sport % and configuration %.', p_sport_id, p_configuration_id
+            USING ERRCODE = 'P0006';
     END IF;
-    
-    -- 7. Bulk-register up to rosterlimit players for HOME SQUAD
-    WITH ranked_players AS (
-        SELECT 
-            p.id AS player_id,
-            ROW_NUMBER() OVER (ORDER BY p.lastname::NUMERIC, p.id) AS rn
-        FROM public.players p
-        WHERE p.homeclubid = v_club_id 
-          AND p.firstname = 'Home Player'
-          AND p.lastname ~ '^[0-9]+$'
-    )
-    INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, number, positionid, createdat)
-    SELECT 
-        gen_random_uuid(),
-        v_tournament_id,
-        v_home_team_id,
-        rp.player_id,
-        rp.rn::INT,
-        v_position_id,
-        v_now
-    FROM ranked_players rp
-    WHERE rp.rn <= v_roster_limit
-    ON CONFLICT (tournamentid, playerid) DO NOTHING;
 
-    -- 8. Bulk-register up to rosterlimit players for OPPONENT (GUEST) SQUAD
-    WITH ranked_players AS (
-        SELECT 
-            p.id AS player_id,
-            ROW_NUMBER() OVER (ORDER BY p.lastname::NUMERIC, p.id) AS rn
-        FROM public.players p
-        WHERE p.homeclubid = v_club_id 
-          AND p.firstname = 'Guest Player'
-          AND p.lastname ~ '^[0-9]+$'
-    )
-    INSERT INTO public.playerrosters (id, tournamentid, teamid, playerid, number, positionid, createdat)
-    SELECT 
-        gen_random_uuid(),
-        v_tournament_id,
-        v_guest_team_id,
-        rp.player_id,
-        rp.rn::INT,
-        v_position_id,
-        v_now
-    FROM ranked_players rp
-    WHERE rp.rn <= v_roster_limit
-    ON CONFLICT (tournamentid, playerid) DO NOTHING;
-
-    -- 9. Insert Match entity directly using supplied match ID
+    -- Insert Match entity directly using supplied match ID
     INSERT INTO public.matches (
         id,
         tournamentid,
@@ -1184,7 +1083,7 @@ BEGIN
         v_now
     );
 
-    -- 10. Automatically track match for the user based on p_is_guest_team
+    -- Automatically track match for the user based on p_is_guest_team
     INSERT INTO public.usertrackedmatches (userid, matchid, teamid)
     VALUES (
         p_user_id,
@@ -1193,7 +1092,7 @@ BEGIN
     )
     ON CONFLICT (userid, matchid, teamid) DO NOTHING;
 
-    -- 11. Return full created match entity matching public.matches
+    -- Return full created match entity matching public.matches
     RETURN QUERY
     SELECT m.*
     FROM public.matches m

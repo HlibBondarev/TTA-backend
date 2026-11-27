@@ -276,3 +276,61 @@ BEGIN
 
     RAISE NOTICE 'Seed for 100 Home and 100 Guest static players in TTA Training Club completed successfully.';
 END $$;
+
+-- ======================================================
+-- 6. QUICK MATCH SANDBOXES (Per Sport)
+-- ======================================================
+-- Static sandbox consumed by public.create_quick_match: it only verifies and references these rows.
+-- Per sport: two shared teams (Home Squad / Opponent Squad) and one JIT tournament per sport configuration,
+-- with a full roster for each team built from the static club players of section 5.
+
+DO $$
+DECLARE
+    v_club_id uuid := '11111111-1111-1111-1111-000000000001';
+    v_city_id uuid := 'c0000000-0000-0000-0000-000000000005';
+    v_owner_id varchar := 'auth0|69cf7ec5eff8f1358a0b9ae0';
+
+    -- Waterpolo
+    wp_sport_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f5f';
+    wp_config_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f70';
+    wp_config_alt_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f71';
+    wp_goalkeeper_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f61';
+    wp_utility_id uuid := '6f2e8f1a-7b3c-4d5e-8f9a-0b1c2d3e4f66';
+    wp_home_team_id uuid := '22222222-2222-2222-1111-000000000001';
+    wp_guest_team_id uuid := '22222222-2222-2222-2222-000000000001';
+    wp_tournament_id uuid := '33333333-3333-3333-3333-000000000070';
+    wp_tournament_alt_id uuid := '33333333-3333-3333-3333-000000000071';
+BEGIN
+    -- A. WATERPOLO TEAMS (shared by both configurations)
+    INSERT INTO public.teams (id, clubid, sportid, name, gender, createdat) VALUES
+    (wp_home_team_id, v_club_id, wp_sport_id, 'Home Squad', 0, NOW()),
+    (wp_guest_team_id, v_club_id, wp_sport_id, 'Opponent Squad', 0, NOW())
+    ON CONFLICT DO NOTHING;
+
+    -- B. WATERPOLO JIT TOURNAMENTS (one per configuration)
+    INSERT INTO public.tournaments (id, sportid, configurationid, cityid, ownerid, name, isjit, startdate, createdat) VALUES
+    (wp_tournament_id, wp_sport_id, wp_config_id, v_city_id, v_owner_id, 'Training & Friendly Matches', TRUE, NOW(), NOW()),
+    (wp_tournament_alt_id, wp_sport_id, wp_config_alt_id, v_city_id, v_owner_id, 'Training & Friendly Matches', TRUE, NOW(), NOW())
+    ON CONFLICT DO NOTHING;
+
+    -- C. WATERPOLO ROSTERS (15 per team and configuration): caps 1 and 13 are goalkeepers, all other caps are utility players
+    INSERT INTO public.playerrosters (id, playerid, tournamentid, teamid, number, positionid, createdat)
+    SELECT
+        ('55555555-5555-5555-' || r.id_prefix || '-' || LPAD(i::text, 12, '0'))::uuid,
+        (r.player_prefix || LPAD(i::text, 12, '0'))::uuid,
+        r.tournament_id,
+        r.team_id,
+        i,
+        CASE WHEN i IN (1, 13) THEN wp_goalkeeper_id ELSE wp_utility_id END,
+        NOW()
+    FROM (VALUES
+        ('7011', '44444444-4444-4444-1111-', wp_tournament_id, wp_home_team_id),
+        ('7022', '44444444-4444-4444-2222-', wp_tournament_id, wp_guest_team_id),
+        ('7111', '44444444-4444-4444-1111-', wp_tournament_alt_id, wp_home_team_id),
+        ('7122', '44444444-4444-4444-2222-', wp_tournament_alt_id, wp_guest_team_id)
+    ) AS r(id_prefix, player_prefix, tournament_id, team_id)
+    CROSS JOIN generate_series(1, 15) AS i
+    ON CONFLICT DO NOTHING;
+
+    RAISE NOTICE 'Quick Match sandbox seeding for Waterpolo completed successfully.';
+END $$;
