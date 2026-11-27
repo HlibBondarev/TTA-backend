@@ -35,6 +35,7 @@ from video_analyzer.verifier.apply import (
     mark_anchor_unverified,
     mark_event_unverified,
     prune_orphan_stoppage_ends,
+    prune_superseded_stoppage_starts,
     settle_conflict_groups,
 )
 from video_analyzer.verifier.base import BaseEventVerifier
@@ -454,8 +455,10 @@ class GeminiClipVerifier(BaseEventVerifier):
                     events.append(kept_event)
 
         events, settle_warnings = settle_conflict_groups(events, conflict_groups)
+        anchors, superseded_warnings = prune_superseded_stoppage_starts(anchors)
         anchors, orphan_warnings = prune_orphan_stoppage_ends(anchors)
         warnings.extend(settle_warnings)
+        warnings.extend(superseded_warnings)
         warnings.extend(orphan_warnings)
         if unverified:
             warnings.append(f"Verifier left {unverified} candidate(s) UNVERIFIED (failed open).")

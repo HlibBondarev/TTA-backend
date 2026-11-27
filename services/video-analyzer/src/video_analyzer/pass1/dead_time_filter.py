@@ -22,14 +22,17 @@ def _period_intervals(
 ) -> list[_Interval]:
     """Return the stoppage intervals of one period from its time-ordered stoppage anchors.
 
-    The earliest ``StoppageStart`` of an open run wins. A start left open at the end of the period
-    yields ``(start, inf)`` unless it is unverified and ``include_unverified_trailing`` is False.
+    A ``StoppageStart`` followed by another start before any ``StoppageEnd`` is unpaired (its end
+    was lost) and is superseded: the later start opens its own interval, so an unpaired start can
+    never bridge live play to pair with a later stoppage's end. A start left open at the end of
+    the period yields ``(start, inf)`` unless it is unverified and
+    ``include_unverified_trailing`` is False.
     """
     intervals: list[_Interval] = []
     open_anchor: Pass1AnchorCandidate | None = None
     for anchor in ordered:
         if anchor.type == TimeAnchorType.STOPPAGE_START:
-            open_anchor = open_anchor or anchor
+            open_anchor = anchor
         elif open_anchor is not None:
             intervals.append((open_anchor.video_time_sec, anchor.video_time_sec))
             open_anchor = None

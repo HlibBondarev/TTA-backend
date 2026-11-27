@@ -128,12 +128,20 @@ def apply_event_verdict(
 def apply_anchor_verdict(
     anchor: Pass1AnchorCandidate, verdict: VerifierVerdict
 ) -> tuple[Pass1AnchorCandidate | None, str | None]:
-    """Apply one verdict to an anchor (anchors can only be kept or dropped)."""
+    """Apply one verdict to an anchor (anchors can only be kept or dropped).
+
+    Only an explicit ``KEEP`` verdict marks the anchor as verified. ``DROP`` removes it; any other
+    verdict (for example ``RELABEL``, which anchors do not support) keeps the anchor but leaves it
+    unverified and flagged for review.
+    """
     if verdict.verdict == VerdictKind.DROP:
         return None, (
             f"Verifier dropped anchor {anchor.type.value} at {anchor.video_time_sec}s: "
             f"{verdict.reason or 'not confirmed'}."
         )
+    if verdict.verdict != VerdictKind.KEEP:
+        mark_anchor_unverified(anchor)
+        return anchor, None
     anchor.verified = True
     anchor.confidence = round(verdict.confidence, 4)
     if verdict.confidence < LOW_VERIFIER_CONFIDENCE_THRESHOLD:
@@ -170,6 +178,40 @@ def prune_orphan_stoppage_ends(
         if id(anchor) in orphans
     ]
     return [anchor for anchor in anchors if id(anchor) not in orphans], warnings
+
+
+def prune_superseded_stoppage_starts(
+    anchors: Sequence[Pass1AnchorCandidate],
+) -> tuple[list[Pass1AnchorCandidate], list[str]]:
+    """Remove ``StoppageStart`` anchors left unpaired before a later ``StoppageStart``.
+
+    Reconciliation emits alternating start/end pairs, so a start directly followed by another
+    start (same period, no end between) lost its end during verification. Keeping it would let it
+    bridge live play up to the later stoppage's end, so it is removed.
+    """
+    by_period: dict[int, list[Pass1AnchorCandidate]] = defaultdict(list)
+    for anchor in anchors:
+        if anchor.type in (TimeAnchorType.STOPPAGE_START, TimeAnchorType.STOPPAGE_END):
+            by_period[anchor.period_number].append(anchor)
+
+    superseded: set[int] = set()
+    for period_anchors in by_period.values():
+        previous_start: Pass1AnchorCandidate | None = None
+        for anchor in sorted(period_anchors, key=lambda a: (a.video_time_sec, a.type.value)):
+            if anchor.type == TimeAnchorType.STOPPAGE_START:
+                if previous_start is not None:
+                    superseded.add(id(previous_start))
+                previous_start = anchor
+            else:
+                previous_start = None
+
+    warnings = [
+        f"Removed unpaired StoppageStart at {anchor.video_time_sec}s (period "
+        f"{anchor.period_number}) superseded by a later start after verification."
+        for anchor in anchors
+        if id(anchor) in superseded
+    ]
+    return [anchor for anchor in anchors if id(anchor) not in superseded], warnings
 
 
 def settle_conflict_groups(

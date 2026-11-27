@@ -35,6 +35,7 @@ from video_analyzer.verifier.apply import (
     apply_event_verdict,
     mark_anchor_unverified,
     prune_orphan_stoppage_ends,
+    prune_superseded_stoppage_starts,
     settle_conflict_groups,
 )
 
@@ -769,3 +770,69 @@ def test_verifier_confirms_a_trailing_stoppage_only_through_a_keep_verdict(
     result = _run(verifier, sample_context, [], anchors, tmp_path=tmp_path)
 
     assert result.anchors[0].verified is True
+
+
+def test_non_keep_and_non_drop_anchor_verdict_keeps_the_anchor_unverified() -> None:
+    anchor = _anchor(10.0, TimeAnchorType.STOPPAGE_START)
+    anchor.verified = True  # even a stale flag must not survive a non-KEEP verdict
+    verdict = VerifierVerdict.model_validate(
+        _verdict(1, verdict="relabel", relabel_prompt_code="EVT_X")
+    )
+
+    kept, warning = apply_anchor_verdict(anchor, verdict)
+
+    assert kept is anchor
+    assert warning is None
+    assert anchor.verified is False
+    assert anchor.needs_review is True
+
+
+def test_prune_superseded_stoppage_starts_removes_only_the_unpaired_start() -> None:
+    start1 = _anchor(10.0, TimeAnchorType.STOPPAGE_START)
+    start2 = _anchor(50.0, TimeAnchorType.STOPPAGE_START)
+    end2 = _anchor(60.0, TimeAnchorType.STOPPAGE_END)
+    start3 = _anchor(80.0, TimeAnchorType.STOPPAGE_START)
+
+    kept, warnings = prune_superseded_stoppage_starts([start1, start2, end2, start3])
+
+    assert kept == [start2, end2, start3]
+    assert len(warnings) == 1
+    assert "10.0s" in warnings[0]
+
+
+def test_prune_superseded_stoppage_starts_keeps_well_formed_pairs() -> None:
+    anchors = [
+        _anchor(10.0, TimeAnchorType.STOPPAGE_START),
+        _anchor(20.0, TimeAnchorType.STOPPAGE_END),
+        _anchor(30.0, TimeAnchorType.STOPPAGE_START),
+        _anchor(40.0, TimeAnchorType.STOPPAGE_END),
+    ]
+
+    kept, warnings = prune_superseded_stoppage_starts(anchors)
+
+    assert kept == anchors
+    assert warnings == []
+
+
+def test_dropped_stoppage_end_does_not_leave_a_start_bridging_to_the_next_stoppage(
+    sample_context: AnalysisContext, tmp_path: Path
+) -> None:
+    def responder(ids, contents):
+        # Items follow the input order: 1=Start1, 2=End1 (dropped), 3=Start2, 4=End2.
+        return [_verdict(i, verdict="drop" if i == 2 else "keep") for i in ids]
+
+    verifier, _, _ = _verifier(responder)
+    anchors = [
+        _anchor(10.0, TimeAnchorType.STOPPAGE_START),
+        _anchor(20.0, TimeAnchorType.STOPPAGE_END),
+        _anchor(50.0, TimeAnchorType.STOPPAGE_START),
+        _anchor(60.0, TimeAnchorType.STOPPAGE_END),
+    ]
+
+    result = _run(verifier, sample_context, [], anchors, tmp_path=tmp_path)
+
+    assert [(a.type, a.video_time_sec) for a in result.anchors] == [
+        (TimeAnchorType.STOPPAGE_START, 50.0),
+        (TimeAnchorType.STOPPAGE_END, 60.0),
+    ]
+    assert any("superseded by a later start" in w for w in result.warnings)

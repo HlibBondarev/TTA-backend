@@ -163,14 +163,42 @@ def test_build_stoppage_intervals_can_exclude_unverified_trailing_starts() -> No
     assert verified_trailing[1] == [(10.0, 20.0), (40.0, float("inf"))]
 
 
-def test_build_stoppage_intervals_keeps_the_earliest_start_of_an_open_run() -> None:
+def test_a_later_start_supersedes_an_unpaired_start_instead_of_bridging_live_play() -> None:
     anchors = [
-        _anchor(10.0, TimeAnchorType.STOPPAGE_START),
-        _anchor(15.0, TimeAnchorType.STOPPAGE_START),
-        _anchor(30.0, TimeAnchorType.STOPPAGE_END),
+        _anchor(10.0, TimeAnchorType.STOPPAGE_START),  # its end was dropped by the verifier
+        _anchor(50.0, TimeAnchorType.STOPPAGE_START),
+        _anchor(60.0, TimeAnchorType.STOPPAGE_END),
     ]
 
-    assert build_stoppage_intervals(anchors)[1] == [(10.0, 30.0)]
+    assert build_stoppage_intervals(anchors)[1] == [(50.0, 60.0)]
+
+
+def test_start_with_dropped_end_does_not_wipe_live_play_before_the_next_stoppage(
+    sample_context: AnalysisContext,
+) -> None:
+    anchors = [
+        _anchor(10.0, TimeAnchorType.STOPPAGE_START, verified=True),
+        _anchor(50.0, TimeAnchorType.STOPPAGE_START, verified=True),
+        _anchor(60.0, TimeAnchorType.STOPPAGE_END, verified=True),
+    ]
+    live_between = _event(sample_context, CODE_STEAL, 30.0)
+    inside_second = _event(sample_context, CODE_STEAL, 55.0)
+
+    kept, warnings = filter_dead_time_events([live_between, inside_second], anchors)
+
+    assert kept == [live_between]
+    assert len(warnings) == 1
+
+
+def test_two_closed_stoppages_keep_their_own_intervals() -> None:
+    anchors = [
+        _anchor(10.0, TimeAnchorType.STOPPAGE_START),
+        _anchor(20.0, TimeAnchorType.STOPPAGE_END),
+        _anchor(50.0, TimeAnchorType.STOPPAGE_START),
+        _anchor(60.0, TimeAnchorType.STOPPAGE_END),
+    ]
+
+    assert build_stoppage_intervals(anchors)[1] == [(10.0, 20.0), (50.0, 60.0)]
 
 
 def test_stoppages_only_affect_events_of_the_same_period(
