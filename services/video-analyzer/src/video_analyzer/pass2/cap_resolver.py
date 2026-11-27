@@ -20,6 +20,9 @@ from video_analyzer.usage import extract_usage_metadata
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CROP_SUBJECT = "cropped player head/cap frames"
+DEFAULT_OCCLUSION_HINT = "blur, occlusion, or a bad viewing angle"
+
 
 def _build_cap_grid_response_schema(types_module: Any) -> Any:
     """Build a default-free Gemini schema for Pass 2 cap-grid recognition."""
@@ -121,8 +124,14 @@ class BaseCapResolver(ABC):
         selected_crops: SelectedCrops,
         allowed_cap_numbers: list[int],
         cap_color_hint: str | None = None,
+        crop_subject: str | None = None,
+        occlusion_hint: str | None = None,
     ) -> CapResolutionResult:
-        """Read cap number(s) from crops constrained to the team lineup roster."""
+        """Read cap number(s) from crops constrained to the team lineup roster.
+
+        ``crop_subject`` and ``occlusion_hint`` are sport-specific prompt wording supplied by the
+        sport profile; resolvers that do not prompt a model may ignore them.
+        """
 
 
 class GeminiCropGridCapResolver(BaseCapResolver):
@@ -154,6 +163,8 @@ class GeminiCropGridCapResolver(BaseCapResolver):
         selected_crops: SelectedCrops,
         allowed_cap_numbers: list[int],
         cap_color_hint: str | None = None,
+        crop_subject: str | None = None,
+        occlusion_hint: str | None = None,
     ) -> CapResolutionResult:
         if not self._api_key and self._client is None:
             raise RuntimeError(
@@ -164,15 +175,17 @@ class GeminiCropGridCapResolver(BaseCapResolver):
 
         client = self._get_client()
         allowed_str = ", ".join(str(n) for n in sorted(set(allowed_cap_numbers)))
+        subject = crop_subject or DEFAULT_CROP_SUBJECT
+        obstruction = occlusion_hint or DEFAULT_OCCLUSION_HINT
         color_line = f"Expected tracked team cap color: {cap_color_hint}." if cap_color_hint else ""
         prompt = (
-            "You are inspecting a contact sheet of cropped Water Polo player head/cap frames "
+            f"You are inspecting a contact sheet of {subject} "
             "from the SAME player tracklet (#1..#N).\n"
             f"Valid cap numbers on the team lineup roster: [{allowed_str}].\n"
             f"{color_line}\n"
             "Rules:\n"
             "1. Inspect each numbered tile carefully and read any clearly visible cap digit(s).\n"
-            "2. NEVER guess if water splash, blur, or angle hides the number: set "
+            f"2. NEVER guess if {obstruction} hides the number: set "
             "`consensus_cap_number` to null and lower `confidence`.\n"
             "3. Only return numbers present in the valid lineup roster list above.\n"
             "4. Provide ranked `candidate_numbers` when partially readable."
@@ -303,6 +316,8 @@ class LocalOcrCapResolver(BaseCapResolver):
         selected_crops: SelectedCrops,
         allowed_cap_numbers: list[int],
         cap_color_hint: str | None = None,
+        crop_subject: str | None = None,
+        occlusion_hint: str | None = None,
     ) -> CapResolutionResult:
         reader = self._get_reader()
         allowed_set = set(allowed_cap_numbers)

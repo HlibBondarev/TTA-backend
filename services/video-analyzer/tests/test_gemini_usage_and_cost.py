@@ -89,7 +89,8 @@ def test_thinking_level_defaults_and_unset_values(monkeypatch: pytest.MonkeyPatc
 
     defaults = Settings(_env_file=None)
     assert defaults.gemini_pass1_thinking_level == "LOW"
-    assert defaults.gemini_verifier_thinking_level is None
+    # An unset level would let the verifier think with the model's large default budget.
+    assert defaults.gemini_verifier_thinking_level == "LOW"
     assert defaults.gemini_pass2_thinking_level is None
 
     monkeypatch.setenv("GEMINI_PASS1_THINKING_LEVEL", "none")
@@ -181,7 +182,11 @@ def test_estimate_call_cost_usd_is_zero_without_pricing_or_metadata() -> None:
 def test_pass1_chunk_result_json_schema_excludes_token_usage() -> None:
     schema = Pass1ChunkResult.model_json_schema()
     assert "token_usage" not in schema.get("properties", {})
-    assert set(schema.get("properties", {}).keys()) == {"period_events", "time_anchors"}
+    assert set(schema.get("properties", {}).keys()) == {
+        "tracked_attack_direction",
+        "period_events",
+        "time_anchors",
+    }
 
     chunk = Pass1ChunkResult(
         period_events=[],

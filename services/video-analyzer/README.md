@@ -5,10 +5,12 @@ Isolated Python microservice (`FastAPI` + `FFmpeg` + pluggable object detector +
 ## Architecture Overview
 
 1. **Pass 1 — Global Event & Timing Detection (Gemini VLM)**:
-   - Transcodes the source **once** into a 720p H.264 mezzanine (hardware-accelerated when available, mono 16 kHz AAC audio kept for whistles and period buzzers) with a forced keyframe interval (1-5 s) that evenly divides the chunk duration, the overlap and the chunk step. Overlapping chunks are then cut from the mezzanine with `-c copy`, so the 4K source is never re-decoded per chunk.
+   - Transcodes the source **once** into a 720p, 4 fps (`mezzanineFps`) H.264 mezzanine (hardware-accelerated when available, mono 16 kHz AAC audio kept for whistles and period buzzers) with a forced keyframe interval (1-5 s) that evenly divides the chunk duration, the overlap and the chunk step. Overlapping chunks are then cut from the mezzanine with `-c copy`, so the 4K source is never re-decoded per chunk. A trailing window shorter than half a chunk is folded into the previous window (a 240.24 s clip yields `[0, 120]` and `[105, 240.24]`) instead of adding a heavily overlapping chunk. Prompts tell the model to return times relative to the start of the clip; if a chunk nevertheless comes back on the global timeline it is normalized (with a warning) before deduplication and anchor reconciliation.
    - Analyzes chunks in parallel (`PASS1_MAX_CONCURRENCY`) and merges results by chunk index, so output order is deterministic.
    - Prompts Gemini with deterministic, Python-generated internal `promptCode` values (e.g. `EVT_01_G_POS`) mapped one-to-one to the system `eventDefinitions[].id`, so duplicate names (e.g. positive `Goal` `G` vs. negative `Goal` `GC`) never collide. `.NET` does not send `promptCode` in the snapshot input; the serialized draft output does include it (per event) for downstream consumers.
-   - Deduplicates overlap-zone detections and reconciles period/stoppage anchors (`PeriodStart`, `PeriodEnd`, paired `StoppageStart`/`StoppageEnd`).
+   - Deduplicates overlap-zone detections (dropping opponent-team events except conceded goals) and reconciles period/stoppage anchors (`PeriodStart`, `PeriodEnd`, paired `StoppageStart`/`StoppageEnd`; a trailing unpaired `StoppageStart` with no later `StoppageEnd`/`PeriodEnd` is kept and flagged for review). Cross-chunk candidates that overlap in time but disagree on the label are reported as conflict groups.
+   - Sport-specific wording and rules (goal orientation, goalkeeper cap color, label disambiguation, dead time) come from the `SportProfile`, not from the core pipeline.
+1b. **Verification — clip-based Gemini verifier** (`VERIFIER_ENABLED`): every candidate (bounded by `VERIFIER_MAX_CANDIDATES`) is re-checked on a short 4 fps clip cut from the mezzanine (`[t-3s, t+2s]` for events, `[t-2s, t+3s]` for anchors) and sent inline (`video/mp4`, `VideoMetadata(fps=4)`) in batches of `VERIFIER_BATCH_SIZE` (3-5) clips per call using `GEMINI_VERIFIER_MODEL`. The verdict is `keep`, `drop` or `relabel` (only inside the profile's confusable sets, e.g. `Shot on Goal`/`Missed Shot`, `Steal`/`Save`, `Goal` positive/negative) plus acting team, live-play flag and cap color. The stage **fails open**: when a breaker or budget limit stops it, candidates are kept with `needsReview = true` and the review reason `UNVERIFIED`. A deterministic dead-time filter then drops gameplay events inside `[StoppageStart + grace, StoppageEnd)` (goal events keep a longer post-goal grace window) before Pass 2.
 2. **Pass 2 — Targeted 4K Tracking & Cap Number Resolution**:
    - **Phase A** (`PASS2_PHASE_A_MAX_CONCURRENCY`): for every Pass 1 event, streams a narrow window (`±2.5 s` at `4 fps`, about 20 frames) through an ffmpeg `rawvideo` pipe (no temp JPEGs), runs a pluggable object detector (`roboflow`, `local_yolo`, or `onnx`) on frames downscaled to `DETECTOR_INPUT_WIDTH` (boxes are rescaled to native pixels), tracks players with `BoT-SORT` + sparse optical-flow camera motion compensation, and selects the top-K sharpest **native-resolution** cap crops. Native frames are kept only as compact in-memory JPEG copies and decoded on demand for cap crops. Per-frame `BALL` and `GOAL` detections are preserved in the tracker output. Remote detector calls share one global `DETECTOR_MAX_CONCURRENCY` semaphore across all Phase A tasks; local providers run serially.
    - **Phase B** (`PASS2_PHASE_B_MAX_CONCURRENCY`): resolves the cap number from the prepared items via Gemini Vision (`gemini_crop_grid`) or optional local OCR (`local_ocr`), constrained by `matchSnapshot.lineup`. If the Gemini circuit breaker opens, Phase A results are kept: remaining events use the local OCR fallback when `easyocr` is installed, otherwise they are marked with an explicit review reason.
@@ -50,7 +52,7 @@ Copy-Item .env.example .env
 # GEMINI_API_KEY, and ROBOFLOW_API_KEY
 ```
 
-Three Gemini model slots are configured independently: `GEMINI_PASS1_MODEL` (default `gemini-4-hydrogen`), `GEMINI_VERIFIER_MODEL` (default `gemini-4-hydrogen`, reserved for the Pass 1 verifier and unused until #158) and `GEMINI_PASS2_MODEL` (default `gemini-3.5-flash-lite`). Each completed draft includes aggregated Gemini token counters (`promptTokens`, `candidatesTokens`, `thoughtsTokens`, `cachedContentTokens`, `totalTokens`) and an estimated USD cost breakdown (`diagnostics.geminiUsage`). You can override or extend per-1M-token USD pricing estimates via `GEMINI_MODEL_PRICING_USD_PER_1M` (JSON object or path to a JSON file).
+Three Gemini model slots are configured independently: `GEMINI_PASS1_MODEL` (default `gemini-4-hydrogen`), `GEMINI_VERIFIER_MODEL` (default `gemini-4-hydrogen`, used by the clip verifier and sharing the Pass 1 model's rate limit pacer) and `GEMINI_PASS2_MODEL` (default `gemini-3.5-flash-lite`). Each completed draft includes aggregated Gemini token counters (`promptTokens`, `candidatesTokens`, `thoughtsTokens`, `cachedContentTokens`, `totalTokens`) and an estimated USD cost breakdown (`diagnostics.geminiUsage`). You can override or extend per-1M-token USD pricing estimates via `GEMINI_MODEL_PRICING_USD_PER_1M` (JSON object or path to a JSON file).
 
 ### Match Snapshot Contract
 
@@ -114,12 +116,17 @@ All values are environment variables (see `.env.example`). Defaults target a sin
 |---|---|---|
 | `GEMINI_PASS1_MODEL` / `GEMINI_VERIFIER_MODEL` / `GEMINI_PASS2_MODEL` | `gemini-4-hydrogen` / `gemini-4-hydrogen` / `gemini-3.5-flash-lite` | same |
 | `GEMINI_PASS1_THINKING_LEVEL` | `LOW` | unset if the model has no thinking field |
-| `GEMINI_VERIFIER_THINKING_LEVEL`, `GEMINI_PASS2_THINKING_LEVEL` | unset | same |
+| `GEMINI_VERIFIER_THINKING_LEVEL` | `LOW` (unset = model default budget, ~10k thought tokens per batch) | same |
+| `GEMINI_PASS2_THINKING_LEVEL` | unset | same |
 | `GEMINI_PASS1_RPM` / `GEMINI_PASS2_RPM` | `60` / `120` | `5` / `15` |
 | `GEMINI_MAX_RETRIES`, `GEMINI_RETRY_BASE_SEC` | `3`, `2.0` | same |
 | `GEMINI_MAX_CALLS_PER_JOB` | `120` | `20` |
 | `GEMINI_MAX_ESTIMATED_COST_USD` | `3.00` | `0.50` (or empty = unlimited) |
 | `PASS1_MAX_CONCURRENCY` | `3` | `1` |
+| `VERIFIER_ENABLED` | `true` | `false` to save calls |
+| `VERIFIER_MAX_CANDIDATES` (events + anchors verified per job; the rest stay `UNVERIFIED`) | `80` | `20` |
+| `VERIFIER_BATCH_SIZE` (clips per Gemini call, 3-5) | `4` | `5` |
+| `VERIFIER_MAX_CONCURRENCY` | `2` | `1` |
 | `PASS2_PHASE_A_MAX_CONCURRENCY` / `PASS2_PHASE_B_MAX_CONCURRENCY` | `4` / `4` | `1` / `1` |
 | `PASS2_BATCH_SIZE` (events per Phase A -> Phase B batch) | `48` | `48` |
 | `DETECTOR_MAX_CONCURRENCY` (global semaphore across all Phase A tasks) | `4` | `1` |

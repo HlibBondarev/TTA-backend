@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -349,12 +350,13 @@ class AnchorReconciler:
             separator_is_start=False,
         )
 
-        cross_chunk_intervals = self._pair_cross_chunk_endpoints(
+        cross_chunk_intervals, trailing_starts = self._pair_cross_chunk_endpoints(
             period_num=period_num,
             starts=deduped_starts,
             ends=deduped_ends,
             existing_intervals=resolved_intervals,
             warnings=warnings,
+            keep_trailing_start=math.isinf(upper_bound),
         )
         all_intervals = sorted(
             [*resolved_intervals, *cross_chunk_intervals],
@@ -366,6 +368,7 @@ class AnchorReconciler:
         for iv in all_intervals:
             paired.append(iv.start)
             paired.append(iv.end)
+        paired.extend(trailing_starts)
         return paired
 
     @staticmethod
@@ -575,10 +578,18 @@ class AnchorReconciler:
         ends: list[Pass1AnchorCandidate],
         existing_intervals: list[_StoppageInterval],
         warnings: list[str],
-    ) -> list[_StoppageInterval]:
+        keep_trailing_start: bool = False,
+    ) -> tuple[list[_StoppageInterval], list[Pass1AnchorCandidate]]:
+        """Pair leftover starts with later ends across chunks.
+
+        An unpaired ``StoppageStart`` with no later end is dropped, except when the period has no
+        ``PeriodEnd`` either (``keep_trailing_start``): the earliest such start is preserved and
+        flagged for review because the stoppage may legitimately run to the end of the clip.
+        """
         ordered_starts = sorted(starts, key=lambda a: a.video_time_sec)
         ordered_ends = sorted(ends, key=lambda a: a.video_time_sec)
         paired: list[_StoppageInterval] = []
+        trailing: list[Pass1AnchorCandidate] = []
         end_idx = 0
 
         for start_anchor in ordered_starts:
@@ -594,9 +605,8 @@ class AnchorReconciler:
             ):
                 end_idx += 1
             if end_idx >= len(ordered_ends):
-                warnings.append(
-                    f"Period {period_num}: dropped unpaired StoppageStart "
-                    f"at {start_anchor.video_time_sec}s."
+                AnchorReconciler._handle_trailing_start(
+                    period_num, start_anchor, trailing, warnings, keep=keep_trailing_start
                 )
                 continue
             end_anchor = ordered_ends[end_idx]
@@ -614,7 +624,30 @@ class AnchorReconciler:
             end_idx += 1
             paired.append(_StoppageInterval(start=start_anchor, end=end_anchor))
 
-        return paired
+        return paired, trailing
+
+    @staticmethod
+    def _handle_trailing_start(
+        period_num: int,
+        start_anchor: Pass1AnchorCandidate,
+        trailing: list[Pass1AnchorCandidate],
+        warnings: list[str],
+        *,
+        keep: bool,
+    ) -> None:
+        if keep and not trailing:
+            start_anchor.needs_review = True
+            trailing.append(start_anchor)
+            warnings.append(
+                f"Period {period_num}: kept trailing unpaired StoppageStart at "
+                f"{start_anchor.video_time_sec}s (no later StoppageEnd or PeriodEnd); "
+                "flagged for review."
+            )
+            return
+        warnings.append(
+            f"Period {period_num}: dropped unpaired StoppageStart "
+            f"at {start_anchor.video_time_sec}s."
+        )
 
     def _chunks_overlap_near_times(
         self,

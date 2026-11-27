@@ -50,6 +50,7 @@ class EvalDraftEvent(CamelCaseModel):
     event_definition_id: UUID
     resolved_cap_number: int | None = None
     period_number: int | None = None
+    needs_review: bool | None = None
 
 
 class EvalDraftAnchor(CamelCaseModel):

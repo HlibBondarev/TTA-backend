@@ -244,14 +244,17 @@ def test_pass1_prompt_builder_uses_full_unrounded_chunk_duration(
 
     chunk_precise = VideoChunk(index=0, start_sec=0.0, end_sec=10.126, path=tmp_path / "c0.mp4")
     prompt_precise = builder.build_chunk_prompt(sample_context, chunk_precise)
-    assert "(duration 10.126s)" in prompt_precise
-    assert "(0.0 to 10.126)" in prompt_precise
-    assert "(0.0 to 10.13)" not in prompt_precise
+    assert "Clip duration: 10.126s" in prompt_precise
+    assert "valid range 0.0 to 10.126)" in prompt_precise
+    assert "0.0 to 10.13)" not in prompt_precise
 
     chunk_sub = VideoChunk(index=1, start_sec=105.1, end_sec=120.3, path=tmp_path / "c1.mp4")
     prompt_sub = builder.build_chunk_prompt(sample_context, chunk_sub)
-    assert "(duration 15.2s)" in prompt_sub
-    assert "(0.0 to 15.2)" in prompt_sub
+    assert "Clip duration: 15.2s" in prompt_sub
+    assert "valid range 0.0 to 15.2)" in prompt_sub
+    # The global timeline window conflicts with the relative-time rule and must not be shown.
+    assert "Chunk Timeline Window" not in prompt_sub
+    assert "105.10s" not in prompt_sub
 
 
 def test_gemini_clients_extract_usage_metadata_from_responses(

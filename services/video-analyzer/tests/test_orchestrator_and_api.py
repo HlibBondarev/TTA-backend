@@ -30,7 +30,12 @@ from video_analyzer.gemini.resilience import (
     GeminiCallBlockedError,
     GeminiResilience,
 )
-from video_analyzer.media.ffmpeg_client import ExtractedFrame, VideoChunk, VideoProbeResult
+from video_analyzer.media.ffmpeg_client import (
+    ExtractedFrame,
+    FFmpegClient,
+    VideoChunk,
+    VideoProbeResult,
+)
 from video_analyzer.pass1.gemini_client import BasePass1Analyzer
 from video_analyzer.pass1.models import Pass1ChunkResult, Pass1RawAnchor, Pass1RawEvent
 from video_analyzer.pass2.cap_resolver import (
@@ -61,9 +66,18 @@ class MockFFmpegClient:
 
     def create_pass1_chunks(self, video_path, probe, output_dir, **kwargs):
         output_dir.mkdir(parents=True, exist_ok=True)
+        # The real client leaves the 4 fps mezzanine next to the chunks for the verifier.
+        FFmpegClient.mezzanine_path(output_dir).write_bytes(b"mezzanine")
         chunk_file = output_dir / "chunk_0.mp4"
         chunk_file.write_bytes(b"mp4")
         return [VideoChunk(index=0, start_sec=0.0, end_sec=240.0, path=chunk_file)]
+
+    def cut_verification_clip(
+        self, mezzanine_path, center_sec, pre_sec, post_sec, out_path, cancel_event=None
+    ):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"clip")
+        return out_path
 
     def extract_window_frames(self, video_path, center_sec, **kwargs):
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
@@ -143,7 +157,7 @@ class MockCapResolver(BaseCapResolver):
     def __init__(self) -> None:
         self.calls = 0
 
-    def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+    def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
         self.calls += 1
         if self.calls == 1:
             return CapResolutionResult(
@@ -435,7 +449,7 @@ def test_orchestrator_flags_cap_color_hint_mismatch_across_resolution_paths(
     seen_color_hints: list[str | None] = []
 
     class RecordingCapResolver(BaseCapResolver):
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             seen_color_hints.append(cap_color_hint)
             return CapResolutionResult(
                 resolved_cap_number=7,
@@ -562,7 +576,7 @@ def test_orchestrator_aggregates_gemini_usage_and_cost_in_diagnostics_and_cli(
             )
 
     class UsageCapResolver(MockCapResolver):
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             base = super().resolve(selected_crops, allowed_cap_numbers, cap_color_hint)
             return base.model_copy(
                 update={
@@ -660,7 +674,7 @@ def test_orchestrator_records_pass2_usage_once_on_recovered_parse_failure(
         def __init__(self) -> None:
             self.calls = 0
 
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             self.calls += 1
             if self.calls == 1:
                 raise CapResolutionError(
@@ -673,11 +687,12 @@ def test_orchestrator_records_pass2_usage_once_on_recovered_parse_failure(
                         total_tokens=52_000,
                     ),
                 )
+            # The second event is a conceded goal (goalkeeper-only), so #1 (the GK) can confirm.
             return CapResolutionResult(
-                resolved_cap_number=7,
+                resolved_cap_number=1,
                 confidence=0.95,
-                candidate_scores={7: 0.95},
-                reasoning="Clear cap #7",
+                candidate_scores={1: 0.95},
+                reasoning="Clear cap #1",
                 token_usage=GeminiTokenUsage(
                     call_count=1,
                     prompt_tokens=60_000,
@@ -807,7 +822,7 @@ class _AlwaysSevenCapResolver(BaseCapResolver):
         self.calls = 0
         self._delay_sec = delay_sec
 
-    def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+    def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
         with self._lock:
             self.calls += 1
             self._active += 1
@@ -1042,7 +1057,7 @@ def test_pass2_batches_bound_phase_a_lookahead_and_keep_progress_monotonic(
     extractions_seen_by_resolver: list[int] = []
 
     class RecordingResolver(_AlwaysSevenCapResolver):
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             extractions_seen_by_resolver.append(len(ffmpeg.extract_calls))
             return super().resolve(selected_crops, allowed_cap_numbers, cap_color_hint)
 
@@ -1078,7 +1093,7 @@ def test_breaker_opened_in_one_batch_still_applies_to_later_batches(
     class BlockedResolver(BaseCapResolver):
         calls = 0
 
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             BlockedResolver.calls += 1
             raise GeminiCallBlockedError("pass2", BreakerReason.QUOTA_EXHAUSTED, "daily quota")
 
@@ -1102,7 +1117,7 @@ def test_breaker_trip_preserves_phase_a_and_marks_remaining_events_explicitly(
         def __init__(self) -> None:
             self.calls = 0
 
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             self.calls += 1
             if self.calls == 1:
                 return CapResolutionResult(
@@ -1142,7 +1157,7 @@ def test_breaker_trip_falls_back_to_local_ocr_when_available(
     class BlockedResolver(BaseCapResolver):
         calls = 0
 
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             BlockedResolver.calls += 1
             raise GeminiCallBlockedError("pass2", BreakerReason.QUOTA_EXHAUSTED, "daily quota")
 
@@ -1175,7 +1190,7 @@ def test_concurrent_breaker_trip_probes_gemini_at_most_once_per_worker(
     class BlockedResolver(BaseCapResolver):
         calls = 0
 
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             with call_lock:
                 BlockedResolver.calls += 1
                 first_wave = BlockedResolver.calls <= workers
@@ -1222,7 +1237,7 @@ def test_all_six_pass2_failure_reasons_are_emitted_in_their_scenarios(
         def __init__(self, error: Exception) -> None:
             self._error = error
 
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             raise self._error
 
     no_frames = reasons_for(ffmpeg=_CountingFFmpeg(frames_enabled=False))
@@ -1294,7 +1309,7 @@ def test_downscaled_detection_boxes_are_rescaled_to_native_for_actor_matching(
     crop_sizes: list[tuple[int, ...]] = []
 
     class SpyResolver(_AlwaysSevenCapResolver):
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             crop_sizes.append(selected_crops.crops[0].crop_bgr.shape)
             return super().resolve(selected_crops, allowed_cap_numbers, cap_color_hint)
 
@@ -1374,7 +1389,7 @@ def test_sub_stage_timers_are_added_and_existing_keys_are_preserved(
     assert skipped.diagnostics.timings_sec["pass2FrameExtraction"] == 0.0
 
 
-def test_model_metadata_reports_all_three_slots_and_verifier_stays_unused(
+def test_model_metadata_reports_all_three_slots_and_verifier_unused_without_a_verifier(
     sample_job_request: AnalyzeJobRequest,
     tmp_path: Path,
 ) -> None:
@@ -1397,7 +1412,7 @@ def test_gemini_job_scope_budget_is_applied_per_job_through_worker_threads(
     resilience = GeminiResilience("pass2", "gemini-3.5-flash-lite", max_retries=0)
 
     class BudgetedResolver(BaseCapResolver):
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             resilience.call(lambda: SimpleNamespace(usage_metadata=None), paced=False)
             return CapResolutionResult(
                 resolved_cap_number=7,
@@ -1563,7 +1578,7 @@ def test_prepared_events_do_not_retain_frames_between_phase_a_and_phase_b(
     leaked_at_phase_b: list[int] = []
 
     class InspectingResolver(_AlwaysSevenCapResolver):
-        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None):
+        def resolve(self, selected_crops, allowed_cap_numbers, cap_color_hint=None, **_hints):
             gc.collect()
             leaked_at_phase_b.append(sum(ref() is not None for ref in frame_refs))
             return super().resolve(selected_crops, allowed_cap_numbers, cap_color_hint)

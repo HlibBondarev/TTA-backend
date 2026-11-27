@@ -1,4 +1,4 @@
-"""End-to-end two-pass Water Polo video analysis orchestrator."""
+"""End-to-end video analysis orchestrator (Pass 1, verification, Pass 2)."""
 
 from __future__ import annotations
 
@@ -31,9 +31,15 @@ from video_analyzer.media.ffmpeg_client import (
     VideoProbeResult,
 )
 from video_analyzer.pass1.anchor_reconciler import AnchorReconciler
-from video_analyzer.pass1.deduplicator import EventDeduplicator
+from video_analyzer.pass1.chunk_time import normalize_chunk_result
+from video_analyzer.pass1.dead_time_filter import filter_dead_time_events
+from video_analyzer.pass1.deduplicator import DeduplicationResult, EventDeduplicator
 from video_analyzer.pass1.gemini_client import BasePass1Analyzer
-from video_analyzer.pass1.models import Pass1ChunkResult, Pass1EventCandidate
+from video_analyzer.pass1.models import (
+    Pass1AnchorCandidate,
+    Pass1ChunkResult,
+    Pass1EventCandidate,
+)
 from video_analyzer.pass2.actor_matcher import ActorMatcher, MatchedTracklet
 from video_analyzer.pass2.cap_resolver import BaseCapResolver, CapResolutionResult
 from video_analyzer.pass2.crop_selector import CropSelector, SelectedCrops
@@ -58,6 +64,9 @@ from video_analyzer.schemas.draft import (
 from video_analyzer.schemas.request import AnalyzeJobRequest
 from video_analyzer.sport.context import AnalysisContext, build_analysis_context
 from video_analyzer.usage import build_gemini_usage_diagnostics
+from video_analyzer.verifier.apply import mark_anchor_unverified, mark_event_unverified
+from video_analyzer.verifier.base import BaseEventVerifier
+from video_analyzer.verifier.models import VerificationResult
 
 logger = logging.getLogger(__name__)
 _CAP_COLOR_HINT_MISMATCH_REASON = "CAP_COLOR_HINT_MISMATCH"
@@ -65,6 +74,8 @@ _GEMINI_CAP_RESOLVER_PROVIDER = "gemini_crop_grid"
 
 _PASS1_PROGRESS_BASE = 15
 _PASS1_PROGRESS_SPAN = 35
+_VERIFICATION_PROGRESS = 52
+_PASS1_CHUNKS_DIRNAME = "pass1_chunks"
 # Pass 2 shares one progress range: Phase A (3 units per event) and Phase B (1 unit per event)
 # interleave batch by batch, so a single monotonic counter covers both.
 _PASS2_PROGRESS_BASE = 55
@@ -211,7 +222,7 @@ class _ProgressTracker:
 
 
 class VideoAnalysisOrchestrator:
-    """Coordinates Pass 1 (VLM) and Pass 2 (4K tracking + cap resolution)."""
+    """Coordinates Pass 1 (VLM), clip verification and Pass 2 (4K tracking + cap resolution)."""
 
     def __init__(
         self,
@@ -227,6 +238,7 @@ class VideoAnalysisOrchestrator:
         crop_selector: CropSelector | None = None,
         lineup_matcher: LineupMatcher | None = None,
         fallback_cap_resolver: BaseCapResolver | None = None,
+        verifier: BaseEventVerifier | None = None,
     ) -> None:
         self._settings = settings
         self._ffmpeg = ffmpeg_client
@@ -234,6 +246,7 @@ class VideoAnalysisOrchestrator:
         self._detector = self._limit_detector_concurrency(detector, settings)
         self._cap_resolver = cap_resolver
         self._fallback_cap_resolver = fallback_cap_resolver
+        self._verifier = verifier
         self._deduplicator = deduplicator or EventDeduplicator()
         self._anchor_reconciler = anchor_reconciler or AnchorReconciler()
         self._tracker = tracker or BoTSortTracker()
@@ -325,7 +338,7 @@ class VideoAnalysisOrchestrator:
             warnings.extend(start_warnings)
 
             analysis = build_analysis_context(request.match_snapshot, request.runtime_hints)
-            chunk_results, pass1_timings = self._run_pass1(
+            chunk_results, pass1_timings, normalize_warnings = self._run_pass1(
                 video_path=video_path,
                 probe=probe,
                 request=request,
@@ -335,19 +348,40 @@ class VideoAnalysisOrchestrator:
                 progress_callback=progress_callback,
             )
             timings.update(pass1_timings)
+            warnings.extend(normalize_warnings)
 
-            events_cand, raw_count, dedup_warnings = self._deduplicator.process(
+            dedup = self._deduplicator.process_detailed(
                 chunk_results=chunk_results,
                 event_definitions=analysis.event_catalog,
                 total_duration_sec=probe.duration_sec,
                 min_confidence=request.analysis_options.min_event_confidence,
+                profile=analysis.profile,
             )
-            warnings.extend(dedup_warnings)
+            warnings.extend(dedup.warnings)
 
-            draft_anchors, anchor_warnings = self._build_anchors(
-                chunk_results, probe, video_start_utc
+            anchor_cands, anchor_warnings = self._anchor_reconciler.reconcile(
+                chunk_results=chunk_results,
+                total_duration_sec=probe.duration_sec,
             )
             warnings.extend(anchor_warnings)
+
+            verification, verifier_sec = self._run_verification(
+                analysis=analysis,
+                dedup=dedup,
+                anchors=anchor_cands,
+                mezzanine_path=FFmpegClient.mezzanine_path(work_dir / _PASS1_CHUNKS_DIRNAME),
+                work_dir=work_dir,
+                cancel_event=cancel_event,
+                progress_callback=progress_callback,
+            )
+            timings["pass1Verification"] = verifier_sec
+            warnings.extend(verification.warnings)
+
+            events_cand, dead_time_warnings = filter_dead_time_events(
+                verification.events, verification.anchors
+            )
+            warnings.extend(dead_time_warnings)
+            draft_anchors = self._to_draft_anchors(verification.anchors, video_start_utc)
 
             pass2 = self._run_pass2(
                 video_path=video_path,
@@ -371,6 +405,7 @@ class VideoAnalysisOrchestrator:
                 pass2_usages=pass2.usages,
                 pricing_table=self._settings.resolved_gemini_model_pricing,
                 verifier_model=self._settings.gemini_verifier_model,
+                verifier_usages=verification.usages,
             )
             presences = synthesize_closed_presences(
                 events=pass2.events,
@@ -405,8 +440,8 @@ class VideoAnalysisOrchestrator:
                 player_presences=presences,
                 diagnostics=PipelineDiagnostics(
                     pass1_chunks_processed=len(chunk_results),
-                    pass1_raw_candidate_count=raw_count,
-                    deduplicated_event_count=len(events_cand),
+                    pass1_raw_candidate_count=dedup.raw_count,
+                    deduplicated_event_count=len(dedup.candidates),
                     pass2_windows_processed=pass2.windows_processed,
                     resolved_actor_count=pass2.resolved_count,
                     unresolved_actor_count=pass2.unresolved_count,
@@ -438,17 +473,12 @@ class VideoAnalysisOrchestrator:
             verifier_model=settings.gemini_verifier_model,
         )
 
-    def _build_anchors(
-        self,
-        chunk_results: list[tuple[VideoChunk, Pass1ChunkResult]],
-        probe: VideoProbeResult,
+    @staticmethod
+    def _to_draft_anchors(
+        anchor_cands: list[Pass1AnchorCandidate],
         video_start_utc: datetime,
-    ) -> tuple[list[DraftTimeAnchor], list[str]]:
-        anchor_cands, anchor_warnings = self._anchor_reconciler.reconcile(
-            chunk_results=chunk_results,
-            total_duration_sec=probe.duration_sec,
-        )
-        anchors = [
+    ) -> list[DraftTimeAnchor]:
+        return [
             DraftTimeAnchor(
                 id=uuid4(),
                 period_number=a.period_number,
@@ -461,7 +491,45 @@ class VideoAnalysisOrchestrator:
             )
             for a in anchor_cands
         ]
-        return anchors, anchor_warnings
+
+    def _run_verification(
+        self,
+        analysis: AnalysisContext,
+        dedup: DeduplicationResult,
+        anchors: list[Pass1AnchorCandidate],
+        mezzanine_path: Path,
+        work_dir: Path,
+        cancel_event: threading.Event | None,
+        progress_callback: Callable[[str, int], None] | None,
+    ) -> tuple[VerificationResult, float]:
+        """Run the clip verifier; any non-cancellation failure keeps candidates, flagged."""
+        unchanged = VerificationResult(events=list(dedup.candidates), anchors=list(anchors))
+        if self._verifier is None or not (dedup.candidates or anchors):
+            return unchanged, 0.0
+        self._report(progress_callback, "pass1_verification", _VERIFICATION_PROGRESS)
+        self._check_cancelled(cancel_event)
+        started = time.monotonic()
+        try:
+            result = self._verifier.verify(
+                context=analysis,
+                events=dedup.candidates,
+                anchors=anchors,
+                mezzanine_path=mezzanine_path,
+                work_dir=work_dir,
+                conflict_groups=dedup.conflict_groups,
+                cancel_event=cancel_event,
+            )
+        except FFmpegCancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Candidate verification failed; keeping candidates unverified: %s", exc)
+            for event in unchanged.events:
+                mark_event_unverified(event)
+            for anchor in unchanged.anchors:
+                mark_anchor_unverified(anchor)
+            unchanged.warnings.append(f"Candidate verification failed open: {exc}")
+            return unchanged, round(time.monotonic() - started, 3)
+        return result, round(time.monotonic() - started, 3)
 
     @staticmethod
     def _breaker_warnings(scope: GeminiJobScope) -> list[str]:
@@ -481,7 +549,7 @@ class VideoAnalysisOrchestrator:
         work_dir: Path,
         cancel_event: threading.Event | None,
         progress_callback: Callable[[str, int], None] | None,
-    ) -> tuple[list[tuple[VideoChunk, Pass1ChunkResult]], dict[str, float]]:
+    ) -> tuple[list[tuple[VideoChunk, Pass1ChunkResult]], dict[str, float], list[str]]:
         opts = request.analysis_options
         self._report(progress_callback, "pass1_chunking", 10)
         chunk_timings: dict[str, float] = {}
@@ -489,11 +557,11 @@ class VideoAnalysisOrchestrator:
         chunks = self._ffmpeg.create_pass1_chunks(
             video_path=video_path,
             probe=probe,
-            output_dir=work_dir / "pass1_chunks",
+            output_dir=work_dir / _PASS1_CHUNKS_DIRNAME,
             chunk_duration_sec=opts.pass1_chunk_duration_sec,
             overlap_sec=opts.pass1_overlap_sec,
             target_height=opts.pass1_target_height,
-            fps=opts.pass1_fps,
+            mezzanine_fps=opts.mezzanine_fps,
             cancel_event=cancel_event,
             timings=chunk_timings,
         )
@@ -522,12 +590,30 @@ class VideoAnalysisOrchestrator:
             before_task=lambda: self._check_cancelled(cancel_event),
         )
         vlm_sec = round(time.monotonic() - t_vlm, 3)
-        return chunk_results, {
-            "pass1TranscodeAndChunk": chunk_sec,
-            "pass1Mezzanine": chunk_timings.get("pass1Mezzanine", 0.0),
-            "pass1ChunkSlicing": chunk_timings.get("pass1ChunkSlicing", 0.0),
-            "pass1Vlm": vlm_sec,
-        }
+        chunk_results, normalize_warnings = self._normalize_chunk_results(chunk_results)
+        return (
+            chunk_results,
+            {
+                "pass1TranscodeAndChunk": chunk_sec,
+                "pass1Mezzanine": chunk_timings.get("pass1Mezzanine", 0.0),
+                "pass1ChunkSlicing": chunk_timings.get("pass1ChunkSlicing", 0.0),
+                "pass1Vlm": vlm_sec,
+            },
+            normalize_warnings,
+        )
+
+    @staticmethod
+    def _normalize_chunk_results(
+        chunk_results: list[tuple[VideoChunk, Pass1ChunkResult]],
+    ) -> tuple[list[tuple[VideoChunk, Pass1ChunkResult]], list[str]]:
+        """Convert global-timeline offsets to chunk-relative ones before dedup and anchors."""
+        normalized: list[tuple[VideoChunk, Pass1ChunkResult]] = []
+        warnings: list[str] = []
+        for chunk, result in chunk_results:
+            fixed, chunk_warnings = normalize_chunk_result(chunk, result)
+            normalized.append((chunk, fixed))
+            warnings.extend(chunk_warnings)
+        return normalized, warnings
 
     # ------------------------------------------------------------------ Pass 2
 
@@ -847,10 +933,16 @@ class VideoAnalysisOrchestrator:
         ctx: _Pass2Context,
     ) -> CapResolutionResult:
         assert item.selected_crops is not None
+        profile = ctx.analysis.profile
+        expected_color = profile.expected_actor_cap_color(
+            item.candidate.definition, ctx.cap_color_hint
+        )
         return resolver.resolve(
             selected_crops=item.selected_crops,
             allowed_cap_numbers=ctx.allowed_caps,
-            cap_color_hint=ctx.cap_color_hint or item.candidate.cap_color_hint,
+            cap_color_hint=expected_color or item.candidate.cap_color_hint,
+            crop_subject=profile.pass2_crop_subject,
+            occlusion_hint=profile.pass2_occlusion_hint,
         )
 
     @staticmethod
@@ -902,7 +994,13 @@ class VideoAnalysisOrchestrator:
             cap_ambiguous=item.cap_ambiguous,
             pass2_failure_reason=str(failure) if failure is not None else None,
         )
-        lineup = self._apply_cap_color_guard(lineup, cand, analysis.tracked_cap_color_hint)
+        lineup = self._apply_cap_color_guard(
+            lineup,
+            cand,
+            analysis.profile.expected_actor_cap_color(
+                cand.definition, analysis.tracked_cap_color_hint
+            ),
+        )
         return DraftEvent(
             id=uuid4(),
             event_definition_id=cand.definition.event_definition_id,
@@ -932,7 +1030,11 @@ class VideoAnalysisOrchestrator:
         candidate: Pass1EventCandidate,
         tracked_team_hint: str | None,
     ) -> LineupMatchOutcome:
-        """Block auto-confirmation when the event's cap color contradicts the tracked team."""
+        """Block auto-confirmation when the event's cap color contradicts the expected actor.
+
+        ``tracked_team_hint`` is the cap color the acting player is expected to wear: the tracked
+        team's color, or the sport's goalkeeper color for goalkeeper-only events.
+        """
         if not cls._has_cap_color_hint_mismatch(candidate.cap_color_hint, tracked_team_hint):
             return outcome
         reasons = list(outcome.review_reasons)

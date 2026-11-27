@@ -15,6 +15,7 @@ from video_analyzer.sport.profile import SportProfile
 
 _LOW_EVENT_CONFIDENCE_THRESHOLD = 0.80
 _MISSING_SPATIAL_HINT_REASON = "MISSING_ACTOR_SPATIAL_HINT"
+_GOALKEEPER_EVENT_NON_GOALKEEPER_REASON = "GOALKEEPER_EVENT_NON_GOALKEEPER_ACTOR"
 
 
 def _add_reason(review_reasons: list[str], reason: str) -> None:
@@ -131,6 +132,14 @@ class LineupMatcher:
             )
 
         chosen = matching_entries[0]
+        # A goalkeeper-only event can never be auto-confirmed on a field player's lineup entry.
+        profile = context.profile
+        if profile.is_goalkeeper_event(candidate.definition) and not profile.is_goalkeeper(chosen):
+            _add_reason(review_reasons, _GOALKEEPER_EVENT_NON_GOALKEEPER_REASON)
+            return _needs_review_outcome(
+                round(cap_result.confidence, 4), ranked_candidates, review_reasons
+            )
+
         return LineupMatchOutcome(
             match_lineup_id=chosen.id,
             resolved_cap_number=chosen.number,

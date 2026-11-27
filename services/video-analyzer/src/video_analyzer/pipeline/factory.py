@@ -15,6 +15,8 @@ from video_analyzer.pass2.cap_resolver import (
     LocalOcrCapResolver,
 )
 from video_analyzer.pipeline.orchestrator import VideoAnalysisOrchestrator
+from video_analyzer.verifier.base import BaseEventVerifier
+from video_analyzer.verifier.gemini_verifier import GeminiClipVerifier
 
 
 def build_fallback_cap_resolver(settings: Settings) -> BaseCapResolver | None:
@@ -30,8 +32,25 @@ def build_fallback_cap_resolver(settings: Settings) -> BaseCapResolver | None:
     return LocalOcrCapResolver(languages=settings.ocr_languages)
 
 
+def build_verifier(settings: Settings, ffmpeg_client: FFmpegClient) -> BaseEventVerifier | None:
+    """Return the clip verifier, or None when ``VERIFIER_ENABLED`` is false."""
+    if not settings.verifier_enabled:
+        return None
+    return GeminiClipVerifier(
+        api_key=settings.gemini_api_key,
+        ffmpeg_client=ffmpeg_client,
+        model_name=settings.gemini_verifier_model,
+        timeout_sec=settings.gemini_request_timeout_sec,
+        thinking_level=settings.gemini_verifier_thinking_level,
+        resilience=GeminiResilience.from_settings(settings, "verifier"),
+        max_candidates=settings.verifier_max_candidates,
+        batch_size=settings.verifier_batch_size,
+        max_concurrency=settings.verifier_max_concurrency,
+    )
+
+
 def build_default_orchestrator(settings: Settings) -> VideoAnalysisOrchestrator:
-    """Wire Pass 1, detector, BoT-SORT tracker, and cap-resolver strategies from settings."""
+    """Wire Pass 1, verifier, detector, BoT-SORT tracker and cap-resolver from settings."""
     ffmpeg_client = FFmpegClient(
         ffmpeg_bin=settings.ffmpeg_bin,
         ffprobe_bin=settings.ffprobe_bin,
@@ -58,4 +77,5 @@ def build_default_orchestrator(settings: Settings) -> VideoAnalysisOrchestrator:
         detector=detector,
         cap_resolver=cap_resolver,
         fallback_cap_resolver=build_fallback_cap_resolver(settings),
+        verifier=build_verifier(settings, ffmpeg_client),
     )

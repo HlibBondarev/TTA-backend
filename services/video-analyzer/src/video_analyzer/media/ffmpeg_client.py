@@ -39,6 +39,12 @@ HWACCEL_DISABLED: str = "none"
 MIN_KEYFRAME_INTERVAL_SEC: int = 1
 MAX_KEYFRAME_INTERVAL_SEC: int = 5
 MIN_TAIL_FRACTION: float = 0.5
+PASS1_MEZZANINE_FILENAME: str = "pass1_mezzanine.mp4"
+# Default mezzanine frame rate: verification clips cut from the mezzanine keep 4 real fps, while
+# Gemini still samples Pass 1 chunks at its own default rate (so Pass 1 token cost is unchanged).
+DEFAULT_MEZZANINE_FPS: float = 4.0
+VERIFICATION_CLIP_PRESET: str = "ultrafast"
+VERIFICATION_CLIP_CRF: str = "28"
 NATIVE_JPEG_QUALITY: int = 95
 _ENCODER_PROBE_TIMEOUT_SEC: float = 30.0
 _STREAM_POLL_INTERVAL_SEC: float = 0.1
@@ -601,16 +607,18 @@ class FFmpegClient:
         chunk_duration_sec: int = 120,
         overlap_sec: int = 15,
         target_height: int = 720,
-        fps: float = 2.0,
+        mezzanine_fps: float = DEFAULT_MEZZANINE_FPS,
         cancel_event: threading.Event | None = None,
         timings: dict[str, float] | None = None,
     ) -> list[VideoChunk]:
         """Build overlapping Pass 1 chunks from a single one-pass 720p mezzanine transcode.
 
         The source (often 4K) is decoded exactly once into a keyframe-aligned mezzanine; each
-        chunk is then cut with ``-c copy``, so no chunk re-decodes the 4K source.
+        chunk is then cut with ``-c copy``, so no chunk re-decodes the 4K source. The mezzanine
+        stays on disk at :meth:`mezzanine_path` so the verifier can cut accurate clips from it.
 
         Args:
+            mezzanine_fps: Frame rate of the mezzanine (independent of Gemini's own sampling).
             timings: Optional dict that receives ``pass1Mezzanine`` and ``pass1ChunkSlicing``
                 elapsed seconds.
         """
@@ -622,16 +630,15 @@ class FFmpegClient:
             total_duration_sec=probe.duration_sec,
             chunk_duration_sec=chunk_duration_sec,
             overlap_sec=overlap_sec,
-            align_sec=float(keyframe_interval),
         )
 
         t_mezzanine = time.monotonic()
         mezzanine_path = self.create_mezzanine(
             video_path=video_path,
             probe=probe,
-            output_path=output_dir / "pass1_mezzanine.mp4",
+            output_path=self.mezzanine_path(output_dir),
             target_height=target_height,
-            fps=fps,
+            fps=mezzanine_fps,
             keyframe_interval_sec=keyframe_interval,
             cancel_event=cancel_event,
         )
@@ -641,6 +648,11 @@ class FFmpegClient:
             timings["pass1Mezzanine"] = round(t_slicing - t_mezzanine, 3)
             timings["pass1ChunkSlicing"] = round(time.monotonic() - t_slicing, 3)
         return chunks
+
+    @staticmethod
+    def mezzanine_path(output_dir: Path) -> Path:
+        """Return where :meth:`create_pass1_chunks` writes the mezzanine inside ``output_dir``."""
+        return output_dir / PASS1_MEZZANINE_FILENAME
 
     def create_mezzanine(
         self,
@@ -717,6 +729,8 @@ class FFmpegClient:
                 str(mezzanine_path),
                 "-t",
                 f"{max(0.5, end_sec - start_sec):.3f}",
+                "-map_metadata",
+                "-1",
                 "-c",
                 "copy",
                 "-avoid_negative_ts",
@@ -735,6 +749,68 @@ class FFmpegClient:
                 VideoChunk(index=idx, start_sec=start_sec, end_sec=end_sec, path=chunk_path)
             )
         return chunks
+
+    def cut_verification_clip(
+        self,
+        mezzanine_path: Path,
+        center_sec: float,
+        pre_sec: float,
+        post_sec: float,
+        out_path: Path,
+        cancel_event: threading.Event | None = None,
+    ) -> Path:
+        """Cut an accurate ``[center - pre, center + post]`` clip from the mezzanine.
+
+        The clip is re-encoded (``libx264 -preset ultrafast``) with an output-side ``-ss`` so the
+        cut is frame accurate instead of snapping to a keyframe, and audio is kept. The start is
+        clamped at 0 s; the end is naturally clamped by the end of the mezzanine.
+        """
+        start_sec = max(0.0, center_sec - pre_sec)
+        duration_sec = max(0.5, center_sec + post_sec - start_sec)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            self._ffmpeg_bin,
+            "-y",
+            "-hide_banner",
+            "-i",
+            str(mezzanine_path),
+            "-ss",
+            f"{start_sec:.3f}",
+            "-t",
+            f"{duration_sec:.3f}",
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",
+            "-map_metadata",
+            "-1",
+            "-c:v",
+            LIBX264_ENCODER,
+            "-preset",
+            VERIFICATION_CLIP_PRESET,
+            "-crf",
+            VERIFICATION_CLIP_CRF,
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-b:a",
+            "32k",
+            "-movflags",
+            "+faststart",
+            str(out_path),
+        ]
+        self._run_command(
+            cmd,
+            "ffmpeg verification clip",
+            timeout_sec=self._ffmpeg_timeout_sec,
+            cancel_event=cancel_event,
+        )
+        return out_path
 
     def _mezzanine_timeout_sec(self, probe: VideoProbeResult) -> float:
         """Timeout for the one-pass transcode: fixed base plus time proportional to the source."""
@@ -972,17 +1048,14 @@ class FFmpegClient:
         total_duration_sec: float,
         chunk_duration_sec: int,
         overlap_sec: int,
-        align_sec: float = 0.0,
     ) -> list[tuple[float, float]]:
         """Compute deterministic overlapping [start, end] time ranges covering the full video.
 
-        A trailing window shorter than half a chunk is backed up so it spans a full chunk (start
-        clamped to >= 0). Windows fully contained in the backed-up tail are dropped, so no
-        duplicate windows are emitted. A clip no longer than one chunk yields one window.
-
-        Args:
-            align_sec: When positive, the backed-up tail start is floored to a multiple of this
-                value (the keyframe interval) so ``-c copy`` slicing lands on a keyframe.
+        A trailing window shorter than half a chunk is not emitted as a separate, heavily
+        overlapping chunk: the previous window is extended to the end of the clip instead (so a
+        240.24 s clip yields ``[(0, 120), (105, 240.24)]``). Every window start stays on the
+        regular chunk step, which is a multiple of the keyframe interval. A clip no longer than
+        one chunk yields one window.
         """
         if total_duration_sec <= 0:
             return []
@@ -999,31 +1072,20 @@ class FFmpegClient:
                 break
             cursor += step
 
-        windows = FFmpegClient._back_up_short_tail(
-            windows, total_duration_sec, chunk_duration_sec, align_sec
-        )
-        unique: list[tuple[float, float]] = []
-        for start_sec, end_sec in windows:
-            rounded = (round(start_sec, 3), round(end_sec, 3))
-            if rounded not in unique:
-                unique.append(rounded)
-        return unique
+        windows = FFmpegClient._merge_short_tail(windows, chunk_duration_sec)
+        return [(round(start, 3), round(end, 3)) for start, end in windows]
 
     @staticmethod
-    def _back_up_short_tail(
+    def _merge_short_tail(
         windows: list[tuple[float, float]],
-        total_duration_sec: float,
         chunk_duration_sec: int,
-        align_sec: float,
     ) -> list[tuple[float, float]]:
+        """Fold a trailing window shorter than half a chunk into the previous window."""
         tail_start, tail_end = windows[-1]
-        if tail_end - tail_start >= MIN_TAIL_FRACTION * chunk_duration_sec:
+        if len(windows) < 2 or tail_end - tail_start >= MIN_TAIL_FRACTION * chunk_duration_sec:
             return windows
-        new_start = max(0.0, total_duration_sec - chunk_duration_sec)
-        if align_sec > 0.0:
-            new_start = math.floor(new_start / align_sec + 1e-9) * align_sec
-        kept = [window for window in windows[:-1] if window[0] < new_start]
-        return [*kept, (new_start, tail_end)]
+        previous_start, _ = windows[-2]
+        return [*windows[:-2], (previous_start, tail_end)]
 
     @staticmethod
     def _parse_frame_rate(raw_rate: str) -> float:
