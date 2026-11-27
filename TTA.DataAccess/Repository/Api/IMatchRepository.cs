@@ -57,12 +57,13 @@ public interface IMatchRepository : IEntityRepositoryBase<Guid, Match>
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Provisions JIT quick match infrastructure (teams, tournament, rosters), creates a match record using client-generated match ID,
-    /// and automatically tracks the selected team for the user based on <paramref name="isGuestTeam"/>.
+    /// Creates a quick match record using the client-generated match ID on top of the seeded quick match sandbox
+    /// (teams, JIT tournament and rosters for the sport configuration), and automatically tracks the selected team
+    /// for the user based on <paramref name="isGuestTeam"/>. No teams, tournaments or rosters are created.
     /// </summary>
     /// <param name="matchId">The client-generated unique identifier for the match.</param>
     /// <param name="sportId">The unique identifier of the sport.</param>
-    /// <param name="userId">The requesting user identifier for tournament ownership.</param>
+    /// <param name="userId">The requesting user identifier used for tracking and JIT garbage collection.</param>
     /// <param name="configurationId">The mandatory unique identifier of the sport configuration.</param>
     /// <param name="isGuestTeam">Flag indicating whether to track the guest team (<c>true</c>) or home team (<c>false</c>).</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>

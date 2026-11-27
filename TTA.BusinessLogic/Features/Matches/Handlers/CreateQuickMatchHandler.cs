@@ -1,8 +1,10 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using TTA.BusinessLogic.Features.Matches.Commands;
 using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.Common.Enums;
+using TTA.Common.Exceptions;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Models.Auth;
 using TTA.DataAccess.Repository.Api;
@@ -11,9 +13,10 @@ using TTA.DataAccess.Repository.Auth;
 namespace TTA.BusinessLogic.Features.Matches.Handlers;
 
 /// <summary>
-/// Handles the execution of <see cref="CreateQuickMatchCommand"/> to provision JIT entities, assign access policies 
-/// for both Home and Guest teams, create the match, initialize starting lineups for both competing teams, 
-/// and automatically track the selected team context in the database.
+/// Handles the execution of <see cref="CreateQuickMatchCommand"/> to create a match on top of the seeded quick match sandbox
+/// (teams, JIT tournament and rosters), assign access policies for both Home and Guest teams,
+/// initialize starting lineups for both competing teams, and automatically track the selected team context in the database.
+/// Only the user record is provisioned just-in-time; the sandbox itself is seeded by the database scripts.
 /// </summary>
 /// <param name="userRepository">The user repository for JIT user provisioning and rollbacks.</param>
 /// <param name="matchRepository">The match repository for database operations and JIT provisioning.</param>
@@ -39,15 +42,27 @@ public class CreateQuickMatchHandler(
     private readonly IMatchLineupRepository _matchLineupRepository = matchLineupRepository;
     private readonly ILogger<CreateQuickMatchHandler> _logger = logger;
 
+    /// <summary>PostgreSQL SQLSTATE raised when a required identifier is missing (null value not allowed).</summary>
+    private const string SqlStateNullValueNotAllowed = "22004";
+
+    /// <summary>Custom SQLSTATE raised when the sport configuration is missing or belongs to another sport.</summary>
+    private const string SqlStateConfigurationNotFound = "P0005";
+
+    /// <summary>Custom SQLSTATE raised when the quick match sandbox is not seeded for the sport configuration.</summary>
+    private const string SqlStateSandboxNotProvisioned = "P0006";
+
     /// <summary>
-    /// Provisions quick match infrastructure, verifies or grants team editor access policies for both competing teams, 
+    /// Creates the quick match on the seeded sandbox, verifies or grants team editor access policies for both competing teams, 
     /// and copies starter roster entries into the match lineup for both Home and Guest teams.
     /// Performs compensating cleanup if post-creation provisioning fails.
     /// </summary>
     /// <param name="command">The command containing quick match setup parameters and authenticated user details.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>A <see cref="QuickMatchResponse"/> containing the newly created match details.</returns>
-    /// <exception cref="KeyNotFoundException">Thrown if quick match infrastructure creation fails, or if the specified sport configuration is missing.</exception>
+    /// <exception cref="KeyNotFoundException">Thrown if the quick match creation returns no match, or if the specified sport configuration is missing.</exception>
+    /// <exception cref="NotFoundException">Thrown if the configuration does not exist or does not belong to the sport.</exception>
+    /// <exception cref="ConflictException">Thrown if the quick match sandbox is not provisioned for the sport configuration.</exception>
+    /// <exception cref="BadRequestException">Thrown if a required identifier is missing.</exception>
     public async Task<QuickMatchResponse> Handle(
         CreateQuickMatchCommand command,
         CancellationToken cancellationToken)
@@ -116,27 +131,51 @@ public class CreateQuickMatchHandler(
     }
 
     /// <summary>
-    /// Invokes the stored procedure to provision quick match infrastructure, create the match entity, and track the team context.
+    /// Invokes the sport-agnostic stored procedure to create the match entity on the seeded sandbox and track the team context.
     /// </summary>
     /// <param name="command">The command containing setup parameters.</param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
     /// <returns>The newly created <see cref="Match"/> entity.</returns>
     /// <exception cref="KeyNotFoundException">Thrown if stored procedure returns null.</exception>
+    /// <exception cref="NotFoundException">Thrown if the configuration does not exist or does not belong to the sport (P0005).</exception>
+    /// <exception cref="ConflictException">Thrown if the quick match sandbox is not provisioned (P0006).</exception>
+    /// <exception cref="BadRequestException">Thrown if a required identifier is missing (22004).</exception>
     private async Task<Match> CreateQuickMatchEntityAsync(CreateQuickMatchCommand command, CancellationToken cancellationToken)
     {
-        var quickMatch = await _matchRepository.CreateQuickMatchAsync(
-            command.Request.Id,
-            command.Request.SportId,
-            command.UserId,
-            command.Request.ConfigurationId,
-            command.Request.IsGuestTeam,
-            cancellationToken);
+        Match? quickMatch;
+        try
+        {
+            quickMatch = await _matchRepository.CreateQuickMatchAsync(
+                command.Request.Id,
+                command.Request.SportId,
+                command.UserId,
+                command.Request.ConfigurationId,
+                command.Request.IsGuestTeam,
+                cancellationToken);
+        }
+        catch (PostgresException ex) when (ex.SqlState == SqlStateConfigurationNotFound)
+        {
+            _logger.LogWarning(ex, "Quick match creation failed: configuration {ConfigurationId} was not found for sport {SportId}.",
+                command.Request.ConfigurationId, command.Request.SportId);
+            throw new NotFoundException("Sport configuration was not found or does not belong to the specified sport.", ex);
+        }
+        catch (PostgresException ex) when (ex.SqlState == SqlStateSandboxNotProvisioned)
+        {
+            _logger.LogError(ex, "Quick match sandbox is not provisioned for sport {SportId} and configuration {ConfigurationId}.",
+                command.Request.SportId, command.Request.ConfigurationId);
+            throw new ConflictException("Quick match sandbox is not provisioned for the specified sport and configuration.", ex);
+        }
+        catch (PostgresException ex) when (ex.SqlState == SqlStateNullValueNotAllowed)
+        {
+            _logger.LogWarning(ex, "Quick match creation failed: a required identifier is missing for match {MatchId}.", command.Request.Id);
+            throw new BadRequestException("Match, user and configuration identifiers are required for quick match creation.", ex);
+        }
 
         if (quickMatch == null)
         {
-            _logger.LogError("Failed to provision quick match infrastructure for MatchId {MatchId} and SportId {SportId}.",
+            _logger.LogError("Failed to create quick match for MatchId {MatchId} and SportId {SportId}.",
                 command.Request.Id, command.Request.SportId);
-            throw new KeyNotFoundException($"Failed to provision quick match infrastructure for SportId: {command.Request.SportId}");
+            throw new KeyNotFoundException($"Failed to create quick match for SportId: {command.Request.SportId}");
         }
 
         _logger.LogInformation("Quick match {MatchId} created with HomeTeam {HomeTeamId} and GuestTeam {GuestTeamId}.",

@@ -1,10 +1,12 @@
 ﻿using Microsoft.Extensions.Logging;
 using Moq;
+using Npgsql;
 using System.Dynamic;
 using TTA.BusinessLogic.Features.Matches.Commands;
 using TTA.BusinessLogic.Features.Matches.DTOs;
 using TTA.BusinessLogic.Features.Matches.Handlers;
 using TTA.Common.Enums;
+using TTA.Common.Exceptions;
 using TTA.DataAccess.Models;
 using TTA.DataAccess.Models.Auth;
 using TTA.DataAccess.Repository.Api;
@@ -20,7 +22,7 @@ namespace TTA.BusinessLogic.Tests.Features.Matches.Handlers;
 /// Validates business rules and orchestration logic during quick match creation, including:
 /// <list type="bullet">
 ///   <item><description>Just-in-time user provisioning and registration in database.</description></item>
-///   <item><description>Atomic just-in-time infrastructure provisioning and team tracking via database stored procedure using client-generated match ID.</description></item>
+///   <item><description>Match creation on the seeded quick match sandbox and team tracking via database stored procedure using client-generated match ID.</description></item>
 ///   <item><description>Automated granting or promotion of team editor permissions for both Home and Guest team managers.</description></item>
 ///   <item><description>Initial starting lineup population for both Home and Guest teams up to configured lineup limits.</description></item>
 ///   <item><description>Compensating rollback cleanup when post-creation initialization steps fail.</description></item>
@@ -527,5 +529,138 @@ public class CreateQuickMatchHandlerTests
         _userRepositoryMock.Verify(
             u => u.DeleteAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    /// <summary>
+    /// Verifies that PostgreSQL error P0005 (configuration not found or owned by another sport) is mapped to
+    /// <see cref="NotFoundException"/> and that the JIT user provisioned by the request is rolled back.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldThrowNotFoundExceptionAndDeleteNewUser_WhenSqlStateIsP0005()
+    {
+        // Arrange
+        var command = CreateCommand(out var userId);
+        SetupNewUserAndRepositoryFailure(command, userId, "P0005");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<NotFoundException>(() => _handler.Handle(command, CancellationToken.None));
+        VerifyNewUserRolledBack(userId);
+    }
+
+    /// <summary>
+    /// Verifies that PostgreSQL error P0006 (quick match sandbox not provisioned) is mapped to
+    /// <see cref="ConflictException"/>, logged at Error level, and that the JIT user provisioned by the request is rolled back.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldThrowConflictExceptionAndDeleteNewUser_WhenSqlStateIsP0006()
+    {
+        // Arrange
+        var command = CreateCommand(out var userId);
+        SetupNewUserAndRepositoryFailure(command, userId, "P0006");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ConflictException>(() => _handler.Handle(command, CancellationToken.None));
+        VerifyNewUserRolledBack(userId);
+
+        _loggerMock.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<PostgresException>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that PostgreSQL error 22004 (required identifier missing) is mapped to
+    /// <see cref="BadRequestException"/> and that the JIT user provisioned by the request is rolled back.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldThrowBadRequestExceptionAndDeleteNewUser_WhenSqlStateIs22004()
+    {
+        // Arrange
+        var command = CreateCommand(out var userId);
+        SetupNewUserAndRepositoryFailure(command, userId, "22004");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<BadRequestException>(() => _handler.Handle(command, CancellationToken.None));
+        VerifyNewUserRolledBack(userId);
+    }
+
+    /// <summary>
+    /// Verifies that an unmapped PostgreSQL error is propagated unchanged while the JIT user is still rolled back.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldRethrowPostgresExceptionAndDeleteNewUser_WhenSqlStateIsNotMapped()
+    {
+        // Arrange
+        var command = CreateCommand(out var userId);
+        SetupNewUserAndRepositoryFailure(command, userId, "P0001");
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<PostgresException>(() => _handler.Handle(command, CancellationToken.None));
+        Assert.Equal("P0001", exception.SqlState);
+        VerifyNewUserRolledBack(userId);
+    }
+
+    /// <summary>
+    /// Verifies that a newly provisioned JIT user is deleted when quick match creation returns null.
+    /// </summary>
+    [Fact]
+    public async Task Handle_ShouldThrowKeyNotFoundExceptionAndDeleteNewUser_WhenMatchCreationReturnsNull()
+    {
+        // Arrange
+        var command = CreateCommand(out var userId);
+
+        _userRepositoryMock
+            .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => (user, true));
+
+        _matchRepositoryMock
+            .Setup(r => r.CreateQuickMatchAsync(
+                command.Request.Id, command.Request.SportId, userId, command.Request.ConfigurationId, false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Match?)null);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => _handler.Handle(command, CancellationToken.None));
+        VerifyNewUserRolledBack(userId);
+    }
+
+    /// <summary>
+    /// Creates a quick match command for a random match, sport and configuration.
+    /// </summary>
+    /// <param name="userId">The identifier of the authenticated user used by the command.</param>
+    /// <returns>The created command.</returns>
+    private static CreateQuickMatchCommand CreateCommand(out string userId)
+    {
+        userId = $"auth0|{Guid.NewGuid():N}";
+        var request = new CreateQuickMatchRequest(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), false);
+        return new CreateQuickMatchCommand(request, userId, "user@example.com", "Test User");
+    }
+
+    /// <summary>
+    /// Configures the mocks so the user is newly provisioned and the repository fails with the given SQLSTATE.
+    /// </summary>
+    private void SetupNewUserAndRepositoryFailure(CreateQuickMatchCommand command, string userId, string sqlState)
+    {
+        _userRepositoryMock
+            .Setup(u => u.UpsertAsync(It.IsAny<User>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => (user, true));
+
+        _matchRepositoryMock
+            .Setup(r => r.CreateQuickMatchAsync(
+                command.Request.Id, command.Request.SportId, userId, command.Request.ConfigurationId, false, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new PostgresException("Quick match failure", "ERROR", "ERROR", sqlState));
+    }
+
+    /// <summary>
+    /// Verifies that only the newly provisioned user was deleted and no match or access policy cleanup was attempted.
+    /// </summary>
+    private void VerifyNewUserRolledBack(string userId)
+    {
+        _userRepositoryMock.Verify(u => u.DeleteAsync(userId, It.IsAny<CancellationToken>()), Times.Once);
+        _matchRepositoryMock.Verify(m => m.DeleteAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _accessRepositoryMock.Verify(a => a.DeleteAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

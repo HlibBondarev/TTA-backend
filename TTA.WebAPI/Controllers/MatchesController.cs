@@ -313,7 +313,7 @@ public class MatchesController(
     }
 
     /// <summary>
-    /// Creates a quick match and provisions required infrastructure JIT.
+    /// Creates a quick match on top of the seeded quick match sandbox (teams, JIT tournament and rosters) for the sport configuration.
     /// </summary>
     /// <param name="request">The quick match request parameters.</param>
     /// <param name="validator">The fluent validator instance for quick match request.</param>

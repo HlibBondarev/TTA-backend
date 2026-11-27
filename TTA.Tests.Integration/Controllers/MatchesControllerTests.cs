@@ -2262,7 +2262,8 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"QuickPolo_{Guid.NewGuid():N}");
         var configId = await SeedConfigurationAsync(sportId);
-        await SeedQuickMatchEnvironmentAsync(sportId);
+        var sandbox = await SeedQuickMatchSandboxAsync(sportId, configId, rosterSize: 5);
+        await LimitLineupAsync(configId, lineupLimit: 3);
 
         var request = new CreateQuickMatchRequest(matchId, sportId, configId, IsGuestTeam: false);
 
@@ -2280,9 +2281,9 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             var result = await response.Content.ReadFromJsonAsync<QuickMatchResponse>();
             result.Should().NotBeNull();
             result!.Id.Should().Be(matchId);
-            result.HomeTeamId.Should().NotBeEmpty();
-            result.GuestTeamId.Should().NotBeEmpty();
-            result.TournamentId.Should().NotBeEmpty();
+            result.HomeTeamId.Should().Be(sandbox.HomeTeamId);
+            result.GuestTeamId.Should().Be(sandbox.GuestTeamId);
+            result.TournamentId.Should().Be(sandbox.TournamentId);
 
             // Assert 2: Database State Verification - JIT User Provisioning in public.users
             using (var checkConn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection())
@@ -2301,7 +2302,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
                     new { tournamentId = result.TournamentId });
 
                 tournament.Should().NotBeNull("Tournament record must be created in public.tournaments");
-                tournament!.OwnerId.Should().Be(jitUserId, "Tournament owner must be set to the creator user ID");
+                tournament!.OwnerId.Should().Be(sandbox.OwnerId, "the seeded sandbox tournament keeps its own owner and is never reassigned to the caller");
             }
 
             // Assert 4: Verify starting lineups were generated for both Home and Guest teams
@@ -2312,6 +2313,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             homeLineup.Should().NotBeNull();
             homeLineup!.Should().HaveCount(3, "home team lineup should contain 3 players based on lineuplimit=3");
             homeLineup.Should().OnlyContain(l => l.TeamId == result.HomeTeamId, "all home lineup items must belong to HomeTeamId");
+            AssertSeededRosterPositions(homeLineup);
 
             var guestLineupResponse = await Client.GetAsync($"{BaseUrl}/{result.Id}/teams/{result.GuestTeamId}/lineup");
             guestLineupResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -2320,11 +2322,70 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
             guestLineup.Should().NotBeNull();
             guestLineup!.Should().HaveCount(3, "guest team lineup should contain 3 players based on lineuplimit=3");
             guestLineup.Should().OnlyContain(l => l.TeamId == result.GuestTeamId, "all guest lineup items must belong to GuestTeamId");
+            AssertSeededRosterPositions(guestLineup);
         }
         finally
         {
             TestAuthHandler.CustomUserId = null;
         }
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> returns <see cref="HttpStatusCode.Conflict"/> (409)
+    /// when the quick match sandbox is not seeded for the sport configuration.
+    /// </summary>
+    [Fact]
+    public async Task CreateQuickMatch_ShouldReturnConflict_WhenSandboxIsNotProvisioned()
+    {
+        // Arrange
+        var jitUserId = $"auth0|nosandbox-{Guid.NewGuid():N}";
+        var sportId = await SeedSportDataAsync(Guid.NewGuid(), $"NoSandboxPolo_{Guid.NewGuid():N}");
+        var configId = await SeedConfigurationAsync(sportId);
+        var request = new CreateQuickMatchRequest(Guid.NewGuid(), sportId, configId, IsGuestTeam: false);
+
+        try
+        {
+            TestAuthHandler.CustomUserId = jitUserId;
+
+            // Act
+            var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
+
+            // Assert
+            response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+            using var checkConn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
+            await checkConn.OpenAsync();
+            var matchCount = await checkConn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM public.matches");
+            matchCount.Should().Be(0, "no match may be created when the sandbox is missing");
+        }
+        finally
+        {
+            TestAuthHandler.CustomUserId = null;
+        }
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="MatchesController.CreateQuickMatch"/> returns <see cref="HttpStatusCode.NotFound"/> (404)
+    /// when the configuration belongs to another sport.
+    /// </summary>
+    [Fact]
+    public async Task CreateQuickMatch_ShouldReturnNotFound_WhenConfigurationBelongsToAnotherSport()
+    {
+        // Arrange
+        var sportId = await SeedSportDataAsync(Guid.NewGuid(), $"MismatchPoloA_{Guid.NewGuid():N}");
+        var sandboxConfigId = await SeedConfigurationAsync(sportId);
+        await SeedQuickMatchSandboxAsync(sportId, sandboxConfigId);
+
+        var otherSportId = await SeedSportDataAsync(Guid.NewGuid(), $"MismatchPoloB_{Guid.NewGuid():N}");
+        var otherConfigId = await SeedConfigurationAsync(otherSportId);
+
+        var request = new CreateQuickMatchRequest(Guid.NewGuid(), sportId, otherConfigId, IsGuestTeam: false);
+
+        // Act
+        var response = await Client.PostAsJsonAsync($"{BaseUrl}/quick", request);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     /// <summary>
@@ -2393,7 +2454,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"UnauthPolo_{Guid.NewGuid():N}");
         var configId = await SeedConfigurationAsync(sportId);
-        await SeedQuickMatchEnvironmentAsync(sportId);
+        await SeedQuickMatchSandboxAsync(sportId, configId);
 
         var request = new CreateQuickMatchRequest(Guid.NewGuid(), sportId, configId, IsGuestTeam: false);
 
@@ -2429,7 +2490,7 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         var sportId = Guid.NewGuid();
         sportId = await SeedSportDataAsync(sportId, $"FallbackPolo_{Guid.NewGuid():N}");
         var configId = await SeedConfigurationAsync(sportId);
-        await SeedQuickMatchEnvironmentAsync(sportId);
+        await SeedQuickMatchSandboxAsync(sportId, configId);
 
         var request = new CreateQuickMatchRequest(matchId, sportId, configId, IsGuestTeam: false);
 
@@ -3433,60 +3494,26 @@ public class MatchesControllerTests(DatabaseFixture fixture, ITestOutputHelper o
         return sportId;
     }
 
-    private async Task SeedQuickMatchEnvironmentAsync(Guid sportId)
+    /// <summary>
+    /// Limits the lineup size of a sport configuration for predictable quick match lineup assertions.
+    /// </summary>
+    private async Task LimitLineupAsync(Guid configId, int lineupLimit)
     {
-        var defaultClubId = Guid.Parse("11111111-1111-1111-1111-000000000001");
-        var tempCityId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-
         using var conn = (NpgsqlConnection)Fixture.ConnectionFactory.CreateConnection();
         await conn.OpenAsync();
+        await conn.ExecuteAsync(
+            "UPDATE public.sportconfigurations SET lineuplimit = @lineupLimit WHERE id = @configId",
+            new { lineupLimit, configId });
+    }
 
-        // 1. Geography seeding
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.countries (name, code) VALUES ('Ukraine', 'UA') ON CONFLICT DO NOTHING;
-            INSERT INTO public.regions (countryid, name) SELECT id, 'Dnipro Region' FROM public.countries WHERE code = 'UA' ON CONFLICT DO NOTHING;
-            INSERT INTO public.cities (id, regionid, name) SELECT @cityId, id, 'Dnipro' FROM public.regions WHERE name = 'Dnipro Region' ON CONFLICT DO NOTHING;",
-            new { cityId = tempCityId });
-
-        var actualCityId = await conn.QuerySingleAsync<Guid>(
-            "SELECT id FROM public.cities WHERE name = 'Dnipro' LIMIT 1");
-
-        // 2. Default club seeding
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.clubs (id, cityid, name, createdat) 
-            VALUES (@clubId, @cityId, 'TTA Training Club', NOW()) 
-            ON CONFLICT DO NOTHING;",
-            new { clubId = defaultClubId, cityId = actualCityId });
-
-        // 3. Position definition seeding for the specified sport
-        await conn.ExecuteAsync(@"
-            INSERT INTO public.playerpositiondefinitions (id, sportid, name, shortname)
-            VALUES (@id, @sportId, 'Universal Player', 'UP')
-            ON CONFLICT DO NOTHING;",
-            new { id = Guid.NewGuid(), sportId });
-
-        // 4. Adjust roster and lineup limits for test predictability
-        await conn.ExecuteAsync(@"
-            UPDATE public.sportconfigurations 
-            SET rosterlimit = 5, lineuplimit = 3 
-            WHERE sportid = @sportId;",
-            new { sportId });
-
-        // 5. Seed default club players for Home and Guest teams
-        for (int i = 1; i <= 5; i++)
-        {
-            await conn.ExecuteAsync(@"
-                INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
-                VALUES (@id, @clubId, 'Home Player', @ln, '2000-01-01', 0, NOW())
-                ON CONFLICT DO NOTHING;",
-                new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() });
-
-            await conn.ExecuteAsync(@"
-                INSERT INTO public.players (id, homeclubid, firstname, lastname, birthdate, gender, createdat)
-                VALUES (@id, @clubId, 'Guest Player', @ln, '2000-01-01', 0, NOW())
-                ON CONFLICT DO NOTHING;",
-                new { id = Guid.NewGuid(), clubId = defaultClubId, ln = i.ToString() });
-        }
+    /// <summary>
+    /// Asserts that the roster positions of the seeded sandbox flowed into the match lineup:
+    /// cap 1 is the goalkeeper and every other cap is a utility player.
+    /// </summary>
+    private static void AssertSeededRosterPositions(IReadOnlyCollection<MatchLineupResponse> lineup)
+    {
+        lineup.Single(l => l.Number == 1).PositionName.Should().Be("Goalkeeper");
+        lineup.Where(l => l.Number != 1).Should().OnlyContain(l => l.PositionName == "Utility");
     }
 
     private async Task<Guid> GetFirstPositionIdAsync(Guid sportId)

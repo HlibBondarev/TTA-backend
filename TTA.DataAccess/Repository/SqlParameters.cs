@@ -20,6 +20,12 @@ public static class SqlParameters
     /// <summary>Parameter name for the sport identifier.</summary>
     public const string SportId = "p_sport_id";
 
+    /// <summary>Parameter name for the sport configuration identifier.</summary>
+    public const string ConfigurationId = "p_configuration_id";
+
+    /// <summary>Parameter name for the flag indicating that the guest team is tracked.</summary>
+    public const string IsGuestTeam = "p_is_guest_team";
+
     /// <summary>Parameter name for the owner user identifier.</summary>
     public const string OwnerId = "p_owner_id";
 

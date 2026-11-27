@@ -309,10 +309,11 @@ public static class SqlStatements
             "SELECT * FROM public.get_system_event_definitions_by_sport(@p_sport_id)";
 
         /// <summary>
-        /// Executes the storage function to provision infrastructure and create a quick match.
+        /// Executes the sport-agnostic storage function that creates a quick match on top of the seeded
+        /// quick match sandbox (teams, JIT tournament and rosters) and tracks it for the user.
         /// </summary>
         public const string CreateQuickMatch =
-            "SELECT * FROM public.create_quick_match(@MatchId, @SportId, @UserId, @ConfigurationId, @IsGuestTeam)";
+            "SELECT * FROM public.create_quick_match(@p_match_id, @p_sport_id, @p_user_id, @p_configuration_id, @p_is_guest_team)";
 
         /// <summary>
         /// Executes the storage function to delete a match by its unique identifier.

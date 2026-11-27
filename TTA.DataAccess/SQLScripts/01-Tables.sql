@@ -157,6 +157,10 @@ CREATE INDEX ix_tournaments_sportid ON public.tournaments (sportid);
 CREATE INDEX ix_tournaments_ownerid ON public.tournaments (ownerid);
 CREATE INDEX ix_tournaments_isjit ON public.tournaments (isjit);
 
+-- Guarantees at most one JIT Quick Match sandbox tournament per sport configuration
+CREATE UNIQUE INDEX IF NOT EXISTS uix_tournaments_jit_configuration
+    ON public.tournaments (configurationid) WHERE (isjit = TRUE);
+
 CREATE TABLE matches (
     id UUID PRIMARY KEY,
     tournamentid UUID NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
