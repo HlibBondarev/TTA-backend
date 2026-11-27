@@ -39,6 +39,7 @@ def mark_event_unverified(candidate: Pass1EventCandidate) -> None:
 def mark_anchor_unverified(anchor: Pass1AnchorCandidate) -> None:
     """Fail open: keep the anchor but flag it for review."""
     anchor.needs_review = True
+    anchor.verified = False
 
 
 def _resolve_relabel(
@@ -58,13 +59,42 @@ def _resolve_relabel(
     return target
 
 
+def _derive_cap_color_hint(
+    candidate: Pass1EventCandidate,
+    verdict: VerifierVerdict,
+    profile: SportProfile,
+    tracked_cap_color_hint: str | None,
+    *,
+    actor_changed: bool,
+) -> str | None:
+    """Pick the cap color hint for the final definition.
+
+    Priority: the color the verifier observed, then the profile's expected color for the
+    definition, then (same actor only) the previously observed hint. A hint left over from a
+    different actor is never kept.
+    """
+    observed = (verdict.actor_cap_color or "").strip().lower()
+    if observed:
+        return observed
+    expected = profile.expected_actor_cap_color(candidate.definition, tracked_cap_color_hint)
+    if expected or actor_changed:
+        return expected
+    return candidate.cap_color_hint
+
+
 def apply_event_verdict(
     candidate: Pass1EventCandidate,
     verdict: VerifierVerdict,
     catalog: Mapping[str, EventDefinition],
     profile: SportProfile,
+    tracked_cap_color_hint: str | None = None,
 ) -> tuple[Pass1EventCandidate | None, str | None]:
     """Apply one verdict to an event candidate.
+
+    A relabel that changes the expected actor (goalkeeper status or conceded/goal polarity, see
+    :meth:`SportProfile.relabel_changes_actor`) clears ``actor_bbox_normalized`` because the old
+    box points at a different player. Same-actor relabels keep the box so Pass 2 can still track
+    the player. ``cap_color_hint`` is always re-derived for the final definition.
 
     Returns:
         The updated candidate (mutated in place) or ``None`` when it must be dropped, plus a
@@ -80,11 +110,15 @@ def apply_event_verdict(
     if not verdict.is_live_play:
         return None, f"Verifier dropped event {label}: not live play."
 
+    actor_changed = profile.relabel_changes_actor(candidate.definition, definition)
     candidate.definition = definition
     if verdict.acting_team != ACTING_TEAM_UNKNOWN:
         candidate.acting_team = verdict.acting_team
-    if verdict.actor_cap_color and verdict.actor_cap_color.strip():
-        candidate.cap_color_hint = verdict.actor_cap_color.strip().lower()
+    if actor_changed:
+        candidate.actor_bbox_normalized = None
+    candidate.cap_color_hint = _derive_cap_color_hint(
+        candidate, verdict, profile, tracked_cap_color_hint, actor_changed=actor_changed
+    )
     candidate.confidence = round(verdict.confidence, 4)
     if verdict.confidence < LOW_VERIFIER_CONFIDENCE_THRESHOLD:
         _add_reason(candidate, LOW_VERIFIER_CONFIDENCE_REASON)
@@ -100,6 +134,7 @@ def apply_anchor_verdict(
             f"Verifier dropped anchor {anchor.type.value} at {anchor.video_time_sec}s: "
             f"{verdict.reason or 'not confirmed'}."
         )
+    anchor.verified = True
     anchor.confidence = round(verdict.confidence, 4)
     if verdict.confidence < LOW_VERIFIER_CONFIDENCE_THRESHOLD:
         anchor.needs_review = True

@@ -584,7 +584,9 @@ class AnchorReconciler:
 
         An unpaired ``StoppageStart`` with no later end is dropped, except when the period has no
         ``PeriodEnd`` either (``keep_trailing_start``): the earliest such start is preserved and
-        flagged for review because the stoppage may legitimately run to the end of the clip.
+        flagged for review because the stoppage may legitimately run to the end of the clip. A
+        leftover start that precedes a later completed interval of the same period is never
+        genuinely trailing, so it is dropped instead.
         """
         ordered_starts = sorted(starts, key=lambda a: a.video_time_sec)
         ordered_ends = sorted(ends, key=lambda a: a.video_time_sec)
@@ -605,8 +607,16 @@ class AnchorReconciler:
             ):
                 end_idx += 1
             if end_idx >= len(ordered_ends):
+                precedes_completed = any(
+                    iv.start.video_time_sec > start_anchor.video_time_sec
+                    for iv in [*existing_intervals, *paired]
+                )
                 AnchorReconciler._handle_trailing_start(
-                    period_num, start_anchor, trailing, warnings, keep=keep_trailing_start
+                    period_num,
+                    start_anchor,
+                    trailing,
+                    warnings,
+                    keep=keep_trailing_start and not precedes_completed,
                 )
                 continue
             end_anchor = ordered_ends[end_idx]

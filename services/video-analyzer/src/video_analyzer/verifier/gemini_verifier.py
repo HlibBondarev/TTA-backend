@@ -28,7 +28,7 @@ from video_analyzer.pass1.models import (
 from video_analyzer.pipeline.parallel import ordered_parallel_map
 from video_analyzer.schemas.draft import GeminiTokenUsage
 from video_analyzer.sport.context import AnalysisContext
-from video_analyzer.usage import extract_usage_metadata
+from video_analyzer.usage import extract_usage_or_unknown
 from video_analyzer.verifier.apply import (
     apply_anchor_verdict,
     apply_event_verdict,
@@ -233,7 +233,8 @@ class GeminiClipVerifier(BaseEventVerifier):
         if not descriptors:
             return outcome
         try:
-            outcome.verdicts = self._request_verdicts(context, descriptors, clips, outcome.usages)
+            verdicts = self._request_verdicts(context, descriptors, clips, outcome.usages)
+            outcome.verdicts = self._restrict_to_batch(verdicts, descriptors, outcome.warnings)
         except GeminiCallBlockedError as exc:
             blocked.set()
             outcome.warnings.append(
@@ -245,6 +246,26 @@ class GeminiClipVerifier(BaseEventVerifier):
             logger.warning("Verifier batch failed: %s", exc)
             outcome.warnings.append(f"Verifier batch failed open: {exc}")
         return outcome
+
+    @staticmethod
+    def _restrict_to_batch(
+        verdicts: dict[int, VerifierVerdict],
+        descriptors: list[ClipDescriptor],
+        warnings: list[str],
+    ) -> dict[int, VerifierVerdict]:
+        """Keep only verdicts for clips submitted in this batch; reject any other item id.
+
+        A hallucinated or foreign id must never alter a skipped or other-batch candidate. Missing
+        verdicts are untouched, so those candidates still fail open as ``UNVERIFIED``.
+        """
+        submitted = {descriptor.item_id for descriptor in descriptors}
+        rejected = sorted(item_id for item_id in verdicts if item_id not in submitted)
+        if rejected:
+            warnings.append(
+                f"Verifier ignored verdict(s) for item id(s) {rejected} "
+                "outside the submitted batch."
+            )
+        return {item_id: v for item_id, v in verdicts.items() if item_id in submitted}
 
     def _prepare_clips(
         self,
@@ -362,9 +383,7 @@ class GeminiClipVerifier(BaseEventVerifier):
                     model=self._model_name, contents=contents, config=config
                 )
             )
-            usage = extract_usage_metadata(response)
-            if usage is not None:
-                usages.append(usage)
+            usages.append(extract_usage_or_unknown(response))
             try:
                 return self._parse_response(response)
             except (RuntimeError, ValidationError) as exc:
@@ -453,7 +472,9 @@ class GeminiClipVerifier(BaseEventVerifier):
         if verdict is None:
             mark_event_unverified(event)
             return event
-        kept, warning = apply_event_verdict(event, verdict, catalog, context.profile)
+        kept, warning = apply_event_verdict(
+            event, verdict, catalog, context.profile, context.tracked_cap_color_hint
+        )
         if warning:
             warnings.append(warning)
         return kept

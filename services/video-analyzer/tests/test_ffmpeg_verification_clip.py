@@ -90,8 +90,8 @@ def test_cut_verification_clip_reencodes_accurately_from_the_mezzanine(
     assert result == out_path
     assert out_path.parent.is_dir()
     cmd = recorded[0]
-    # Output-side -ss (after -i) gives a frame-accurate cut instead of a keyframe-snapped one.
-    assert cmd.index("-i") < cmd.index("-ss")
+    # Input-side -ss (before -i) avoids decoding from 0:00; re-encoding keeps the cut accurate.
+    assert cmd.index("-ss") < cmd.index("-i")
     assert cmd[cmd.index("-ss") + 1] == "47.000"
     assert cmd[cmd.index("-t") + 1] == "5.000"
     assert cmd[cmd.index("-c:v") + 1] == "libx264"

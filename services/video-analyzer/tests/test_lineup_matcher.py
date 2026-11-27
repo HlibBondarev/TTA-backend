@@ -74,6 +74,46 @@ def test_lineup_matcher_never_guesses_on_low_confidence(sample_context: Analysis
     assert [c.cap_number for c in outcome.candidate_lineup_ids] == [4, 11]
 
 
+def test_lineup_matcher_flags_unreadable_cap_and_unknown_roster_number_as_low_confidence(
+    sample_context: AnalysisContext,
+) -> None:
+    matcher = LineupMatcher()
+    cand = _event_candidate(sample_context)
+    unreadable = CapResolutionResult(
+        resolved_cap_number=None, confidence=0.95, candidate_scores={}, reasoning="unreadable"
+    )
+    off_roster = CapResolutionResult(
+        resolved_cap_number=99, confidence=0.95, candidate_scores={99: 0.95}, reasoning="odd"
+    )
+
+    for cap_res in (unreadable, off_roster):
+        outcome = matcher.resolve(cand, cap_res, sample_context, min_cap_confidence=0.80)
+
+        assert outcome.match_lineup_id is None
+        assert "LOW_CAP_CONFIDENCE" in outcome.review_reasons
+
+
+def test_lineup_matcher_without_cap_result_reports_the_given_failure_reason(
+    sample_context: AnalysisContext,
+) -> None:
+    cand = _event_candidate(sample_context)
+    cand.actor_bbox_normalized = None
+
+    outcome = LineupMatcher().resolve(
+        cand,
+        None,
+        sample_context,
+        min_cap_confidence=0.80,
+        pass2_failure_reason="CROPS_EMPTY",
+    )
+
+    assert outcome.match_lineup_id is None
+    assert outcome.cap_confidence is None
+    assert outcome.needs_review is True
+    assert "CROPS_EMPTY" in outcome.review_reasons
+    assert "NO_PLAYER_TRACKLET_MATCHED" not in outcome.review_reasons
+
+
 def test_lineup_matcher_flags_duplicate_cap_number_collision(
     sample_context: AnalysisContext,
 ) -> None:

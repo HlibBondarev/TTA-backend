@@ -125,6 +125,8 @@ class Pass1AnchorCandidate:
     confidence: float
     needs_review: bool = False
     evidence: str | None = None
+    # True only after the clip verifier explicitly confirmed this anchor (keep verdict).
+    verified: bool = False
 
 
 @dataclass(slots=True)

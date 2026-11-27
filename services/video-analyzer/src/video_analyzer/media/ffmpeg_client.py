@@ -59,6 +59,7 @@ _QUARTER_TURN_DEGREES: int = 90
 _FULL_TURN_DEGREES: int = 360
 _ENCODER_LINE_PATTERN = re.compile(r"^\s*V\S*\s+(\S+)")
 _DOWNLOAD_CANCELLED_MESSAGE = "Source video download cancelled."
+_MOVFLAGS_FASTSTART = "+faststart"
 _DOWNLOAD_CONNECT_TIMEOUT_CAP_SEC: float = 10.0
 
 # Per-encoder constant-quality arguments (roughly equivalent to libx264 CRF 28).
@@ -736,7 +737,7 @@ class FFmpegClient:
                 "-avoid_negative_ts",
                 "make_zero",
                 "-movflags",
-                "+faststart",
+                _MOVFLAGS_FASTSTART,
                 str(chunk_path),
             ]
             self._run_command(
@@ -761,8 +762,9 @@ class FFmpegClient:
     ) -> Path:
         """Cut an accurate ``[center - pre, center + post]`` clip from the mezzanine.
 
-        The clip is re-encoded (``libx264 -preset ultrafast``) with an output-side ``-ss`` so the
-        cut is frame accurate instead of snapping to a keyframe, and audio is kept. The start is
+        The clip is re-encoded (``libx264 -preset ultrafast``) with an input-side ``-ss``: FFmpeg
+        seeks to the nearest keyframe without decoding from 0:00 and then decodes up to the exact
+        start, so the cut stays frame accurate while seeking stays fast. Audio is kept. The start is
         clamped at 0 s; the end is naturally clamped by the end of the mezzanine.
         """
         start_sec = max(0.0, center_sec - pre_sec)
@@ -772,10 +774,10 @@ class FFmpegClient:
             self._ffmpeg_bin,
             "-y",
             "-hide_banner",
-            "-i",
-            str(mezzanine_path),
             "-ss",
             f"{start_sec:.3f}",
+            "-i",
+            str(mezzanine_path),
             "-t",
             f"{duration_sec:.3f}",
             "-map",
@@ -801,7 +803,7 @@ class FFmpegClient:
             "-b:a",
             "32k",
             "-movflags",
-            "+faststart",
+            _MOVFLAGS_FASTSTART,
             str(out_path),
         ]
         self._run_command(
@@ -900,7 +902,7 @@ class FFmpegClient:
             cmd += ["-c:a", "aac", "-ac", "1", "-ar", "16000", "-b:a", "32k"]
         else:
             cmd.append("-an")
-        cmd += ["-movflags", "+faststart", str(output_path)]
+        cmd += ["-movflags", _MOVFLAGS_FASTSTART, str(output_path)]
         return cmd
 
     @staticmethod

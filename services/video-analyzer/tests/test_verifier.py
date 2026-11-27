@@ -28,8 +28,15 @@ from video_analyzer.verifier import (
     GeminiClipVerifier,
     VerdictKind,
     VerifierBatchResponse,
+    VerifierVerdict,
 )
-from video_analyzer.verifier.apply import prune_orphan_stoppage_ends, settle_conflict_groups
+from video_analyzer.verifier.apply import (
+    apply_anchor_verdict,
+    apply_event_verdict,
+    mark_anchor_unverified,
+    prune_orphan_stoppage_ends,
+    settle_conflict_groups,
+)
 
 Verdict = dict[str, Any]
 Responder = Callable[[list[int], list[Any]], list[Verdict]]
@@ -536,9 +543,10 @@ def test_cancellation_while_cutting_clips_propagates(
             raise FFmpegCancelledError("cancelled")
 
     verifier, _, _ = _verifier(ffmpeg=CancellingFFmpeg())
+    events = [_event(sample_context, "Steal", 10.0)]
 
     with pytest.raises(FFmpegCancelledError):
-        _run(verifier, sample_context, [_event(sample_context, "Steal", 10.0)], tmp_path=tmp_path)
+        _run(verifier, sample_context, events, tmp_path=tmp_path)
 
 
 def test_verdict_models_accept_the_documented_response_shape() -> None:
@@ -548,3 +556,216 @@ def test_verdict_models_accept_the_documented_response_shape() -> None:
 
     assert payload.verdicts[0].verdict == VerdictKind.RELABEL
     assert payload.verdicts[0].relabel_prompt_code == "EVT_X"
+
+
+def test_verdicts_for_ids_outside_the_submitted_batch_are_rejected(
+    sample_context: AnalysisContext, tmp_path: Path
+) -> None:
+    def responder(ids, contents):
+        # Besides its own clips the model also answers for item 99 (unknown) and item 5, which
+        # belongs to a different (here: skipped) candidate and asks to drop it.
+        return [
+            *[_verdict(i) for i in ids if i != 2],
+            _verdict(5, verdict="drop"),
+            _verdict(99, verdict="drop"),
+        ]
+
+    verifier, _, _ = _verifier(responder, batch_size=2, max_candidates=4)
+    events = [_event(sample_context, "Steal", 10.0 * (i + 1)) for i in range(5)]
+
+    result = _run(verifier, sample_context, events, tmp_path=tmp_path)
+
+    assert len(result.events) == 5  # the foreign drop verdicts never reach other candidates
+    unverified = [UNVERIFIED_REASON in e.review_reasons for e in result.events]
+    assert unverified == [False, True, False, False, True]  # missing verdict + skipped stay open
+    assert any("outside the submitted batch" in w and "99" in w for w in result.warnings)
+
+
+def test_completed_calls_without_usage_metadata_are_counted_as_unknown_usage(
+    sample_context: AnalysisContext, tmp_path: Path
+) -> None:
+    verifier, models, _ = _verifier(usage=False, batch_size=3, max_concurrency=1)
+    events = [_event(sample_context, "Steal", 10.0 + 10 * i) for i in range(6)]
+
+    result = _run(verifier, sample_context, events, tmp_path=tmp_path)
+
+    assert len(models.requests) == 2
+    assert len(result.usages) == 2
+    diagnostics = build_gemini_usage_diagnostics(
+        pass1_model="gemini-4-hydrogen",
+        pass1_usages=[],
+        pass2_model="gemini-4-hydrogen",
+        pass2_usages=[],
+        pricing_table={"gemini-4-hydrogen": {"input": 1.0, "output": 1.0}},
+        verifier_model="gemini-4-hydrogen",
+        verifier_usages=result.usages,
+    )
+    assert diagnostics.verifier.usage.call_count == 2
+    assert diagnostics.verifier.usage.prompt_tokens is None
+    assert diagnostics.verifier.usage.total_tokens is None
+    assert diagnostics.total.call_count == 2
+    assert diagnostics.estimated_cost is not None
+    assert diagnostics.estimated_cost.total_cost_usd is None
+
+
+def test_malformed_attempts_without_metadata_still_count_every_completed_call(
+    sample_context: AnalysisContext, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("video_analyzer.verifier.gemini_verifier.time.sleep", lambda _: None)
+
+    class GarbageModels:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(text="not json", parsed=None, usage_metadata=None)
+
+    verifier = GeminiClipVerifier(
+        api_key="k",
+        ffmpeg_client=FakeFFmpeg(),  # type: ignore[arg-type]
+        client=SimpleNamespace(models=GarbageModels()),
+        max_attempts=2,
+    )
+    event = _event(sample_context, "Steal", 10.0)
+
+    result = _run(verifier, sample_context, [event], tmp_path=tmp_path)
+
+    # Both attempts completed a Gemini call, so both are counted despite the missing metadata.
+    assert [u.call_count for u in result.usages if u is not None] == [1, 1]
+
+
+def _bboxed_event(context: AnalysisContext, name: str, positive: bool = True):
+    event = _event(context, name, 40.0, positive)
+    event.actor_bbox_normalized = [0.1, 0.2, 0.3, 0.4]
+    return event
+
+
+def _relabel_verdict(prompt_code: str, **overrides: Any) -> VerifierVerdict:
+    return VerifierVerdict.model_validate(
+        _verdict(1, verdict="relabel", relabel_prompt_code=prompt_code, **overrides)
+    )
+
+
+def _catalog(context: AnalysisContext) -> dict[str, Any]:
+    return {d.prompt_code: d for d in context.event_catalog}
+
+
+def test_same_actor_relabel_keeps_the_actor_bbox_and_the_observed_cap_color(
+    sample_context: AnalysisContext,
+) -> None:
+    event = _bboxed_event(sample_context, "Shot on Goal")
+    verdict = _relabel_verdict(prompt_code_for("Missed Shot", positive=False))
+
+    kept, _ = apply_event_verdict(
+        event, verdict, _catalog(sample_context), sample_context.profile, "white"
+    )
+
+    assert kept is event
+    assert event.definition.name == "Missed Shot"
+    assert event.actor_bbox_normalized == [0.1, 0.2, 0.3, 0.4]
+    assert event.cap_color_hint == "white"
+
+
+def test_goalkeeper_status_relabel_clears_the_bbox_and_rederives_the_cap_color(
+    sample_context: AnalysisContext,
+) -> None:
+    event = _bboxed_event(sample_context, "Steal")
+    verdict = _relabel_verdict(prompt_code_for("Save"))
+
+    apply_event_verdict(event, verdict, _catalog(sample_context), sample_context.profile, "white")
+
+    assert event.definition.name == "Save"
+    assert event.actor_bbox_normalized is None
+    assert event.cap_color_hint == "red"  # goalkeeper cap color replaces the field player's hint
+
+
+def test_save_relabeled_to_steal_restores_the_tracked_team_cap_color(
+    sample_context: AnalysisContext,
+) -> None:
+    event = _bboxed_event(sample_context, "Save")
+    event.cap_color_hint = "red"
+    verdict = _relabel_verdict(prompt_code_for("Steal"))
+
+    apply_event_verdict(event, verdict, _catalog(sample_context), sample_context.profile, "white")
+
+    assert event.actor_bbox_normalized is None
+    assert event.cap_color_hint == "white"
+
+
+def test_goal_polarity_relabel_clears_the_bbox_in_both_directions(
+    sample_context: AnalysisContext,
+) -> None:
+    catalog = _catalog(sample_context)
+    profile = sample_context.profile
+    positive = _bboxed_event(sample_context, "Goal")
+    negative = _bboxed_event(sample_context, "Goal", positive=False)
+
+    apply_event_verdict(
+        positive, _relabel_verdict(prompt_code_for("Goal", positive=False)), catalog, profile
+    )
+    apply_event_verdict(negative, _relabel_verdict(prompt_code_for("Goal")), catalog, profile)
+
+    assert positive.definition.is_positive is False
+    assert positive.actor_bbox_normalized is None
+    assert positive.cap_color_hint == "red"
+    assert negative.definition.is_positive is True
+    assert negative.actor_bbox_normalized is None
+
+
+def test_verifier_observed_cap_color_wins_over_the_derived_expectation(
+    sample_context: AnalysisContext,
+) -> None:
+    event = _bboxed_event(sample_context, "Steal")
+    verdict = _relabel_verdict(prompt_code_for("Save"), actor_cap_color=" Red ")
+
+    apply_event_verdict(event, verdict, _catalog(sample_context), sample_context.profile, "white")
+
+    assert event.cap_color_hint == "red"
+
+
+def test_role_change_without_any_expectation_drops_the_stale_cap_color(
+    sample_context: AnalysisContext,
+) -> None:
+    event = _bboxed_event(sample_context, "Save")
+    event.cap_color_hint = "red"
+    verdict = _relabel_verdict(prompt_code_for("Steal"))
+
+    apply_event_verdict(event, verdict, _catalog(sample_context), sample_context.profile, None)
+
+    assert event.cap_color_hint is None
+
+
+def test_keep_verdict_leaves_bbox_and_cap_color_untouched_without_new_information(
+    sample_context: AnalysisContext,
+) -> None:
+    event = _bboxed_event(sample_context, "Steal")
+    verdict = VerifierVerdict.model_validate(_verdict(1))
+
+    apply_event_verdict(event, verdict, _catalog(sample_context), sample_context.profile, None)
+
+    assert event.actor_bbox_normalized == [0.1, 0.2, 0.3, 0.4]
+    assert event.cap_color_hint == "white"
+
+
+def test_only_a_keep_verdict_marks_an_anchor_as_verified() -> None:
+    kept = _anchor(10.0, TimeAnchorType.STOPPAGE_START)
+    dropped = _anchor(20.0, TimeAnchorType.STOPPAGE_START)
+    unverified = _anchor(30.0, TimeAnchorType.STOPPAGE_START)
+    unverified.verified = True
+
+    apply_anchor_verdict(kept, VerifierVerdict.model_validate(_verdict(1)))
+    apply_anchor_verdict(dropped, VerifierVerdict.model_validate(_verdict(2, verdict="drop")))
+    mark_anchor_unverified(unverified)
+
+    assert kept.verified is True
+    assert dropped.verified is False
+    assert unverified.verified is False
+    assert unverified.needs_review is True
+
+
+def test_verifier_confirms_a_trailing_stoppage_only_through_a_keep_verdict(
+    sample_context: AnalysisContext, tmp_path: Path
+) -> None:
+    verifier, _, _ = _verifier()
+    anchors = [_anchor(60.0, TimeAnchorType.STOPPAGE_START)]
+
+    result = _run(verifier, sample_context, [], anchors, tmp_path=tmp_path)
+
+    assert result.anchors[0].verified is True

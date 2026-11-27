@@ -122,6 +122,18 @@ class SportProfile(ABC):
             first_key in group and second_key in group for group in self.verifier_confusable_sets
         )
 
+    def relabel_changes_actor(self, previous: EventDefinition, relabeled: EventDefinition) -> bool:
+        """Return True when relabeling ``previous`` as ``relabeled`` implies a different actor.
+
+        The acting player changes when the goalkeeper-event status differs (for example
+        ``Steal`` <-> ``Save``) or when the conceded-event status differs, i.e. the acting team
+        flips with the goal polarity (``Goal`` POSITIVE <-> ``Goal`` NEGATIVE). Same-actor
+        relabels such as ``Shot on Goal`` <-> ``Missed Shot`` return False.
+        """
+        return self.is_goalkeeper_event(previous) != self.is_goalkeeper_event(
+            relabeled
+        ) or self.is_conceded_event(previous) != self.is_conceded_event(relabeled)
+
     def expected_actor_cap_color(
         self, definition: EventDefinition, tracked_hint: str | None
     ) -> str | None:
@@ -154,9 +166,16 @@ class DefaultProfile(SportProfile):
         stoppage_end_cue="play restart whistle",
     )
 
+    _CONCEDED_EVENT_KEYS: frozenset[DefinitionKey] = frozenset({("goal", False)})
+
     @property
     def key(self) -> str:
         return "default"
+
+    @property
+    def conceded_event_keys(self) -> frozenset[DefinitionKey]:
+        """Negative ``Goal`` events are conceded by the tracked team in every sport."""
+        return self._CONCEDED_EVENT_KEYS
 
     @property
     def pass1_text(self) -> Pass1PromptText:

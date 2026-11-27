@@ -61,6 +61,17 @@ def extract_usage_metadata(response: Any) -> GeminiTokenUsage | None:
     )
 
 
+def extract_usage_or_unknown(response: Any) -> GeminiTokenUsage:
+    """Return the response's token usage, or a one-call entry with unknown counters.
+
+    A completed Gemini call must always be counted. When the response carries no usable
+    ``usage_metadata`` the entry keeps ``call_count=1`` while every token counter stays ``None``,
+    so aggregated totals read as unknown (incomplete) instead of silently reporting ``0``.
+    """
+    usage = extract_usage_metadata(response)
+    return usage if usage is not None else GeminiTokenUsage(call_count=1)
+
+
 def _has_unaccounted_non_thought_tokens(item: GeminiTokenUsage) -> bool:
     """Return True when unaccounted tokens exist while thoughts_tokens is absent."""
     if item.has_unaccounted_tokens:

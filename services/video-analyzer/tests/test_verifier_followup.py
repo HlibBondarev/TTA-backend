@@ -233,7 +233,9 @@ def test_positive_goal_is_relabeled_to_the_conceded_goal_and_keeps_the_opponent_
     assert result.events[0].definition.is_positive is False
     assert result.events[0].definition.prompt_code == CODE_GOAL_CONCEDED
     assert result.events[0].acting_team == "opponent"
-    assert result.events[0].actor_bbox_normalized == [0.1, 0.42, 0.16, 0.5]
+    # Goal POS -> Goal NEG changes the actor (scorer -> tracked goalkeeper): the old box is stale.
+    assert result.events[0].actor_bbox_normalized is None
+    assert result.events[0].cap_color_hint == "red"
     assert result.events[0].needs_review is False
 
 

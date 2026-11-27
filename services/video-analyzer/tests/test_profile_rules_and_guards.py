@@ -109,6 +109,35 @@ def test_conceded_events_are_the_negative_goal_only(sample_context: AnalysisCont
     assert not profile.is_conceded_event(_definition(sample_context, "Own Goal", False))
 
 
+def test_default_profile_treats_the_negative_goal_as_conceded(
+    sample_context: AnalysisContext,
+) -> None:
+    profile = DefaultProfile()
+
+    assert profile.is_conceded_event(_definition(sample_context, "Goal", positive=False))
+    assert not profile.is_conceded_event(_definition(sample_context, "Goal"))
+    assert not profile.is_conceded_event(_definition(sample_context, "Steal"))
+
+
+def test_relabel_changes_actor_only_for_goalkeeper_or_conceded_status_changes(
+    sample_context: AnalysisContext,
+) -> None:
+    profile = WaterPoloProfile()
+    sog = _definition(sample_context, "Shot on Goal")
+    miss = _definition(sample_context, "Missed Shot", positive=False)
+    steal = _definition(sample_context, "Steal")
+    save = _definition(sample_context, "Save")
+    goal_pos = _definition(sample_context, "Goal")
+    goal_neg = _definition(sample_context, "Goal", positive=False)
+
+    assert not profile.relabel_changes_actor(sog, miss)
+    assert not profile.relabel_changes_actor(miss, sog)
+    assert profile.relabel_changes_actor(steal, save)
+    assert profile.relabel_changes_actor(save, steal)
+    assert profile.relabel_changes_actor(goal_pos, goal_neg)
+    assert profile.relabel_changes_actor(goal_neg, goal_pos)
+
+
 # ---------------------------------------------------------------------- Pass 1 prompt rules
 
 
@@ -250,6 +279,24 @@ def test_deduplicator_drops_opponent_events_except_conceded_goals(
     assert raw_count == 4
     assert [e.video_time_sec for e in events] == [20.0, 30.0, 40.0]
     assert [e.acting_team for e in events] == ["tracked", "unknown", "opponent"]
+    assert any("opponent-team event" in w for w in warnings)
+
+
+def test_deduplicator_keeps_conceded_goals_for_the_default_profile(tmp_path: Path) -> None:
+    context = make_context(profile=DefaultProfile())
+    chunk = _chunk(tmp_path, 0, 0.0, 120.0)
+    result = Pass1ChunkResult(
+        period_events=[
+            _raw(CODE_STEAL, 10.0, "opponent"),
+            _raw(CODE_GOAL_CONCEDED, 40.0, "opponent"),
+        ]
+    )
+
+    events, _, warnings = EventDeduplicator().process(
+        [(chunk, result)], context.event_catalog, 120.0, 0.5, profile=context.profile
+    )
+
+    assert [e.definition.prompt_code for e in events] == [CODE_GOAL_CONCEDED]
     assert any("opponent-team event" in w for w in warnings)
 
 

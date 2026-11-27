@@ -24,6 +24,7 @@ from video_analyzer.usage import (
     estimate_call_cost_usd,
     estimate_stage_cost,
     extract_usage_metadata,
+    extract_usage_or_unknown,
 )
 
 # Fixed rates keep the arithmetic assertions independent of the shipped default price list.
@@ -577,3 +578,29 @@ def test_aggregate_preserves_unavailable_cost_across_mixed_partial_calls() -> No
     assert diag.estimated_cost is not None
     assert diag.estimated_cost.pricing_configured is True
     assert diag.estimated_cost.total_cost_usd is None
+
+
+def test_extract_usage_or_unknown_counts_calls_without_usable_metadata() -> None:
+    unknown = extract_usage_or_unknown(SimpleNamespace(text="ok"))
+
+    assert unknown.call_count == 1
+    assert unknown.prompt_tokens is None
+    assert unknown.total_tokens is None
+
+    known = extract_usage_or_unknown(
+        SimpleNamespace(usage_metadata=SimpleNamespace(prompt_token_count=5))
+    )
+    assert known.call_count == 1
+    assert known.prompt_tokens == 5
+
+
+def test_missing_metadata_calls_keep_aggregate_totals_unknown_instead_of_zero() -> None:
+    full = GeminiTokenUsage(call_count=1, prompt_tokens=100, candidates_tokens=10, total_tokens=110)
+    unknown = extract_usage_or_unknown(SimpleNamespace(text="ok"))
+
+    total = aggregate_token_usage([full, unknown])
+
+    assert total.call_count == 2
+    assert total.prompt_tokens is None
+    assert total.candidates_tokens is None
+    assert total.total_tokens is None
