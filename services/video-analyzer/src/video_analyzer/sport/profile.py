@@ -19,6 +19,33 @@ def definition_key(definition: EventDefinition) -> DefinitionKey:
 
 
 @dataclass(frozen=True, slots=True)
+class CapZoneGeometry:
+    """Fractions describing where a player's cap/head sits inside the detector box.
+
+    Attributes:
+        top_fraction: Share of the box height, measured from the top, covered by the zone.
+        horizontal_inset: Share of the box width trimmed from each side before padding.
+        padding: Extra margin added around the zone, relative to the zone size.
+    """
+
+    top_fraction: float
+    horizontal_inset: float
+    padding: float
+
+
+DEFAULT_CAP_ZONE_GEOMETRY = CapZoneGeometry(top_fraction=0.45, horizontal_inset=0.10, padding=0.20)
+"""Neutral head/cap zone used when a sport profile does not override the geometry."""
+
+WATER_POLO_CAP_ZONE_GEOMETRY = CapZoneGeometry(
+    top_fraction=0.75, horizontal_inset=0.15, padding=0.10
+)
+"""Head-and-shoulders safe zone: water polo caps sit low in the detector box."""
+
+_SIDE_LEFT = "left"
+_SIDE_RIGHT = "right"
+
+
+@dataclass(frozen=True, slots=True)
 class PromptRuleBlock:
     """A titled group of sport-specific rules rendered into the Pass 1 prompt."""
 
@@ -72,6 +99,16 @@ class SportProfile(ABC):
         return frozenset()
 
     @property
+    def field_only_event_keys(self) -> frozenset[DefinitionKey]:
+        """``(name, is_positive)`` keys of events a goalkeeper can never perform.
+
+        Only structurally impossible goalkeeper actions belong here. Rare-but-legal goalkeeper
+        actions (passes, assists, turnovers, fouls) must stay out of this set, otherwise the
+        review-only role gate raises false flags.
+        """
+        return frozenset()
+
+    @property
     def conceded_event_keys(self) -> frozenset[DefinitionKey]:
         """Keys of events attributed to the tracked team although the opponent acts first."""
         return frozenset()
@@ -101,6 +138,33 @@ class SportProfile(ABC):
         """Typical visual obstruction that hides a cap number in Pass 2 crops."""
         return "blur, occlusion, or a bad viewing angle"
 
+    @property
+    def cap_zone_geometry(self) -> CapZoneGeometry:
+        """Head/cap zone geometry used for crops, team-color sampling and ambiguity checks."""
+        return DEFAULT_CAP_ZONE_GEOMETRY
+
+    @property
+    def max_balls_per_frame(self) -> int:
+        """Most ball detections kept per frame (highest confidence first).
+
+        A match has one ball in play, so extra detections are false positives such as deck
+        cones or fence artifacts.
+        """
+        return 1
+
+    def goalkeeper_side_violation(
+        self,
+        definition: EventDefinition,
+        tracked_attack_direction: str | None,
+        pool_zone_hint: str | None,
+    ) -> bool:
+        """Return True when a goalkeeper event occurs on the wrong side for the tracked team.
+
+        Review-only hook: callers block auto-confirmation, they never reassign the actor.
+        The neutral implementation never reports a violation.
+        """
+        return False
+
     def is_goalkeeper(self, entry: LineupEntry) -> bool:
         """Return True when the lineup entry plays the goalkeeper position."""
         return False
@@ -108,6 +172,10 @@ class SportProfile(ABC):
     def is_goalkeeper_event(self, definition: EventDefinition) -> bool:
         """Return True when the event is normally performed by the goalkeeper."""
         return definition_key(definition) in self.goalkeeper_event_keys
+
+    def is_field_only_event(self, definition: EventDefinition) -> bool:
+        """Return True when the event can never be performed by a goalkeeper."""
+        return definition_key(definition) in self.field_only_event_keys
 
     def is_conceded_event(self, definition: EventDefinition) -> bool:
         """Return True for events credited to the tracked team although the opponent acts."""
@@ -192,6 +260,10 @@ class WaterPoloProfile(SportProfile):
         {("goal", False), ("save", True), ("goalkeeper error", False)}
     )
     _CONCEDED_EVENT_KEYS: frozenset[DefinitionKey] = frozenset({("goal", False)})
+    # Goalkeepers never contest the period-start swim-off.
+    _FIELD_ONLY_EVENT_KEYS: frozenset[DefinitionKey] = frozenset(
+        {("sprint won", True), ("sprint lost", False)}
+    )
     _CONFUSABLE_SETS: tuple[frozenset[DefinitionKey], ...] = (
         frozenset({("shot on goal", True), ("missed shot", False)}),
         frozenset({("steal", True), ("save", True)}),
@@ -320,6 +392,10 @@ class WaterPoloProfile(SportProfile):
         return self._GOALKEEPER_EVENT_KEYS
 
     @property
+    def field_only_event_keys(self) -> frozenset[DefinitionKey]:
+        return self._FIELD_ONLY_EVENT_KEYS
+
+    @property
     def conceded_event_keys(self) -> frozenset[DefinitionKey]:
         return self._CONCEDED_EVENT_KEYS
 
@@ -343,10 +419,41 @@ class WaterPoloProfile(SportProfile):
     def pass2_occlusion_hint(self) -> str:
         return "water splash, blur, or angle"
 
+    @property
+    def cap_zone_geometry(self) -> CapZoneGeometry:
+        return WATER_POLO_CAP_ZONE_GEOMETRY
+
+    def goalkeeper_side_violation(
+        self,
+        definition: EventDefinition,
+        tracked_attack_direction: str | None,
+        pool_zone_hint: str | None,
+    ) -> bool:
+        """Flag goalkeeper events located on the goal the tracked team attacks.
+
+        The tracked goalkeeper defends the goal opposite to the attack direction, so a
+        goalkeeper event on the attacked side belongs to the opponent goalkeeper.
+        """
+        if not self.is_goalkeeper_event(definition):
+            return False
+        attack_side = (tracked_attack_direction or "").strip().casefold()
+        if attack_side not in (_SIDE_LEFT, _SIDE_RIGHT):
+            return False
+        return _zone_side(pool_zone_hint) == attack_side
+
     def is_goalkeeper(self, entry: LineupEntry) -> bool:
         name = entry.position_name.strip().casefold()
         short = entry.position_short_name.strip().casefold()
         return name == self._GOALKEEPER_POSITION_NAME or short == self._GOALKEEPER_POSITION_SHORT
+
+
+def _zone_side(pool_zone_hint: str | None) -> str | None:
+    """Return ``left``/``right`` when the zone hint names exactly one side, else ``None``."""
+    hint = (pool_zone_hint or "").casefold()
+    has_left, has_right = _SIDE_LEFT in hint, _SIDE_RIGHT in hint
+    if has_left == has_right:
+        return None
+    return _SIDE_LEFT if has_left else _SIDE_RIGHT
 
 
 _WATER_POLO_IDENTIFIERS = frozenset({"wp", "waterpolo", "water polo", "water-polo"})

@@ -146,7 +146,7 @@ class MockDetector(BaseObjectDetector):
                 bbox_xyxy=(0.45 * w, 0.35 * h, 0.55 * w, 0.65 * h),
                 confidence=0.91,
                 role=CanonicalRole.PLAYER,
-                raw_class_name="White team",
+                raw_class_name="White Goalkeeper",
             )
         ]
 
@@ -363,8 +363,8 @@ def test_orchestrator_streams_pass2_frames_without_temp_dirs_and_propagates_tied
             h, w = frame_bgr.shape[:2]
             box = (0.45 * w, 0.35 * h, 0.55 * w, 0.65 * h)
             return [
-                Detection(box, 0.91, CanonicalRole.PLAYER, "White team"),
-                Detection(box, 0.91, CanonicalRole.PLAYER, "White team"),
+                Detection(box, 0.91, CanonicalRole.PLAYER, "White Goalkeeper"),
+                Detection(box, 0.91, CanonicalRole.PLAYER, "White Goalkeeper"),
             ]
 
     orchestrator = VideoAnalysisOrchestrator(
@@ -1322,8 +1322,9 @@ def test_downscaled_detection_boxes_are_rescaled_to_native_for_actor_matching(
 
     assert all(shape == (det_h, det_w, 3) for shape in seen_shapes)
     assert all(event.resolved_cap_number == 7 for event in draft.events)
-    # Crops come from native pixels: a 0.1*1280 wide player box (plus padding) is > 128 px wide.
-    assert all(shape[1] > 128 for shape in crop_sizes)
+    # Crops come from native pixels: the 128 px wide player box yields a ~107 px wide water-polo
+    # crop, while a detection-image crop would be only ~54 px wide.
+    assert all(shape[1] > 64 for shape in crop_sizes)
 
 
 def test_pass2_extraction_requests_streaming_args_and_no_work_dir(

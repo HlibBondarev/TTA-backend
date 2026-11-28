@@ -175,6 +175,7 @@ def test_breaker_reasons_map_to_distinct_cap_resolution_failures() -> None:
     assert {reason.value for reason in Pass2FailureReason} == {
         "NO_FRAMES_EXTRACTED",
         "NO_PLAYER_TRACKLET_MATCHED",
+        "NO_TRACKED_TEAM_ACTOR",
         "NO_USABLE_CAP_CROPS",
         "CAP_RESOLUTION_API_ERROR",
         "CAP_RESOLUTION_QUOTA_EXHAUSTED",

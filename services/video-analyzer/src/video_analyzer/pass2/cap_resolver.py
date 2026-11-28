@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from video_analyzer.config import DEFAULT_GEMINI_PASS2_MODEL, Settings
 from video_analyzer.gemini.request_config import build_generate_content_config
 from video_analyzer.gemini.resilience import GeminiResilience
+from video_analyzer.pass2.color_constants import colors_match
 from video_analyzer.pass2.crop_selector import SelectedCrops
 from video_analyzer.schemas.draft import GeminiTokenUsage
 from video_analyzer.usage import extract_usage_metadata
@@ -35,6 +36,10 @@ def _build_cap_grid_response_schema(types_module: Any) -> Any:
                 nullable=True,
             ),
             "confidence": types_module.Schema(type=types_module.Type.NUMBER),
+            "cap_color": types_module.Schema(
+                type=types_module.Type.STRING,
+                nullable=True,
+            ),
         },
         required=["tile_index", "confidence"],
     )
@@ -61,6 +66,10 @@ def _build_cap_grid_response_schema(types_module: Any) -> Any:
             "candidate_numbers": types_module.Schema(
                 type=types_module.Type.ARRAY,
                 items=cand_schema,
+            ),
+            "observed_cap_color": types_module.Schema(
+                type=types_module.Type.STRING,
+                nullable=True,
             ),
             "reasoning": types_module.Schema(type=types_module.Type.STRING),
         },
@@ -93,13 +102,20 @@ class CapResolutionResult(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     candidate_scores: dict[int, float] = Field(default_factory=dict)
     reasoning: str = ""
+    observed_cap_color: str | None = None
+    """Cap color the model saw on the tracklet (``None`` when not reported or unsupported)."""
+    tile_cap_colors: tuple[str | None, ...] = ()
+    """Per-tile cap colors in tile order (``None`` if unreported); empty if unsupported."""
     token_usage: GeminiTokenUsage | None = Field(default=None, exclude=True)
+    raw_response: dict[str, Any] | None = Field(default=None, exclude=True)
+    """Parsed model response kept for Pass 2 debug artifacts only."""
 
 
 class _GeminiTileReading(BaseModel):
     tile_index: int
     cap_number: int | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    cap_color: str | None = None
 
 
 class _GeminiCandidateNumber(BaseModel):
@@ -112,6 +128,7 @@ class _GeminiCapGridResponse(BaseModel):
     consensus_cap_number: int | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     candidate_numbers: list[_GeminiCandidateNumber] = Field(default_factory=list)
+    observed_cap_color: str | None = None
     reasoning: str = ""
 
 
@@ -126,11 +143,17 @@ class BaseCapResolver(ABC):
         cap_color_hint: str | None = None,
         crop_subject: str | None = None,
         occlusion_hint: str | None = None,
+        opponent_cap_color: str | None = None,
+        goalkeeper_cap_color: str | None = None,
     ) -> CapResolutionResult:
         """Read cap number(s) from crops constrained to the team lineup roster.
 
-        ``crop_subject`` and ``occlusion_hint`` are sport-specific prompt wording supplied by the
-        sport profile; resolvers that do not prompt a model may ignore them.
+        ``cap_color_hint`` is the cap color the actor is expected to wear and
+        ``opponent_cap_color`` the opposing team's cap color. ``goalkeeper_cap_color`` is the
+        sport's goalkeeper cap color, which may appear solid or as panels on a team-color base.
+        ``crop_subject`` and ``occlusion_hint`` are sport-specific prompt wording supplied by
+        the sport profile. Resolvers that do not prompt a model may ignore the prompt-only
+        arguments.
         """
 
 
@@ -165,6 +188,8 @@ class GeminiCropGridCapResolver(BaseCapResolver):
         cap_color_hint: str | None = None,
         crop_subject: str | None = None,
         occlusion_hint: str | None = None,
+        opponent_cap_color: str | None = None,
+        goalkeeper_cap_color: str | None = None,
     ) -> CapResolutionResult:
         if not self._api_key and self._client is None:
             raise RuntimeError(
@@ -174,21 +199,13 @@ class GeminiCropGridCapResolver(BaseCapResolver):
         from google.genai import types
 
         client = self._get_client()
-        allowed_str = ", ".join(str(n) for n in sorted(set(allowed_cap_numbers)))
-        subject = crop_subject or DEFAULT_CROP_SUBJECT
-        obstruction = occlusion_hint or DEFAULT_OCCLUSION_HINT
-        color_line = f"Expected tracked team cap color: {cap_color_hint}." if cap_color_hint else ""
-        prompt = (
-            f"You are inspecting a contact sheet of {subject} "
-            "from the SAME player tracklet (#1..#N).\n"
-            f"Valid cap numbers on the team lineup roster: [{allowed_str}].\n"
-            f"{color_line}\n"
-            "Rules:\n"
-            "1. Inspect each numbered tile carefully and read any clearly visible cap digit(s).\n"
-            f"2. NEVER guess if {obstruction} hides the number: set "
-            "`consensus_cap_number` to null and lower `confidence`.\n"
-            "3. Only return numbers present in the valid lineup roster list above.\n"
-            "4. Provide ranked `candidate_numbers` when partially readable."
+        prompt = build_cap_grid_prompt(
+            allowed_cap_numbers=allowed_cap_numbers,
+            expected_cap_color=cap_color_hint,
+            opponent_cap_color=opponent_cap_color,
+            goalkeeper_cap_color=goalkeeper_cap_color,
+            crop_subject=crop_subject,
+            occlusion_hint=occlusion_hint,
         )
 
         image_part = types.Part.from_bytes(
@@ -256,7 +273,92 @@ class GeminiCropGridCapResolver(BaseCapResolver):
             confidence=resolved_conf,
             candidate_scores=scores,
             reasoning=parsed.reasoning,
+            observed_cap_color=_clean_color(parsed.observed_cap_color),
+            tile_cap_colors=tuple(_clean_color(tile.cap_color) for tile in parsed.tile_readings),
+            raw_response=parsed.model_dump(),
         )
+
+
+def _clean_color(value: str | None) -> str | None:
+    """Strip a model-reported color; blank values become ``None``."""
+    cleaned = (value or "").strip()
+    return cleaned or None
+
+
+def build_cap_grid_prompt(
+    allowed_cap_numbers: list[int],
+    expected_cap_color: str | None = None,
+    opponent_cap_color: str | None = None,
+    crop_subject: str | None = None,
+    occlusion_hint: str | None = None,
+    goalkeeper_cap_color: str | None = None,
+) -> str:
+    """Build the Gemini contact-sheet prompt, including the cap-color verification rule.
+
+    Args:
+        allowed_cap_numbers: Roster cap numbers the model may return.
+        expected_cap_color: Cap color the actor is expected to wear.
+        opponent_cap_color: Cap color of the opposing team.
+        goalkeeper_cap_color: Sport goalkeeper cap color. When it is also the expected color,
+            the prompt explains that goalkeeper caps may be bi-colored.
+        crop_subject: Sport-specific description of the cropped subject.
+        occlusion_hint: Sport-specific description of what hides cap numbers.
+
+    Returns:
+        The full prompt text.
+    """
+    allowed_str = ", ".join(str(n) for n in sorted(set(allowed_cap_numbers)))
+    subject = crop_subject or DEFAULT_CROP_SUBJECT
+    obstruction = occlusion_hint or DEFAULT_OCCLUSION_HINT
+    color_lines = _cap_color_lines(expected_cap_color, opponent_cap_color)
+    color_lines += _goalkeeper_cap_lines(
+        expected_cap_color, opponent_cap_color, goalkeeper_cap_color
+    )
+    return (
+        f"You are inspecting a contact sheet of {subject} "
+        "from the SAME player tracklet (#1..#N).\n"
+        f"Valid cap numbers on the team lineup roster: [{allowed_str}].\n"
+        f"{color_lines}"
+        "Rules:\n"
+        "1. Inspect each numbered tile carefully and read any clearly visible cap digit(s).\n"
+        f"2. NEVER guess if {obstruction} hides the number: set "
+        "`consensus_cap_number` to null and lower `confidence`.\n"
+        "3. Only return numbers present in the valid lineup roster list above.\n"
+        "4. Provide ranked `candidate_numbers` when partially readable.\n"
+        "5. Report the cap color of each tile in `cap_color` and the dominant cap color of "
+        "the player in `observed_cap_color` (null when unclear).\n"
+        "6. If the observed cap color does NOT match the expected cap color, set "
+        "`consensus_cap_number` to null."
+    )
+
+
+def _goalkeeper_cap_lines(
+    expected: str | None, opponent: str | None, goalkeeper: str | None
+) -> str:
+    """Explain bi-colored goalkeeper caps when the expected actor is the goalkeeper."""
+    if not (expected and goalkeeper and colors_match(expected, goalkeeper)):
+        return ""
+    lines = (
+        f"Goalkeeper caps may be solid {goalkeeper} or bi-colored ({goalkeeper} panels or "
+        "ear-guards on a team-color base). When goalkeeper panels are visible next to the "
+        f"tracked team's base color, report `observed_cap_color` as '{goalkeeper}' and do NOT "
+        "treat it as a mismatch.\n"
+    )
+    if opponent:
+        lines += (
+            f"A {goalkeeper} cap on the opponent's {opponent} base belongs to the opponent "
+            "goalkeeper: set `consensus_cap_number` to null and report the base color.\n"
+        )
+    return lines
+
+
+def _cap_color_lines(expected: str | None, opponent: str | None) -> str:
+    lines = ""
+    if expected:
+        lines += f"Expected cap color of the acting player: {expected}.\n"
+    if opponent:
+        lines += f"Opponent team cap color (must NOT be accepted): {opponent}.\n"
+    return lines
 
 
 def _collect_candidate_scores(
@@ -318,6 +420,8 @@ class LocalOcrCapResolver(BaseCapResolver):
         cap_color_hint: str | None = None,
         crop_subject: str | None = None,
         occlusion_hint: str | None = None,
+        opponent_cap_color: str | None = None,
+        goalkeeper_cap_color: str | None = None,
     ) -> CapResolutionResult:
         reader = self._get_reader()
         allowed_set = set(allowed_cap_numbers)
