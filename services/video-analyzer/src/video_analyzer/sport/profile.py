@@ -99,6 +99,16 @@ class SportProfile(ABC):
         return frozenset()
 
     @property
+    def field_only_event_keys(self) -> frozenset[DefinitionKey]:
+        """``(name, is_positive)`` keys of events a goalkeeper can never perform.
+
+        Only structurally impossible goalkeeper actions belong here. Rare-but-legal goalkeeper
+        actions (passes, assists, turnovers, fouls) must stay out of this set, otherwise the
+        review-only role gate raises false flags.
+        """
+        return frozenset()
+
+    @property
     def conceded_event_keys(self) -> frozenset[DefinitionKey]:
         """Keys of events attributed to the tracked team although the opponent acts first."""
         return frozenset()
@@ -162,6 +172,10 @@ class SportProfile(ABC):
     def is_goalkeeper_event(self, definition: EventDefinition) -> bool:
         """Return True when the event is normally performed by the goalkeeper."""
         return definition_key(definition) in self.goalkeeper_event_keys
+
+    def is_field_only_event(self, definition: EventDefinition) -> bool:
+        """Return True when the event can never be performed by a goalkeeper."""
+        return definition_key(definition) in self.field_only_event_keys
 
     def is_conceded_event(self, definition: EventDefinition) -> bool:
         """Return True for events credited to the tracked team although the opponent acts."""
@@ -246,6 +260,10 @@ class WaterPoloProfile(SportProfile):
         {("goal", False), ("save", True), ("goalkeeper error", False)}
     )
     _CONCEDED_EVENT_KEYS: frozenset[DefinitionKey] = frozenset({("goal", False)})
+    # Goalkeepers never contest the period-start swim-off.
+    _FIELD_ONLY_EVENT_KEYS: frozenset[DefinitionKey] = frozenset(
+        {("sprint won", True), ("sprint lost", False)}
+    )
     _CONFUSABLE_SETS: tuple[frozenset[DefinitionKey], ...] = (
         frozenset({("shot on goal", True), ("missed shot", False)}),
         frozenset({("steal", True), ("save", True)}),
@@ -372,6 +390,10 @@ class WaterPoloProfile(SportProfile):
     @property
     def goalkeeper_event_keys(self) -> frozenset[DefinitionKey]:
         return self._GOALKEEPER_EVENT_KEYS
+
+    @property
+    def field_only_event_keys(self) -> frozenset[DefinitionKey]:
+        return self._FIELD_ONLY_EVENT_KEYS
 
     @property
     def conceded_event_keys(self) -> frozenset[DefinitionKey]:

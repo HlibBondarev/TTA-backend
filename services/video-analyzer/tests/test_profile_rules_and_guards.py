@@ -390,3 +390,87 @@ def test_field_events_and_neutral_profile_are_not_restricted_by_the_goalkeeper_g
 
     assert field_outcome.match_lineup_id is not None
     assert neutral_outcome.match_lineup_id is not None
+
+
+# ------------------------------------------------------------ field-only role gate
+
+
+def test_water_polo_sprint_events_are_field_only(sample_context: AnalysisContext) -> None:
+    profile = WaterPoloProfile()
+
+    assert profile.field_only_event_keys == frozenset(
+        {("sprint won", True), ("sprint lost", False)}
+    )
+    assert profile.is_field_only_event(_definition(sample_context, "Sprint Won"))
+    assert profile.is_field_only_event(_definition(sample_context, "Sprint Lost", False))
+    # Goalkeepers legitimately pass, assist and turn the ball over.
+    for name, positive in (
+        ("Key Pass", True),
+        ("Assist", True),
+        ("Turnover", False),
+        ("Bad Pass", False),
+        ("Save", True),
+    ):
+        assert not profile.is_field_only_event(_definition(sample_context, name, positive))
+    assert DefaultProfile().field_only_event_keys == frozenset()
+
+
+def test_sprint_event_cannot_auto_confirm_a_goalkeeper(sample_context: AnalysisContext) -> None:
+    for name, positive in (("Sprint Won", True), ("Sprint Lost", False)):
+        candidate = _candidate(sample_context, name, positive)
+        cap = CapResolutionResult(
+            resolved_cap_number=13, confidence=0.95, candidate_scores={13: 0.95}
+        )
+
+        outcome = LineupMatcher().resolve(candidate, cap, sample_context, min_cap_confidence=0.8)
+
+        assert outcome.match_lineup_id is None
+        assert outcome.resolved_cap_number is None
+        assert outcome.needs_review is True
+        assert "GOALKEEPER_ACTOR_ON_FIELD_ONLY_EVENT" in outcome.review_reasons
+        assert "GOALKEEPER_EVENT_NON_GOALKEEPER_ACTOR" not in outcome.review_reasons
+        # Review-only: the goalkeeper reading stays the top candidate for the reviewer.
+        assert outcome.candidate_lineup_ids[0].cap_number == 13
+
+
+def test_sprint_event_confirms_a_field_player(sample_context: AnalysisContext) -> None:
+    candidate = _candidate(sample_context, "Sprint Won")
+    cap = CapResolutionResult(resolved_cap_number=10, confidence=0.95, candidate_scores={10: 0.95})
+
+    outcome = LineupMatcher().resolve(candidate, cap, sample_context, min_cap_confidence=0.8)
+
+    field_player = next(e for e in sample_context.lineup if e.number == 10)
+    assert outcome.match_lineup_id == field_player.id
+    assert outcome.needs_review is False
+    assert outcome.review_reasons == []
+
+
+def test_goalkeeper_field_actions_are_not_flagged_by_the_role_gate(
+    sample_context: AnalysisContext,
+) -> None:
+    cap = CapResolutionResult(resolved_cap_number=1, confidence=0.95, candidate_scores={1: 0.95})
+    goalkeeper = next(e for e in sample_context.lineup if e.number == 1)
+
+    for name, positive in (
+        ("Key Pass", True),
+        ("Assist", True),
+        ("Turnover", False),
+        ("Bad Pass", False),
+    ):
+        candidate = _candidate(sample_context, name, positive)
+
+        outcome = LineupMatcher().resolve(candidate, cap, sample_context, min_cap_confidence=0.8)
+
+        assert outcome.match_lineup_id == goalkeeper.id, name
+        assert outcome.needs_review is False, name
+
+
+def test_neutral_profile_never_applies_the_field_only_gate() -> None:
+    neutral_context = make_context(profile=DefaultProfile())
+    candidate = _candidate(neutral_context, "Sprint Won")
+    cap = CapResolutionResult(resolved_cap_number=13, confidence=0.95, candidate_scores={13: 0.95})
+
+    outcome = LineupMatcher().resolve(candidate, cap, neutral_context, min_cap_confidence=0.8)
+
+    assert outcome.match_lineup_id is not None
+    assert "GOALKEEPER_ACTOR_ON_FIELD_ONLY_EVENT" not in outcome.review_reasons

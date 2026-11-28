@@ -10,6 +10,7 @@ from video_analyzer.pass1.models import Pass1EventCandidate
 from video_analyzer.pass2.cap_resolver import CapResolutionResult
 from video_analyzer.pass2.failure_reasons import (
     REVIEW_ACTOR_TEAM_UNVERIFIED,
+    REVIEW_GOALKEEPER_ACTOR_ON_FIELD_ONLY_EVENT,
     REVIEW_OPPONENT_GOALKEEPER_SIDE,
     REVIEW_WEAK_ACTOR_MATCH,
 )
@@ -162,8 +163,9 @@ class LineupMatcher:
             )
 
         chosen = matching_entries[0]
-        if self._is_goalkeeper_event_on_field_player(candidate, chosen, context.profile):
-            _add_reason(review_reasons, _GOALKEEPER_EVENT_NON_GOALKEEPER_REASON)
+        role_reason = self._role_mismatch_reason(candidate, chosen, context.profile)
+        if role_reason is not None:
+            _add_reason(review_reasons, role_reason)
             return _needs_review_outcome(
                 round(cap_result.confidence, 4), ranked_candidates, review_reasons, gate_outcomes
             )
@@ -216,6 +218,23 @@ class LineupMatcher:
         )
         return outcomes
 
+    @classmethod
+    def _role_mismatch_reason(
+        cls,
+        candidate: Pass1EventCandidate,
+        chosen: LineupEntry,
+        profile: SportProfile,
+    ) -> str | None:
+        """Return the review reason when the event contradicts the chosen player's role.
+
+        Review-only: the ranked candidates are kept and the actor is never reassigned.
+        """
+        if cls._is_goalkeeper_event_on_field_player(candidate, chosen, profile):
+            return _GOALKEEPER_EVENT_NON_GOALKEEPER_REASON
+        if cls._is_field_only_event_on_goalkeeper(candidate, chosen, profile):
+            return REVIEW_GOALKEEPER_ACTOR_ON_FIELD_ONLY_EVENT
+        return None
+
     @staticmethod
     def _is_goalkeeper_event_on_field_player(
         candidate: Pass1EventCandidate,
@@ -226,6 +245,15 @@ class LineupMatcher:
         return profile.is_goalkeeper_event(candidate.definition) and not profile.is_goalkeeper(
             chosen
         )
+
+    @staticmethod
+    def _is_field_only_event_on_goalkeeper(
+        candidate: Pass1EventCandidate,
+        chosen: LineupEntry,
+        profile: SportProfile,
+    ) -> bool:
+        """Return True when an event a goalkeeper can never perform would be confirmed on one."""
+        return profile.is_field_only_event(candidate.definition) and profile.is_goalkeeper(chosen)
 
     def _no_cap_outcome(
         self,
