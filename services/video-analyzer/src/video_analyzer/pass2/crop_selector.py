@@ -14,11 +14,33 @@ import cv2
 import numpy as np
 
 from video_analyzer.media.ffmpeg_client import ExtractedFrame
+from video_analyzer.pass2.color_constants import (
+    MIN_NEAR_EVENT_OBSERVATIONS,
+    NEAR_EVENT_WINDOW_SEC,
+)
+from video_analyzer.pass2.crop_filters import (
+    REJECT_ASPECT_OUTLIER,
+    REJECT_COLOR_MISMATCH,
+    REJECT_CROP_TOO_SMALL,
+    REJECT_OUTSIDE_NEAR_WINDOW,
+    CropSelectionContext,
+    aspect_ratio_outlier_frames,
+    color_mismatch,
+    neighbor_has_opponent_color,
+)
 from video_analyzer.pass2.tracker import (
     Tracklet,
     TrackletObservation,
     compute_cap_crop_box,
 )
+from video_analyzer.sport.profile import DEFAULT_CAP_ZONE_GEOMETRY, CapZoneGeometry
+
+ObservationReport = list[dict[str, object]]
+"""Per-observation selection verdicts collected for debug artifacts."""
+
+_CROP_MIN_SIDE_PX = 8
+_STATUS_REJECTED = "rejected"
+_STATUS_SELECTED = "selected"
 
 
 @dataclass(slots=True)
@@ -54,37 +76,44 @@ class CropSelector:
         tracklet: Tracklet,
         frames: list[ExtractedFrame],
         max_crops: int = 6,
+        selection_context: CropSelectionContext | None = None,
+        observation_report: ObservationReport | None = None,
     ) -> SelectedCrops | None:
-        """Rank cap crops by sharpness and compose a numbered contact sheet for recognition."""
+        """Rank cap crops by sharpness and compose a numbered contact sheet for recognition.
+
+        Args:
+            tracklet: Tracklet of the matched actor.
+            frames: Window frames carrying the native pixels.
+            max_crops: Maximum number of crops on the contact sheet.
+            selection_context: Optional event evidence. When given, crops are limited to
+                the near-event window (with fallback), mismatching team colors and merged
+                boxes are dropped, and neighbors wearing the opponent color mark a crop as
+                ambiguous.
+            observation_report: Optional list that receives one verdict per observation.
+        """
+        report: ObservationReport = observation_report if observation_report is not None else []
         frame_by_idx = {frame.index: frame for frame in frames}
+        outliers = (
+            aspect_ratio_outlier_frames(tracklet.observations) if selection_context else set()
+        )
         candidates: list[CropCandidate] = []
-
         for obs in tracklet.observations:
-            frame = frame_by_idx.get(obs.frame_index)
-            if frame is None:
-                continue
-            crop = self._extract_cap_region(frame.native_bgr(), obs)
-            if crop is None:
-                continue
-            score = self._score_crop_sharpness(crop)
-            candidates.append(
-                CropCandidate(
-                    frame_index=obs.frame_index,
-                    video_time_sec=obs.video_time_sec,
-                    crop_bgr=crop,
-                    sharpness_score=score,
-                    cap_ambiguous=obs.cap_ambiguous,
-                )
+            candidate = self._build_candidate(
+                obs, frame_by_idx.get(obs.frame_index), outliers, selection_context, report
             )
-
+            if candidate is not None:
+                candidates.append(candidate)
         if not candidates:
             return None
 
+        candidates = self._prefer_near_event(candidates, selection_context, report)
         unambiguous = [c for c in candidates if not c.cap_ambiguous]
         pool = unambiguous if unambiguous else candidates
         has_ambiguous_cap = len(unambiguous) == 0
+        event_time = selection_context.event_time_sec if selection_context else None
 
-        selected = self._pick_diverse_top_k(pool, max_crops=max_crops)
+        selected = self._pick_diverse_top_k(pool, max_crops=max_crops, event_time_sec=event_time)
+        _mark_selected(report, selected)
         sheet_bgr = self._build_contact_sheet(selected)
         ok, encoded = cv2.imencode(".jpg", sheet_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
         if not ok:
@@ -96,6 +125,70 @@ class CropSelector:
             contact_sheet_bgr=sheet_bgr,
             has_ambiguous_cap=has_ambiguous_cap,
         )
+
+    def _build_candidate(
+        self,
+        obs: TrackletObservation,
+        frame: ExtractedFrame | None,
+        outliers: set[int],
+        ctx: CropSelectionContext | None,
+        report: ObservationReport,
+    ) -> CropCandidate | None:
+        """Cut and score one observation's crop, recording why it was rejected if it is."""
+        if frame is None:
+            return None
+        if obs.frame_index in outliers:
+            report.append(_verdict(obs, REJECT_ASPECT_OUTLIER))
+            return None
+        native = frame.native_bgr()
+        geometry = ctx.geometry if ctx else DEFAULT_CAP_ZONE_GEOMETRY
+        crop = self._extract_cap_region(native, obs, geometry)
+        if crop is None:
+            report.append(_verdict(obs, REJECT_CROP_TOO_SMALL))
+            return None
+        if ctx is not None and color_mismatch(native, obs, ctx):
+            report.append(_verdict(obs, REJECT_COLOR_MISMATCH))
+            return None
+        ambiguous = obs.cap_ambiguous
+        if ctx is not None and not ambiguous:
+            crop_box = compute_cap_crop_box(obs.bbox_xyxy, obs.cap_bbox_xyxy, geometry)
+            ambiguous = neighbor_has_opponent_color(native, obs, crop_box, ctx)
+        return CropCandidate(
+            frame_index=obs.frame_index,
+            video_time_sec=obs.video_time_sec,
+            crop_bgr=crop,
+            sharpness_score=self._score_crop_sharpness(crop),
+            cap_ambiguous=ambiguous,
+        )
+
+    @staticmethod
+    def _prefer_near_event(
+        candidates: list[CropCandidate],
+        ctx: CropSelectionContext | None,
+        report: ObservationReport,
+    ) -> list[CropCandidate]:
+        """Keep near-event candidates when at least two exist, else fall back to all."""
+        if ctx is None:
+            return candidates
+        near = [
+            c
+            for c in candidates
+            if abs(c.video_time_sec - ctx.event_time_sec) <= NEAR_EVENT_WINDOW_SEC
+        ]
+        if len(near) < MIN_NEAR_EVENT_OBSERVATIONS:
+            return candidates
+        near_frames = {c.frame_index for c in near}
+        for candidate in candidates:
+            if candidate.frame_index not in near_frames:
+                report.append(
+                    _report_entry(
+                        candidate.frame_index,
+                        candidate.video_time_sec,
+                        _STATUS_REJECTED,
+                        reason=REJECT_OUTSIDE_NEAR_WINDOW,
+                    )
+                )
+        return near
 
     @staticmethod
     def save_debug_artifacts(
@@ -132,8 +225,9 @@ class CropSelector:
         self,
         candidates: list[CropCandidate],
         max_crops: int,
+        event_time_sec: float | None = None,
     ) -> list[CropCandidate]:
-        ranked = sorted(candidates, key=lambda c: c.sharpness_score, reverse=True)
+        ranked = sorted(candidates, key=lambda c: _rank_score(c, event_time_sec), reverse=True)
         chosen: list[CropCandidate] = []
 
         for candidate in ranked:
@@ -203,15 +297,18 @@ class CropSelector:
     def _extract_cap_region(
         frame_bgr: np.ndarray,
         obs: TrackletObservation,
+        geometry: CapZoneGeometry = DEFAULT_CAP_ZONE_GEOMETRY,
     ) -> np.ndarray | None:
         img_h, img_w = frame_bgr.shape[:2]
-        raw_x1, raw_y1, raw_x2, raw_y2 = compute_cap_crop_box(obs.bbox_xyxy, obs.cap_bbox_xyxy)
+        raw_x1, raw_y1, raw_x2, raw_y2 = compute_cap_crop_box(
+            obs.bbox_xyxy, obs.cap_bbox_xyxy, geometry
+        )
         x1 = max(0, int(round(raw_x1)))
         y1 = max(0, int(round(raw_y1)))
         x2 = min(img_w, int(round(raw_x2)))
         y2 = min(img_h, int(round(raw_y2)))
 
-        if x2 - x1 < 8 or y2 - y1 < 8:
+        if x2 - x1 < _CROP_MIN_SIDE_PX or y2 - y1 < _CROP_MIN_SIDE_PX:
             return None
         return frame_bgr[y1:y2, x1:x2].copy()
 
@@ -221,3 +318,38 @@ class CropSelector:
         lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         area = crop_bgr.shape[0] * crop_bgr.shape[1]
         return lap_var * sqrt(max(1, area))
+
+
+def _rank_score(candidate: CropCandidate, event_time_sec: float | None) -> float:
+    """Sharpness weighted by temporal proximity to the event (unweighted without a time)."""
+    if event_time_sec is None:
+        return candidate.sharpness_score
+    return candidate.sharpness_score / (1.0 + abs(candidate.video_time_sec - event_time_sec))
+
+
+def _report_entry(
+    frame_index: int, video_time_sec: float, status: str, **details: object
+) -> dict[str, object]:
+    return {
+        "frameIndex": frame_index,
+        "videoTimeSec": video_time_sec,
+        "status": status,
+        **details,
+    }
+
+
+def _verdict(obs: TrackletObservation, reason: str) -> dict[str, object]:
+    return _report_entry(obs.frame_index, obs.video_time_sec, _STATUS_REJECTED, reason=reason)
+
+
+def _mark_selected(report: ObservationReport, selected: list[CropCandidate]) -> None:
+    for candidate in selected:
+        report.append(
+            _report_entry(
+                candidate.frame_index,
+                candidate.video_time_sec,
+                _STATUS_SELECTED,
+                sharpness=round(candidate.sharpness_score, 2),
+                ambiguous=candidate.cap_ambiguous,
+            )
+        )

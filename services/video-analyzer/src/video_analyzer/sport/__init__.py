@@ -3,6 +3,7 @@
 from video_analyzer.sport.context import AnalysisContext, build_analysis_context
 from video_analyzer.sport.events import EventDefinition, build_event_catalog
 from video_analyzer.sport.profile import (
+    CapZoneGeometry,
     DefaultProfile,
     DefinitionKey,
     Pass1PromptText,
@@ -15,6 +16,7 @@ from video_analyzer.sport.profile import (
 
 __all__ = [
     "AnalysisContext",
+    "CapZoneGeometry",
     "DefaultProfile",
     "DefinitionKey",
     "EventDefinition",

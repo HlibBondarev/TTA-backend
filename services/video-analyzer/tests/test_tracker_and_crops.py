@@ -394,7 +394,7 @@ def test_actor_matcher_preserves_low_iou_overlapping_tracklet_without_label_bonu
                 video_time_sec=20.0,
                 bbox_xyxy=(90.0, 0.0, 190.0, 100.0),
                 confidence=0.9,
-                raw_class_name="Blue team",
+                raw_class_name="Player",
             )
         ],
     )
@@ -446,7 +446,7 @@ def test_actor_matcher_filters_ineligible_non_overlapping_track_before_ranking(
                 video_time_sec=20.0,
                 bbox_xyxy=(90.0, 0.0, 190.0, 100.0),
                 confidence=0.90,
-                raw_class_name="Blue team",
+                raw_class_name="Player",
             )
         ],
     )
@@ -459,7 +459,7 @@ def test_actor_matcher_filters_ineligible_non_overlapping_track_before_ranking(
                 video_time_sec=19.0,
                 bbox_xyxy=(101.0, 40.0, 111.0, 60.0),
                 confidence=0.90,
-                raw_class_name="Blue team",
+                raw_class_name="Player",
             )
         ],
     )

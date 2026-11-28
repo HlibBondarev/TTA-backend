@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 from dataclasses import dataclass, field
 
 import cv2
@@ -10,8 +11,17 @@ import numpy as np
 
 from video_analyzer.detectors.base import BaseObjectDetector, CanonicalRole, Detection
 from video_analyzer.media.ffmpeg_client import ExtractedFrame
+from video_analyzer.sport.profile import DEFAULT_CAP_ZONE_GEOMETRY, CapZoneGeometry
 
 _MIN_GMC_POINTS = 6
+DEFAULT_TRACK_BIRTH_CONF = 0.30
+"""Minimum detector confidence for an unmatched player detection to start a new tracklet."""
+DEFAULT_MAX_BALLS_PER_FRAME = 1
+"""A match has one ball in play: keep only the most confident ball detection per frame."""
+DEFAULT_HIGH_CONF_THRESH = 0.45
+"""Confidence boundary between first-stage (high) and recovery-stage (low) association."""
+
+BBox = tuple[float, float, float, float]
 
 
 @dataclass(slots=True)
@@ -45,6 +55,31 @@ class Tracklet:
             return None
         return min(self.observations, key=lambda o: abs(o.video_time_sec - video_time_sec))
 
+    def label_votes(
+        self,
+        center_sec: float | None = None,
+        half_window_sec: float | None = None,
+    ) -> Counter[str]:
+        """Count normalized detector labels, optionally limited to a time window.
+
+        Args:
+            center_sec: Window center. When ``None`` every observation is counted.
+            half_window_sec: Window half-width in seconds. Required with ``center_sec``.
+
+        Returns:
+            Counter of stripped, lower-cased ``raw_class_name`` values.
+        """
+        votes: Counter[str] = Counter()
+        for obs in self.observations:
+            if (
+                center_sec is not None
+                and half_window_sec is not None
+                and abs(obs.video_time_sec - center_sec) > half_window_sec
+            ):
+                continue
+            votes[obs.raw_class_name.strip().lower()] += 1
+        return votes
+
 
 @dataclass(frozen=True, slots=True)
 class FrameDetection:
@@ -55,6 +90,9 @@ class FrameDetection:
     bbox_xyxy: tuple[float, float, float, float]
     confidence: float
     raw_class_name: str
+    role: str = ""
+    suppressed: bool = False
+    """True for a raw detection dropped by a per-frame filter (kept for debug overlays only)."""
 
 
 @dataclass(slots=True)
@@ -68,6 +106,8 @@ class TrackingResult:
     tracklets: list[Tracklet] = field(default_factory=list)
     ball_detections: list[FrameDetection] = field(default_factory=list)
     goal_detections: list[FrameDetection] = field(default_factory=list)
+    all_detections: list[FrameDetection] = field(default_factory=list)
+    """Every raw detection per frame for debug overlays; filtered ones are ``suppressed``."""
 
 
 class _TrackState:
@@ -170,11 +210,13 @@ class BoTSortTracker:
 
     def __init__(
         self,
-        high_conf_thresh: float = 0.45,
+        high_conf_thresh: float = DEFAULT_HIGH_CONF_THRESH,
         iou_threshold: float = 0.25,
         max_lost_frames: int = 8,
+        track_birth_conf: float = DEFAULT_TRACK_BIRTH_CONF,
     ) -> None:
         self._high_conf_thresh = high_conf_thresh
+        self._track_birth_conf = min(track_birth_conf, high_conf_thresh)
         self._iou_threshold = iou_threshold
         self._max_lost_frames = max_lost_frames
 
@@ -190,11 +232,19 @@ class BoTSortTracker:
         self,
         frames: list[ExtractedFrame],
         detector: BaseObjectDetector,
+        geometry: CapZoneGeometry = DEFAULT_CAP_ZONE_GEOMETRY,
+        max_balls_per_frame: int = DEFAULT_MAX_BALLS_PER_FRAME,
     ) -> TrackingResult:
         """Track players across a window and also preserve per-frame ball/goal detections.
 
         Detection runs on each frame's (possibly downscaled) ``image_bgr``; every returned box,
         including ball and goal boxes, is rescaled to native pixel coordinates.
+
+        Args:
+            frames: Extracted window frames in temporal order.
+            detector: Object detector applied to every frame.
+            geometry: Sport-specific head/cap zone used for cap crops and ambiguity checks.
+            max_balls_per_frame: Ball detections kept per frame, highest confidence first.
         """
         result = TrackingResult()
         if not frames:
@@ -211,10 +261,10 @@ class BoTSortTracker:
                 track.predict(warp)
 
             detections = _detect_in_native_coordinates(detector, frame)
-            _collect_scene_detections(result, frame, detections)
+            _collect_scene_detections(result, frame, detections, max_balls_per_frame)
             player_dets = [d for d in detections if d.role == CanonicalRole.PLAYER]
             cap_dets = [d for d in detections if d.role == CanonicalRole.CAP]
-            cap_assignments = _match_caps_to_players(player_dets, cap_dets)
+            cap_assignments = _match_caps_to_players(player_dets, cap_dets, geometry)
 
             high_dets = [d for d in player_dets if d.confidence >= self._high_conf_thresh]
             low_dets = [d for d in player_dets if d.confidence < self._high_conf_thresh]
@@ -227,7 +277,7 @@ class BoTSortTracker:
 
             # Second association stage (ByteTrack / BoT-SORT low-confidence recovery)
             remaining_tracks = [active_tracks[i] for i in unmatched_track_indices]
-            matched_low, still_unmatched_rel, _ = self._associate(
+            matched_low, still_unmatched_rel, unmatched_low = self._associate(
                 remaining_tracks, low_dets, max(0.15, self._iou_threshold - 0.1)
             )
             for rel_idx, det in matched_low:
@@ -240,7 +290,10 @@ class BoTSortTracker:
 
             still_active = self._archive_expired_tracks(active_tracks, archived_tracks)
 
-            for det in unmatched_high:
+            births = unmatched_high + [
+                det for det in unmatched_low if det.confidence >= self._track_birth_conf
+            ]
+            for det in births:
                 obs = self._build_observation(frame, det, cap_assignments)
                 still_active.append(_TrackState(track_id=next_track_id, obs=obs))
                 next_track_id += 1
@@ -368,46 +421,67 @@ def _collect_scene_detections(
     result: TrackingResult,
     frame: ExtractedFrame,
     detections: list[Detection],
+    max_balls_per_frame: int = DEFAULT_MAX_BALLS_PER_FRAME,
 ) -> None:
+    """Record scene detections, keeping at most ``max_balls_per_frame`` balls per frame.
+
+    Every raw detection lands in ``all_detections`` (balls dropped by the limit are marked
+    ``suppressed``); only kept balls reach ``ball_detections`` and thus actor scoring.
+    """
+    kept_balls = _top_ball_ids(detections, max_balls_per_frame)
     for det in detections:
-        if det.role == CanonicalRole.BALL:
-            target = result.ball_detections
-        elif det.role == CanonicalRole.GOAL:
-            target = result.goal_detections
-        else:
-            continue
-        target.append(
-            FrameDetection(
-                frame_index=frame.index,
-                video_time_sec=frame.video_time_sec,
-                bbox_xyxy=det.bbox_xyxy,
-                confidence=det.confidence,
-                raw_class_name=det.raw_class_name,
-            )
+        is_dropped_ball = det.role == CanonicalRole.BALL and id(det) not in kept_balls
+        record = FrameDetection(
+            frame_index=frame.index,
+            video_time_sec=frame.video_time_sec,
+            bbox_xyxy=det.bbox_xyxy,
+            confidence=det.confidence,
+            raw_class_name=det.raw_class_name,
+            role=str(det.role),
+            suppressed=is_dropped_ball,
         )
+        result.all_detections.append(record)
+        if is_dropped_ball:
+            continue
+        if det.role == CanonicalRole.BALL:
+            result.ball_detections.append(record)
+        elif det.role == CanonicalRole.GOAL:
+            result.goal_detections.append(record)
+
+
+def _top_ball_ids(detections: list[Detection], limit: int) -> set[int]:
+    """Return ``id()`` of the ``limit`` most confident ball detections (stable on ties)."""
+    balls = [det for det in detections if det.role == CanonicalRole.BALL]
+    balls.sort(key=lambda det: det.confidence, reverse=True)
+    return {id(det) for det in balls[: max(0, limit)]}
 
 
 def compute_cap_crop_box(
-    player_bbox_xyxy: tuple[float, float, float, float],
-    cap_bbox_xyxy: tuple[float, float, float, float] | None = None,
-) -> tuple[float, float, float, float]:
+    player_bbox_xyxy: BBox,
+    cap_bbox_xyxy: BBox | None = None,
+    geometry: CapZoneGeometry = DEFAULT_CAP_ZONE_GEOMETRY,
+) -> BBox:
     """Return the padded crop coordinates used for cap number recognition."""
     bx1, by1, bx2, by2 = (
-        cap_bbox_xyxy if cap_bbox_xyxy is not None else _upper_body_cap_zone(player_bbox_xyxy)
+        cap_bbox_xyxy
+        if cap_bbox_xyxy is not None
+        else upper_body_cap_zone(player_bbox_xyxy, geometry)
     )
-    pad_x = (bx2 - bx1) * 0.20
-    pad_y = (by2 - by1) * 0.20
+    pad_x = (bx2 - bx1) * geometry.padding
+    pad_y = (by2 - by1) * geometry.padding
     return (bx1 - pad_x, by1 - pad_y, bx2 + pad_x, by2 + pad_y)
 
 
-def _upper_body_cap_zone(
-    player_bbox_xyxy: tuple[float, float, float, float],
-) -> tuple[float, float, float, float]:
+def upper_body_cap_zone(
+    player_bbox_xyxy: BBox,
+    geometry: CapZoneGeometry = DEFAULT_CAP_ZONE_GEOMETRY,
+) -> BBox:
     """Estimate the unpadded upper-body cap zone for a player bounding box."""
     px1, py1, px2, py2 = player_bbox_xyxy
     pw = px2 - px1
     ph = py2 - py1
-    return (px1 + pw * 0.10, py1, px2 - pw * 0.10, py1 + ph * 0.45)
+    inset = pw * geometry.horizontal_inset
+    return (px1 + inset, py1, px2 - inset, py1 + ph * geometry.top_fraction)
 
 
 def _boxes_overlap(
@@ -438,41 +512,44 @@ def _index_contained_caps(
     return caps_per_player, players_per_cap
 
 
+@dataclass(frozen=True, slots=True)
+class _CapScene:
+    """Per-frame player/cap detections plus the geometry used to flag shared crops."""
+
+    player_dets: list[Detection]
+    cap_dets: list[Detection]
+    unique_cap_idx_by_player: dict[int, int]
+    geometry: CapZoneGeometry
+
+
 def _crop_overlaps_neighbor_cap_or_head(
-    crop_box: tuple[float, float, float, float],
+    crop_box: BBox,
     player_idx: int,
     owned_cap_idx: int | None,
-    player_dets: list[Detection],
-    cap_dets: list[Detection],
-    unique_cap_idx_by_player: dict[int, int],
+    scene: _CapScene,
 ) -> bool:
     """Flag a crop box that overlaps another cap or an unowned neighbor head zone."""
-    for other_c_idx, c_det in enumerate(cap_dets):
+    for other_c_idx, c_det in enumerate(scene.cap_dets):
         if other_c_idx != owned_cap_idx and _boxes_overlap(crop_box, c_det.bbox_xyxy):
             return True
-    for other_idx, other_det in enumerate(player_dets):
-        if other_idx == player_idx or other_idx in unique_cap_idx_by_player:
+    for other_idx, other_det in enumerate(scene.player_dets):
+        if other_idx == player_idx or other_idx in scene.unique_cap_idx_by_player:
             continue
-        if _boxes_overlap(crop_box, _upper_body_cap_zone(other_det.bbox_xyxy)):
+        if _boxes_overlap(crop_box, upper_body_cap_zone(other_det.bbox_xyxy, scene.geometry)):
             return True
     return False
 
 
 def _resolve_player_cap_assignment(
     p_idx: int,
-    p_det: Detection,
     contained_caps: list[int],
     players_per_cap: dict[int, list[int]],
-    player_dets: list[Detection],
-    cap_dets: list[Detection],
-    unique_cap_idx_by_player: dict[int, int],
-) -> tuple[tuple[float, float, float, float] | None, bool]:
+    scene: _CapScene,
+) -> tuple[BBox | None, bool]:
+    p_det = scene.player_dets[p_idx]
     if not contained_caps:
-        fallback_box = compute_cap_crop_box(p_det.bbox_xyxy, None)
-        is_ambiguous = _crop_overlaps_neighbor_cap_or_head(
-            fallback_box, p_idx, None, player_dets, cap_dets, unique_cap_idx_by_player
-        )
-        return (None, is_ambiguous)
+        fallback_box = compute_cap_crop_box(p_det.bbox_xyxy, None, scene.geometry)
+        return (None, _crop_overlaps_neighbor_cap_or_head(fallback_box, p_idx, None, scene))
     if len(contained_caps) > 1:
         return (None, True)
 
@@ -480,17 +557,16 @@ def _resolve_player_cap_assignment(
     if len(players_per_cap[c_idx]) > 1:
         return (None, True)
 
-    crop_box = compute_cap_crop_box(p_det.bbox_xyxy, cap_dets[c_idx].bbox_xyxy)
-    is_ambiguous = _crop_overlaps_neighbor_cap_or_head(
-        crop_box, p_idx, c_idx, player_dets, cap_dets, unique_cap_idx_by_player
-    )
-    return (cap_dets[c_idx].bbox_xyxy, is_ambiguous)
+    cap_box = scene.cap_dets[c_idx].bbox_xyxy
+    crop_box = compute_cap_crop_box(p_det.bbox_xyxy, cap_box, scene.geometry)
+    return (cap_box, _crop_overlaps_neighbor_cap_or_head(crop_box, p_idx, c_idx, scene))
 
 
 def _match_caps_to_players(
     player_dets: list[Detection],
     cap_dets: list[Detection],
-) -> dict[int, tuple[tuple[float, float, float, float] | None, bool]]:
+    geometry: CapZoneGeometry = DEFAULT_CAP_ZONE_GEOMETRY,
+) -> dict[int, tuple[BBox | None, bool]]:
     """Assign each cap detection across all players, flagging contested or overlapping crops."""
     if not player_dets:
         return {}
@@ -502,15 +578,10 @@ def _match_caps_to_players(
         if len(contained) == 1 and len(players_per_cap[contained[0]]) == 1
     }
 
+    scene = _CapScene(player_dets, cap_dets, unique_cap_idx_by_player, geometry)
     return {
         id(p_det): _resolve_player_cap_assignment(
-            p_idx,
-            p_det,
-            caps_per_player[p_idx],
-            players_per_cap,
-            player_dets,
-            cap_dets,
-            unique_cap_idx_by_player,
+            p_idx, caps_per_player[p_idx], players_per_cap, scene
         )
         for p_idx, p_det in enumerate(player_dets)
     }

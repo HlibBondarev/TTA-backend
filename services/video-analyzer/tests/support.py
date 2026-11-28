@@ -5,8 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from video_analyzer.pass1.models import Pass1EventCandidate
 from video_analyzer.schemas.request import MatchSnapshot, RuntimeHints
-from video_analyzer.sport import AnalysisContext, SportProfile, build_analysis_context
+from video_analyzer.sport import (
+    AnalysisContext,
+    EventDefinition,
+    SportProfile,
+    build_analysis_context,
+)
 
 SAMPLE_SNAPSHOT_PATH = (
     Path(__file__).resolve().parents[1] / "sample_snapshots" / "waterpolo_default_snapshot.json"
@@ -51,3 +57,35 @@ CODE_GOAL = prompt_code_for("Goal", positive=True)
 CODE_STEAL = prompt_code_for("Steal")
 CODE_KEY_PASS = prompt_code_for("Key Pass")
 CODE_GOAL_CONCEDED = prompt_code_for("Goal", positive=False)
+
+
+def find_definition(
+    context: AnalysisContext, name: str, is_positive: bool = True
+) -> EventDefinition:
+    """Return the catalog definition with the given name and polarity."""
+    return next(d for d in context.event_catalog if d.name == name and d.is_positive is is_positive)
+
+
+def make_candidate(
+    context: AnalysisContext,
+    name: str = "Goal",
+    is_positive: bool = True,
+    *,
+    time_sec: float = 20.0,
+    bbox: list[float] | None = None,
+    cap_color_hint: str | None = "white",
+    pool_zone_hint: str | None = "center",
+    attack_direction: str = "unknown",
+) -> Pass1EventCandidate:
+    """Build a Pass 1 candidate for ``name`` with sensible Pass 2 defaults."""
+    return Pass1EventCandidate(
+        video_time_sec=time_sec,
+        definition=find_definition(context, name, is_positive),
+        period_number=1,
+        is_lead_to_goal=False,
+        actor_bbox_normalized=bbox if bbox is not None else [0.4, 0.4, 0.6, 0.6],
+        pool_zone_hint=pool_zone_hint,
+        cap_color_hint=cap_color_hint,
+        confidence=0.92,
+        tracked_attack_direction=attack_direction,  # type: ignore[arg-type]
+    )

@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from video_analyzer.pass1.models import Pass1EventCandidate
 from video_analyzer.pass2.cap_resolver import CapResolutionResult
+from video_analyzer.pass2.failure_reasons import (
+    REVIEW_ACTOR_TEAM_UNVERIFIED,
+    REVIEW_OPPONENT_GOALKEEPER_SIDE,
+    REVIEW_WEAK_ACTOR_MATCH,
+)
+from video_analyzer.pass2.team_classifier import TeamClass
 from video_analyzer.schemas.draft import CandidateLineup
 from video_analyzer.schemas.request import LineupEntry
 from video_analyzer.sport.context import AnalysisContext
@@ -16,6 +22,19 @@ from video_analyzer.sport.profile import SportProfile
 _LOW_EVENT_CONFIDENCE_THRESHOLD = 0.80
 _MISSING_SPATIAL_HINT_REASON = "MISSING_ACTOR_SPATIAL_HINT"
 _GOALKEEPER_EVENT_NON_GOALKEEPER_REASON = "GOALKEEPER_EVENT_NON_GOALKEEPER_ACTOR"
+
+MIN_AUTO_CONFIRM_MATCH_SCORE: float = 0.35
+"""Minimum actor-to-tracklet match score required to auto-confirm a lineup entry."""
+
+_VERIFIED_TEAM_CLASSES = frozenset({TeamClass.TRACKED, TeamClass.GOALKEEPER})
+
+
+@dataclass(frozen=True, slots=True)
+class ActorEvidence:
+    """Strength and team identity of the tracklet the cap reading came from."""
+
+    match_score: float
+    team_class: TeamClass
 
 
 def _add_reason(review_reasons: list[str], reason: str) -> None:
@@ -34,12 +53,15 @@ class LineupMatchOutcome:
     candidate_lineup_ids: list[CandidateLineup]
     needs_review: bool
     review_reasons: list[str]
+    gate_outcomes: dict[str, bool] = field(default_factory=dict)
+    """Auto-confirm gate name to ``True`` when that gate blocked the match (debug only)."""
 
 
 def _needs_review_outcome(
     cap_confidence: float,
     candidates: list[CandidateLineup],
     review_reasons: list[str],
+    gate_outcomes: dict[str, bool] | None = None,
 ) -> LineupMatchOutcome:
     """Build an unresolved outcome that keeps the ranked candidates for human review."""
     return LineupMatchOutcome(
@@ -49,6 +71,7 @@ def _needs_review_outcome(
         candidate_lineup_ids=candidates,
         needs_review=True,
         review_reasons=review_reasons,
+        gate_outcomes=dict(gate_outcomes or {}),
     )
 
 
@@ -66,10 +89,14 @@ class LineupMatcher:
         actor_match_tied: bool = False,
         cap_ambiguous: bool = False,
         pass2_failure_reason: str | None = None,
+        actor_evidence: ActorEvidence | None = None,
     ) -> LineupMatchOutcome:
         """Resolve a candidate to a lineup entry, or explain why it stays unresolved.
 
         Args:
+            actor_evidence: Match score and team class of the tracked actor. When given, weak
+                or team-unverified actors (and goalkeeper events on the wrong goal side) block
+                auto-confirmation. They never force a pick.
             pass2_failure_reason: Specific reason Pass 2 produced no cap reading (see
                 ``Pass2FailureReason``). When omitted and ``cap_result`` is None, the legacy
                 ``NO_PLAYER_TRACKLET_MATCHED`` reason is used.
@@ -102,6 +129,7 @@ class LineupMatcher:
         )
         if missing_spatial_hint:
             _add_reason(review_reasons, _MISSING_SPATIAL_HINT_REASON)
+        gate_outcomes = self._apply_gates(candidate, context, actor_evidence, review_reasons)
 
         resolved_num = cap_result.resolved_cap_number
         matching_entries = by_number.get(resolved_num, []) if resolved_num is not None else []
@@ -109,24 +137,28 @@ class LineupMatcher:
         # Collision guard: never pick arbitrarily if two lineup entries share the same cap number
         if len(matching_entries) > 1:
             _add_reason(review_reasons, "DUPLICATE_CAP_NUMBER_IN_LINEUP")
-            return _needs_review_outcome(cap_result.confidence, ranked_candidates, review_reasons)
+            return _needs_review_outcome(
+                cap_result.confidence, ranked_candidates, review_reasons, gate_outcomes
+            )
 
         # Strict non-guessing threshold guard
         if not matching_entries or cap_result.confidence < min_cap_confidence:
             _add_reason(review_reasons, "LOW_CAP_CONFIDENCE")
-            return _needs_review_outcome(cap_result.confidence, ranked_candidates, review_reasons)
+            return _needs_review_outcome(
+                cap_result.confidence, ranked_candidates, review_reasons, gate_outcomes
+            )
 
         # Unhinted, tied-track, or ambiguous-cap matches must never auto-confirm a lineup entry
-        if missing_spatial_hint or actor_match_tied or cap_ambiguous:
+        if missing_spatial_hint or actor_match_tied or cap_ambiguous or any(gate_outcomes.values()):
             return _needs_review_outcome(
-                round(cap_result.confidence, 4), ranked_candidates, review_reasons
+                round(cap_result.confidence, 4), ranked_candidates, review_reasons, gate_outcomes
             )
 
         chosen = matching_entries[0]
         if self._is_goalkeeper_event_on_field_player(candidate, chosen, context.profile):
             _add_reason(review_reasons, _GOALKEEPER_EVENT_NON_GOALKEEPER_REASON)
             return _needs_review_outcome(
-                round(cap_result.confidence, 4), ranked_candidates, review_reasons
+                round(cap_result.confidence, 4), ranked_candidates, review_reasons, gate_outcomes
             )
 
         return LineupMatchOutcome(
@@ -136,7 +168,46 @@ class LineupMatcher:
             candidate_lineup_ids=ranked_candidates,
             needs_review=candidate.needs_review or len(review_reasons) > 0,
             review_reasons=review_reasons,
+            gate_outcomes=gate_outcomes,
         )
+
+    @classmethod
+    def _apply_gates(
+        cls,
+        candidate: Pass1EventCandidate,
+        context: AnalysisContext,
+        actor_evidence: ActorEvidence | None,
+        review_reasons: list[str],
+    ) -> dict[str, bool]:
+        """Evaluate the gates and append the reason of every blocking gate."""
+        outcomes = cls._evaluate_gates(candidate, context, actor_evidence)
+        for gate_reason in (reason for reason, blocked in outcomes.items() if blocked):
+            _add_reason(review_reasons, gate_reason)
+        return outcomes
+
+    @staticmethod
+    def _evaluate_gates(
+        candidate: Pass1EventCandidate,
+        context: AnalysisContext,
+        actor_evidence: ActorEvidence | None,
+    ) -> dict[str, bool]:
+        """Evaluate the actor-quality auto-confirm gates (``True`` means the gate blocks).
+
+        The side check is review-only and runs without actor evidence. The score and team
+        gates run only when the caller supplies evidence about the tracked actor.
+        """
+        outcomes: dict[str, bool] = {}
+        if actor_evidence is not None:
+            outcomes[REVIEW_WEAK_ACTOR_MATCH] = (
+                actor_evidence.match_score < MIN_AUTO_CONFIRM_MATCH_SCORE
+            )
+            outcomes[REVIEW_ACTOR_TEAM_UNVERIFIED] = (
+                actor_evidence.team_class not in _VERIFIED_TEAM_CLASSES
+            )
+        outcomes[REVIEW_OPPONENT_GOALKEEPER_SIDE] = context.profile.goalkeeper_side_violation(
+            candidate.definition, candidate.tracked_attack_direction, candidate.pool_zone_hint
+        )
+        return outcomes
 
     @staticmethod
     def _is_goalkeeper_event_on_field_player(

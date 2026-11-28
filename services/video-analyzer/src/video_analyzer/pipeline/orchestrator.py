@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -40,11 +40,32 @@ from video_analyzer.pass1.models import (
     Pass1ChunkResult,
     Pass1EventCandidate,
 )
-from video_analyzer.pass2.actor_matcher import ActorMatcher, MatchedTracklet
+from video_analyzer.pass2.actor_matcher import (
+    MIN_BALL_DETECTIONS,
+    ActorMatcher,
+    ActorMatchResult,
+    MatchedTracklet,
+)
 from video_analyzer.pass2.cap_resolver import BaseCapResolver, CapResolutionResult
+from video_analyzer.pass2.color_constants import colors_match, normalize_color_name
+from video_analyzer.pass2.crop_filters import CropSelectionContext
 from video_analyzer.pass2.crop_selector import CropSelector, SelectedCrops
-from video_analyzer.pass2.failure_reasons import Pass2FailureReason, failure_reason_for_breaker
-from video_analyzer.pass2.lineup_matcher import LineupMatcher, LineupMatchOutcome
+from video_analyzer.pass2.debug_artifacts import (
+    Pass2Counters,
+    Pass2DebugRecord,
+    build_event_payload,
+    nearest_frame,
+    write_detection_overlay,
+    write_event_json,
+    write_summary_json,
+)
+from video_analyzer.pass2.failure_reasons import (
+    REVIEW_OCR_CAP_COLOR_MISMATCH,
+    Pass2FailureReason,
+    failure_reason_for_breaker,
+)
+from video_analyzer.pass2.lineup_matcher import ActorEvidence, LineupMatcher, LineupMatchOutcome
+from video_analyzer.pass2.team_classifier import TeamClass
 from video_analyzer.pass2.tracker import BoTSortTracker, TrackingResult
 from video_analyzer.pipeline.parallel import ordered_parallel_map
 from video_analyzer.pipeline.timestamp_aligner import (
@@ -117,8 +138,13 @@ class _PreparedEvent:
     cap_ambiguous: bool = False
     timings: _PhaseATimings = field(default_factory=_PhaseATimings)
     warnings: list[str] = field(default_factory=list)
-    # Per-frame ball/goal detections are kept for later actor-attribution work (#159).
+    # Per-frame ball/goal detections feed the soft ball-proximity bonus and debug counters.
     tracking: TrackingResult | None = None
+    actor_match_score: float | None = None
+    actor_team_class: TeamClass | None = None
+    match_result: ActorMatchResult | None = None
+    matched_summary: dict[str, object] | None = None
+    crop_report: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -648,14 +674,14 @@ class VideoAnalysisOrchestrator:
             prepared, outcomes = self._run_pass2_batches(candidates, ctx, progress_callback)
             result.windows_processed = len(prepared)
 
+        counters = Pass2Counters()
         for item, outcome in zip(prepared, outcomes, strict=True):
             warnings.extend(item.warnings)
             warnings.extend(outcome.warnings)
             if outcome.token_usage is not None:
                 result.usages.append(outcome.token_usage)
-            result.events.append(
-                self._build_draft_event(item, outcome, request, analysis, video_start_utc)
-            )
+            result.events.append(self._finish_event(item, outcome, ctx, video_start_utc, counters))
+        warnings.extend(self._attribution_summary(counters, debug_dir))
         warnings.extend(self._fallback_summary(outcomes, result.events))
         result.timings = self._pass2_timings(prepared, outcomes)
         return result
@@ -758,11 +784,34 @@ class VideoAnalysisOrchestrator:
 
         matched = self._track_and_match(prepared, frames, ctx)
         if matched is None:
-            prepared.failure_reason = Pass2FailureReason.NO_PLAYER_TRACKLET_MATCHED
-            return prepared
-
-        self._select_crops(prepared, matched, frames, ctx)
+            match_result = prepared.match_result
+            prepared.failure_reason = (
+                match_result.failure_reason if match_result else None
+            ) or Pass2FailureReason.NO_PLAYER_TRACKLET_MATCHED
+        else:
+            self._select_crops(prepared, matched, frames, ctx)
+        self._write_detection_overlay(prepared, frames, matched, ctx)
         return prepared
+
+    @staticmethod
+    def _write_detection_overlay(
+        prepared: _PreparedEvent,
+        frames: list[ExtractedFrame],
+        matched: MatchedTracklet | None,
+        ctx: _Pass2Context,
+    ) -> None:
+        """Write the all-detections overlay, also for unmatched and no-crop events."""
+        frame = nearest_frame(frames, prepared.candidate.video_time_sec)
+        if ctx.debug_dir is None or frame is None or prepared.tracking is None:
+            return
+        write_detection_overlay(
+            debug_dir=ctx.debug_dir,
+            event_idx=prepared.event_index,
+            frame=frame,
+            tracking=prepared.tracking,
+            target_bbox_normalized=prepared.candidate.actor_bbox_normalized,
+            chosen_bbox=matched.nearest_observation.bbox_xyxy if matched else None,
+        )
 
     def _extract_frames(self, prepared: _PreparedEvent, ctx: _Pass2Context) -> list[ExtractedFrame]:
         opts = ctx.request.analysis_options
@@ -792,22 +841,39 @@ class VideoAnalysisOrchestrator:
     ) -> MatchedTracklet | None:
         timed_detector = TimedDetector(self._detector)
         started = time.monotonic()
-        tracking = self._tracker.track_window_with_scene(frames, timed_detector)
+        tracking = self._tracker.track_window_with_scene(
+            frames,
+            timed_detector,
+            ctx.analysis.profile.cap_zone_geometry,
+            ctx.analysis.profile.max_balls_per_frame,
+        )
         elapsed = time.monotonic() - started
         prepared.tracking = tracking
         prepared.timings.detection_sec = timed_detector.elapsed_sec
         prepared.timings.tracking_sec = max(0.0, elapsed - timed_detector.elapsed_sec)
 
-        matched = self._actor_matcher.match(
+        match_result = self._actor_matcher.match_detailed(
             candidate=prepared.candidate,
             tracklets=tracking.tracklets,
             context=ctx.analysis,
             frame_width=frames[0].native_width,
             frame_height=frames[0].native_height,
+            frames=frames,
+            ball_detections=tracking.ball_detections,
         )
+        prepared.match_result = match_result
+        matched = match_result.matched
         if matched is not None:
             prepared.has_spatial_hint = matched.has_spatial_hint
             prepared.actor_match_tied = matched.is_tied
+            prepared.actor_match_score = matched.match_score
+            prepared.actor_team_class = matched.team_class
+            prepared.matched_summary = {
+                "trackId": matched.tracklet.track_id,
+                "matchScore": matched.match_score,
+                "teamClass": str(matched.team_class),
+                "isTied": matched.is_tied,
+            }
         return matched
 
     def _select_crops(
@@ -822,6 +888,8 @@ class VideoAnalysisOrchestrator:
             tracklet=matched.tracklet,
             frames=frames,
             max_crops=ctx.request.analysis_options.pass2_max_crops_per_track,
+            selection_context=self._crop_selection_context(prepared, matched, ctx),
+            observation_report=prepared.crop_report,
         )
         prepared.timings.crop_selection_sec = time.monotonic() - started
         if selected is None:
@@ -837,6 +905,32 @@ class VideoAnalysisOrchestrator:
                 frames=frames,
                 obs=matched.nearest_observation,
             )
+
+    @staticmethod
+    def _crop_selection_context(
+        prepared: _PreparedEvent,
+        matched: MatchedTracklet,
+        ctx: _Pass2Context,
+    ) -> CropSelectionContext:
+        """Collect the event evidence used to filter and rank crops of the matched tracklet."""
+        analysis = ctx.analysis
+        profile = analysis.profile
+        tracklets = prepared.tracking.tracklets if prepared.tracking else []
+        extra_colors = tuple(
+            color
+            for color in (analysis.tracked_cap_color_hint, profile.goalkeeper_cap_color)
+            if color
+        )
+        return CropSelectionContext(
+            event_time_sec=prepared.candidate.video_time_sec,
+            geometry=profile.cap_zone_geometry,
+            expected_color=profile.expected_actor_cap_color(
+                prepared.candidate.definition, analysis.tracked_cap_color_hint
+            ),
+            opponent_color=analysis.hints.opponent_cap_color_hint,
+            extra_colors=extra_colors,
+            other_tracklets=tuple(t for t in tracklets if t.track_id != matched.tracklet.track_id),
+        )
 
     # -------------------------------------------------------- Pass 2 / Phase B
 
@@ -943,6 +1037,8 @@ class VideoAnalysisOrchestrator:
             cap_color_hint=expected_color or item.candidate.cap_color_hint,
             crop_subject=profile.pass2_crop_subject,
             occlusion_hint=profile.pass2_occlusion_hint,
+            opponent_cap_color=ctx.analysis.hints.opponent_cap_color_hint,
+            goalkeeper_cap_color=profile.goalkeeper_cap_color,
         )
 
     @staticmethod
@@ -974,33 +1070,105 @@ class VideoAnalysisOrchestrator:
 
     # ------------------------------------------------------------ Draft events
 
-    def _build_draft_event(
+    def _finish_event(
         self,
         item: _PreparedEvent,
         outcome: _CapOutcome,
-        request: AnalyzeJobRequest,
-        analysis: AnalysisContext,
+        ctx: _Pass2Context,
         video_start_utc: datetime,
+        counters: Pass2Counters,
     ) -> DraftEvent:
+        """Resolve the lineup, build the draft event, and record debug data and counters."""
+        analysis = ctx.analysis
+        cand = item.candidate
+        expected_color = analysis.profile.expected_actor_cap_color(
+            cand.definition, analysis.tracked_cap_color_hint
+        )
+        lineup = self._resolve_lineup(item, outcome, ctx, expected_color)
+        counters.record_event(
+            item.match_result,
+            lineup.gate_outcomes.get(REVIEW_OCR_CAP_COLOR_MISMATCH, False),
+            MIN_BALL_DETECTIONS,
+        )
+        if ctx.debug_dir is not None:
+            self._write_event_json(item, outcome, lineup, expected_color, ctx)
+        return self._build_draft_event(cand, lineup, video_start_utc)
+
+    def _resolve_lineup(
+        self,
+        item: _PreparedEvent,
+        outcome: _CapOutcome,
+        ctx: _Pass2Context,
+        expected_color: str | None,
+    ) -> LineupMatchOutcome:
         cand = item.candidate
         failure = item.failure_reason or outcome.failure_reason
+        evidence = (
+            ActorEvidence(item.actor_match_score, item.actor_team_class or TeamClass.UNKNOWN)
+            if item.actor_match_score is not None
+            else None
+        )
         lineup = self._lineup_matcher.resolve(
             candidate=cand,
             cap_result=outcome.cap_result,
-            context=analysis,
-            min_cap_confidence=request.analysis_options.min_cap_confidence,
+            context=ctx.analysis,
+            min_cap_confidence=ctx.request.analysis_options.min_cap_confidence,
             has_spatial_hint=item.has_spatial_hint,
             actor_match_tied=item.actor_match_tied,
             cap_ambiguous=item.cap_ambiguous,
             pass2_failure_reason=str(failure) if failure is not None else None,
+            actor_evidence=evidence,
         )
-        lineup = self._apply_cap_color_guard(
+        cap_result = outcome.cap_result
+        return self._apply_cap_color_guard(
             lineup,
             cand,
-            analysis.profile.expected_actor_cap_color(
-                cand.definition, analysis.tracked_cap_color_hint
-            ),
+            expected_color,
+            cap_result.observed_cap_color if cap_result else None,
+            tile_cap_colors=cap_result.tile_cap_colors if cap_result else (),
+            opponent_cap_color=ctx.analysis.hints.opponent_cap_color_hint,
         )
+
+    @staticmethod
+    def _write_event_json(
+        item: _PreparedEvent,
+        outcome: _CapOutcome,
+        lineup: LineupMatchOutcome,
+        expected_color: str | None,
+        ctx: _Pass2Context,
+    ) -> None:
+        failure = item.failure_reason or outcome.failure_reason
+        record = Pass2DebugRecord(
+            event_index=item.event_index,
+            video_time_sec=item.candidate.video_time_sec,
+            event_name=item.candidate.definition.name,
+            failure_reason=str(failure) if failure is not None else None,
+            match_result=item.match_result,
+            matched_summary=item.matched_summary,
+            crop_report=item.crop_report,
+            cap_result=outcome.cap_result,
+            expected_cap_color=expected_color,
+            opponent_cap_color=ctx.analysis.hints.opponent_cap_color_hint,
+            gate_outcomes=lineup.gate_outcomes,
+            review_reasons=lineup.review_reasons,
+        )
+        if ctx.debug_dir is not None:
+            write_event_json(ctx.debug_dir, item.event_index, build_event_payload(record))
+
+    @staticmethod
+    def _attribution_summary(counters: Pass2Counters, debug_dir: Path | None) -> list[str]:
+        """Log the per-job counters, persist them in the debug dir, and return any warning."""
+        logger.info(counters.summary_line())
+        if debug_dir is not None:
+            write_summary_json(debug_dir, counters)
+        return [counters.summary_line()] if counters.needs_warning() else []
+
+    @staticmethod
+    def _build_draft_event(
+        cand: Pass1EventCandidate,
+        lineup: LineupMatchOutcome,
+        video_start_utc: datetime,
+    ) -> DraftEvent:
         return DraftEvent(
             id=uuid4(),
             event_definition_id=cand.definition.event_definition_id,
@@ -1029,25 +1197,69 @@ class VideoAnalysisOrchestrator:
         outcome: LineupMatchOutcome,
         candidate: Pass1EventCandidate,
         tracked_team_hint: str | None,
+        observed_cap_color: str | None = None,
+        *,
+        tile_cap_colors: tuple[str | None, ...] = (),
+        opponent_cap_color: str | None = None,
     ) -> LineupMatchOutcome:
-        """Block auto-confirmation when the event's cap color contradicts the expected actor.
+        """Block auto-confirmation when a cap color contradicts the expected actor.
 
         ``tracked_team_hint`` is the cap color the acting player is expected to wear: the tracked
-        team's color, or the sport's goalkeeper color for goalkeeper-only events.
+        team's color, or the sport's goalkeeper color for goalkeeper-only events. Compared with
+        it are the Pass 1 ``cap_color_hint`` and the color the OCR resolver observed on the
+        tracklet (``observed_cap_color``). The per-tile colors additionally expose a mixed or
+        opponent-colored sheet that the model summarized as no color at all.
         """
-        if not cls._has_cap_color_hint_mismatch(candidate.cap_color_hint, tracked_team_hint):
+        hint_mismatch = cls._has_cap_color_hint_mismatch(
+            candidate.cap_color_hint, tracked_team_hint
+        )
+        observed_mismatch = cls._has_observed_color_mismatch(
+            observed_cap_color, tracked_team_hint
+        ) or cls._tiles_show_opponent_color(observed_cap_color, tile_cap_colors, opponent_cap_color)
+        if not (hint_mismatch or observed_mismatch):
             return outcome
         reasons = list(outcome.review_reasons)
-        if _CAP_COLOR_HINT_MISMATCH_REASON not in reasons:
-            reasons.append(_CAP_COLOR_HINT_MISMATCH_REASON)
-        return LineupMatchOutcome(
+        gates = dict(outcome.gate_outcomes)
+        if hint_mismatch:
+            _append_reason(reasons, _CAP_COLOR_HINT_MISMATCH_REASON)
+        if observed_mismatch:
+            _append_reason(reasons, REVIEW_OCR_CAP_COLOR_MISMATCH)
+            gates[REVIEW_OCR_CAP_COLOR_MISMATCH] = True
+        return replace(
+            outcome,
             match_lineup_id=None,
             resolved_cap_number=None,
-            cap_confidence=outcome.cap_confidence,
-            candidate_lineup_ids=outcome.candidate_lineup_ids,
             needs_review=True,
             review_reasons=reasons,
+            gate_outcomes=gates,
         )
+
+    @staticmethod
+    def _has_observed_color_mismatch(observed: str | None, expected: str | None) -> bool:
+        """Return True when OCR saw a cap color that differs from the expected one."""
+        if not normalize_color_name(observed) or not normalize_color_name(expected):
+            return False
+        return not colors_match(observed, expected)
+
+    @staticmethod
+    def _tiles_show_opponent_color(
+        observed: str | None,
+        tile_cap_colors: tuple[str | None, ...],
+        opponent: str | None,
+    ) -> bool:
+        """Return True when per-tile OCR colors point at the opponent's cap.
+
+        Fires when at least half of the reported tile colors match the opponent color, or when
+        the model reported no overall color and any tile shows the opponent color. A clean sheet
+        (overall color reported) with only a small minority of noisy tiles does not fire.
+        """
+        reported = [color for color in tile_cap_colors if normalize_color_name(color)]
+        if not reported or not normalize_color_name(opponent):
+            return False
+        opponent_tiles = sum(colors_match(color, opponent) for color in reported)
+        if not normalize_color_name(observed) and opponent_tiles > 0:
+            return True
+        return opponent_tiles * 2 >= len(reported)
 
     @staticmethod
     def _normalize_cap_color_hint(value: str | None) -> str:
@@ -1076,3 +1288,9 @@ class VideoAnalysisOrchestrator:
     ) -> None:
         if callback is not None:
             callback(stage, progress)
+
+
+def _append_reason(reasons: list[str], reason: str) -> None:
+    """Append ``reason`` unless already present, preserving order."""
+    if reason not in reasons:
+        reasons.append(reason)
