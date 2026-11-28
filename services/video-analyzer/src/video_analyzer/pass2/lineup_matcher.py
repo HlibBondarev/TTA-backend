@@ -27,6 +27,13 @@ MIN_AUTO_CONFIRM_MATCH_SCORE: float = 0.35
 """Minimum actor-to-tracklet match score required to auto-confirm a lineup entry."""
 
 _VERIFIED_TEAM_CLASSES = frozenset({TeamClass.TRACKED, TeamClass.GOALKEEPER})
+"""Team classes that may auto-confirm.
+
+``GOALKEEPER`` is only produced together with tracked-team evidence (a tracked label or cap
+color plus goalkeeper evidence), so it identifies *our* goalkeeper. Goalkeeper evidence alone
+(a solid red cap or a generic goalkeeper label, which both teams share) is classified
+``UNKNOWN`` and therefore blocked here with ``ACTOR_TEAM_UNVERIFIED``.
+"""
 
 
 @dataclass(frozen=True, slots=True)

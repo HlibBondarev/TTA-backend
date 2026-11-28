@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from math import hypot
 
 from video_analyzer.media.ffmpeg_client import ExtractedFrame
@@ -80,6 +80,43 @@ class CandidateBreakdown:
     time_penalty: float = 0.0
     exclusion_reason: str | None = None
     final_score: float | None = None
+
+    def with_exclusion(self, reason: str) -> CandidateBreakdown:
+        """Return a copy of this breakdown excluded for ``reason``."""
+        return CandidateBreakdown(
+            track_id=self.track_id,
+            team_evidence=self.team_evidence,
+            iou=self.iou,
+            proximity=self.proximity,
+            spatial_score=self.spatial_score,
+            team_bonus=self.team_bonus,
+            ball_bonus=self.ball_bonus,
+            time_penalty=self.time_penalty,
+            exclusion_reason=reason,
+            final_score=self.final_score,
+        )
+
+    def with_scores(
+        self,
+        team_bonus: float,
+        ball_bonus: float,
+        time_penalty: float,
+        final_score: float | None = None,
+        exclusion_reason: str | None = None,
+    ) -> CandidateBreakdown:
+        """Return a copy carrying the score components and the final score or exclusion."""
+        return CandidateBreakdown(
+            track_id=self.track_id,
+            team_evidence=self.team_evidence,
+            iou=self.iou,
+            proximity=self.proximity,
+            spatial_score=self.spatial_score,
+            team_bonus=team_bonus,
+            ball_bonus=ball_bonus,
+            time_penalty=time_penalty,
+            exclusion_reason=exclusion_reason,
+            final_score=final_score,
+        )
 
     def to_debug_dict(self) -> dict[str, object]:
         """Return a JSON-serializable score breakdown."""
@@ -169,7 +206,13 @@ class ActorMatcher:
             :class:`ActorMatchResult`. Opponent tracklets are never selected.
         """
         if not tracklets or frame_width <= 0 or frame_height <= 0:
-            return ActorMatchResult(None, Pass2FailureReason.NO_PLAYER_TRACKLET_MATCHED)
+            return ActorMatchResult(
+                None,
+                Pass2FailureReason.NO_PLAYER_TRACKLET_MATCHED,
+                ball_detections_in_window=len(
+                    _ball_window(ball_detections, candidate.video_time_sec)
+                ),
+            )
         inputs = self._build_inputs(
             candidate, context, frame_width, frame_height, frames, ball_detections
         )
@@ -213,13 +256,7 @@ class ActorMatcher:
             event_time_sec=event_time,
             spec=TeamClassificationSpec.from_context(context),
             frames_by_index={f.index: f for f in frames} if frames is not None else None,
-            ball_window=[
-                det
-                for det in (ball_detections or ())
-                if event_time - BALL_WINDOW_BEFORE_SEC
-                <= det.video_time_sec
-                <= event_time + BALL_WINDOW_AFTER_SEC
-            ],
+            ball_window=_ball_window(ball_detections, event_time),
         )
 
     def _evaluate(
@@ -256,7 +293,7 @@ class ActorMatcher:
         )
         exclusion = _team_exclusion(evidence, inputs.is_goalkeeper_event)
         if exclusion is not None:
-            return replace(base, exclusion_reason=exclusion)
+            return base.with_exclusion(exclusion)
         return self._score(tracklet, obs, base, inputs, geometry, has_overlap)
 
     def _score(
@@ -276,26 +313,21 @@ class ActorMatcher:
         )
         if inputs.target_bbox_px is None:
             stability = min(0.4, len(tracklet.observations) * 0.03)
-            raw = tracklet.mean_confidence * 0.4 + stability + team_bonus - time_penalty
+            raw = (
+                tracklet.mean_confidence * 0.4 + stability + team_bonus + ball_bonus - time_penalty
+            )
             total = round(max(0.0, raw), 4)
         else:
             raw = base.spatial_score + team_bonus + ball_bonus - time_penalty
             total = round(max(0.0, min(1.0, raw)), 4)
             if total <= 0.0 or (not has_overlap and total < self._min_spatial_score):
-                return replace(
-                    base,
-                    team_bonus=team_bonus,
-                    ball_bonus=ball_bonus,
-                    time_penalty=time_penalty,
+                return base.with_scores(
+                    team_bonus,
+                    ball_bonus,
+                    time_penalty,
                     exclusion_reason=EXCLUDED_LOW_SPATIAL,
                 )
-        return replace(
-            base,
-            team_bonus=team_bonus,
-            ball_bonus=ball_bonus,
-            time_penalty=time_penalty,
-            final_score=total,
-        )
+        return base.with_scores(team_bonus, ball_bonus, time_penalty, final_score=total)
 
     @staticmethod
     def _spatial_components(
@@ -354,6 +386,19 @@ class ActorMatcher:
         )
 
 
+def _ball_window(
+    ball_detections: Sequence[FrameDetection] | None, event_time_sec: float
+) -> list[FrameDetection]:
+    """Return the ball detections inside ``[t - 1.0 s, t + 0.5 s]`` around the event."""
+    return [
+        det
+        for det in (ball_detections or ())
+        if event_time_sec - BALL_WINDOW_BEFORE_SEC
+        <= det.video_time_sec
+        <= event_time_sec + BALL_WINDOW_AFTER_SEC
+    ]
+
+
 def _team_exclusion(evidence: TeamEvidence, is_goalkeeper_event: bool) -> str | None:
     """Return the hard-exclusion reason for a tracklet, or ``None`` when it stays eligible."""
     if evidence.team_class == TeamClass.OPPONENT:
@@ -369,7 +414,7 @@ def _team_bonus(evidence: TeamEvidence, is_goalkeeper_event: bool) -> float:
         bonus += TRACKED_TEAM_BONUS * evidence.tracked_share
     if is_goalkeeper_event and evidence.goalkeeper_evidence:
         bonus += GOALKEEPER_EVENT_BONUS
-    if not is_goalkeeper_event and evidence.team_class == TeamClass.GOALKEEPER:
+    if not is_goalkeeper_event and evidence.goalkeeper_evidence:
         bonus -= GOALKEEPER_FIELD_PENALTY
     return bonus
 

@@ -457,3 +457,114 @@ def test_unknown_class_from_thin_hsv_evidence_gets_no_team_bonus() -> None:
     assert result.matched is not None
     assert result.matched.team_class is TeamClass.UNKNOWN
     assert _breakdown(result, 1).team_bonus == 0.0
+
+
+# ---------------------------------- goalkeeper role without team identity (review finding)
+
+
+def _red_zone_frame() -> ExtractedFrame:
+    image = np.full((FRAME_H, FRAME_W, 3), 100, dtype=np.uint8)
+    image[96:150, 175:225] = (20, 20, 220)  # solid red cap in the color zone
+    return ExtractedFrame(index=0, video_time_sec=EVENT_TIME, image_bgr=image)
+
+
+def test_solid_red_goalkeeper_is_unknown_but_eligible_and_bonused_on_goalkeeper_events() -> None:
+    result = _match(
+        [_tracklet(1, "Player")], name="Goal", is_positive=False, frames=[_red_zone_frame()]
+    )
+
+    assert result.matched is not None
+    assert result.matched.team_class is TeamClass.UNKNOWN
+    assert result.matched.team_evidence is not None
+    assert result.matched.team_evidence.goalkeeper_evidence is True
+    assert _breakdown(result, 1).team_bonus == pytest.approx(0.20)
+    assert _breakdown(result, 1).exclusion_reason is None
+
+
+def test_generic_goalkeeper_label_is_eligible_on_goalkeeper_events() -> None:
+    result = _match([_tracklet(1, "Goalkeeper")], name="Goal", is_positive=False)
+
+    assert result.matched is not None
+    assert result.matched.team_class is TeamClass.UNKNOWN
+    assert _breakdown(result, 1).team_bonus == pytest.approx(0.20)
+
+
+def test_solid_red_goalkeeper_gets_the_soft_penalty_on_field_events_but_is_never_excluded() -> None:
+    result = _match([_tracklet(1, "Player")], frames=[_red_zone_frame()])
+
+    assert result.matched is not None
+    assert _breakdown(result, 1).team_bonus == pytest.approx(-0.10)
+    assert _breakdown(result, 1).exclusion_reason is None
+
+
+def test_opponent_label_with_red_cap_color_is_still_hard_excluded_on_goalkeeper_events() -> None:
+    result = _match(
+        [_tracklet(1, "Blue team")], name="Goal", is_positive=False, frames=[_red_zone_frame()]
+    )
+
+    assert result.matched is None
+    assert _breakdown(result, 1).exclusion_reason == EXCLUDED_OPPONENT
+    assert result.failure_reason is Pass2FailureReason.NO_TRACKED_TEAM_ACTOR
+
+
+# ----------------------------------------- ball telemetry and unhinted ranking (review findings)
+
+
+def test_ball_detections_in_window_is_reported_even_without_any_tracklet() -> None:
+    balls = [
+        _ball(0, EVENT_TIME - 0.5, (200.0, 100.0)),
+        _ball(1, EVENT_TIME, (200.0, 100.0)),
+        _ball(2, EVENT_TIME + 0.4, (200.0, 100.0)),
+        _ball(3, EVENT_TIME - 3.0, (200.0, 100.0)),
+        _ball(4, EVENT_TIME + 2.0, (200.0, 100.0)),
+    ]
+
+    result = _match([], ball_detections=balls)
+
+    assert result.matched is None
+    assert result.failure_reason is Pass2FailureReason.NO_PLAYER_TRACKLET_MATCHED
+    assert result.ball_detections_in_window == 3
+    assert result.breakdowns == []
+
+
+def test_ball_detections_in_window_is_zero_without_tracklets_or_balls() -> None:
+    assert _match([]).ball_detections_in_window == 0
+    assert _match([], ball_detections=[]).ball_detections_in_window == 0
+
+
+def _match_unhinted(tracklets, **kwargs):
+    context = make_context()
+    candidate = make_candidate(context, bbox=HINT, time_sec=EVENT_TIME)
+    candidate.actor_bbox_normalized = None
+    return ActorMatcher().match_detailed(candidate, tracklets, context, FRAME_W, FRAME_H, **kwargs)
+
+
+def test_ball_proximity_improves_unhinted_candidate_ranking() -> None:
+    box_a = (20.0, 90.0, 120.0, 210.0)
+    box_b = (270.0, 90.0, 370.0, 210.0)
+    start = EVENT_TIME - 0.25
+    tracklets = [
+        _tracklet(1, "White team", box_a, frames=4, start_time=start),
+        _tracklet(2, "White team", box_b, frames=4, start_time=start),
+    ]
+    balls = [_ball(i, start + 0.25 * i, (320.0, 110.0)) for i in range(4)]
+
+    without = _match_unhinted(tracklets)
+    with_ball = _match_unhinted(tracklets, ball_detections=balls)
+
+    assert without.matched is not None
+    assert without.matched.is_tied is True  # identical evidence: only the ball can break it
+    assert with_ball.matched is not None
+    assert with_ball.matched.tracklet.track_id == 2
+    assert with_ball.matched.is_tied is False
+    assert with_ball.matched.has_spatial_hint is False
+    assert _breakdown(with_ball, 2).ball_bonus == pytest.approx(0.10)
+    assert _breakdown(with_ball, 1).ball_bonus == 0.0
+    assert _breakdown(with_ball, 2).final_score > _breakdown(with_ball, 1).final_score
+
+
+def test_unhinted_matches_still_report_no_spatial_hint_for_the_downstream_gate() -> None:
+    result = _match_unhinted([_tracklet(1, "White team")])
+
+    assert result.matched is not None
+    assert result.matched.has_spatial_hint is False

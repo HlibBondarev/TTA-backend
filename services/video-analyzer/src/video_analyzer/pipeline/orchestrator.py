@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -54,6 +54,7 @@ from video_analyzer.pass2.debug_artifacts import (
     Pass2Counters,
     Pass2DebugRecord,
     build_event_payload,
+    chosen_bbox_on_frame,
     nearest_frame,
     write_detection_overlay,
     write_event_json,
@@ -810,7 +811,7 @@ class VideoAnalysisOrchestrator:
             frame=frame,
             tracking=prepared.tracking,
             target_bbox_normalized=prepared.candidate.actor_bbox_normalized,
-            chosen_bbox=matched.nearest_observation.bbox_xyxy if matched else None,
+            chosen_bbox=chosen_bbox_on_frame(matched.tracklet if matched else None, frame.index),
         )
 
     def _extract_frames(self, prepared: _PreparedEvent, ctx: _Pass2Context) -> list[ExtractedFrame]:
@@ -916,11 +917,6 @@ class VideoAnalysisOrchestrator:
         analysis = ctx.analysis
         profile = analysis.profile
         tracklets = prepared.tracking.tracklets if prepared.tracking else []
-        extra_colors = tuple(
-            color
-            for color in (analysis.tracked_cap_color_hint, profile.goalkeeper_cap_color)
-            if color
-        )
         return CropSelectionContext(
             event_time_sec=prepared.candidate.video_time_sec,
             geometry=profile.cap_zone_geometry,
@@ -928,7 +924,8 @@ class VideoAnalysisOrchestrator:
                 prepared.candidate.definition, analysis.tracked_cap_color_hint
             ),
             opponent_color=analysis.hints.opponent_cap_color_hint,
-            extra_colors=extra_colors,
+            tracked_color=analysis.tracked_cap_color_hint,
+            goalkeeper_color=profile.goalkeeper_cap_color,
             other_tracklets=tuple(t for t in tracklets if t.track_id != matched.tracklet.track_id),
         )
 
@@ -1225,10 +1222,11 @@ class VideoAnalysisOrchestrator:
         if observed_mismatch:
             _append_reason(reasons, REVIEW_OCR_CAP_COLOR_MISMATCH)
             gates[REVIEW_OCR_CAP_COLOR_MISMATCH] = True
-        return replace(
-            outcome,
+        return LineupMatchOutcome(
             match_lineup_id=None,
             resolved_cap_number=None,
+            cap_confidence=outcome.cap_confidence,
+            candidate_lineup_ids=outcome.candidate_lineup_ids,
             needs_review=True,
             review_reasons=reasons,
             gate_outcomes=gates,

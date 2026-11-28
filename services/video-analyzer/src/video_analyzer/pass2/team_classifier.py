@@ -34,6 +34,7 @@ from video_analyzer.pass2.color_constants import (
     TEAM_WINDOW_HALF_SEC,
     TRACKED_CONFIRM_SHARE,
     canonical_color,
+    colors_in_text,
     normalize_color_name,
 )
 from video_analyzer.pass2.tracker import BBox, Tracklet, TrackletObservation, upper_body_cap_zone
@@ -232,8 +233,13 @@ class _VoteTally:
         )
 
     @property
-    def total_weight(self) -> float:
-        return sum(self.class_weight(team_class) for team_class in TeamClass)
+    def team_weight_total(self) -> float:
+        """Weight of tracked and opponent votes only.
+
+        Goalkeeper-class votes describe the role, not the team, so they must not dilute the
+        tracked/opponent shares (an opponent label next to red cap panels stays opponent).
+        """
+        return self.class_weight(TeamClass.TRACKED) + self.class_weight(TeamClass.OPPONENT)
 
     @property
     def goalkeeper_ratio(self) -> float:
@@ -256,12 +262,19 @@ class _HsvVote:
 
 
 def _label_mentions(label: str, color: str | None) -> bool:
-    """Return True when the lower-cased detector label names ``color`` (or its canonical form)."""
+    """Return True when the detector label names ``color``, resolving color aliases.
+
+    Known colors match through the alias table in both directions (a ``blue`` hint matches
+    ``"Navy team"`` and a ``navy`` hint matches ``"Blue team"``). Unknown color names fall
+    back to a plain substring match.
+    """
     name = normalize_color_name(color)
     if not name:
         return False
     canonical = canonical_color(name)
-    return name in label or (canonical is not None and canonical in label)
+    if canonical is not None:
+        return canonical in colors_in_text(label)
+    return name in label
 
 
 def _label_vote(label: str, spec: TeamClassificationSpec) -> tuple[TeamClass | None, bool]:
@@ -402,51 +415,48 @@ class TeamClassifier:
         return _HsvVote(team_class, panel_flag or team_class is TeamClass.GOALKEEPER)
 
     def _resolve(self, tally: _VoteTally) -> TeamEvidence:
-        label_breakdown = {str(k): v for k, v in tally.label_votes.items()}
-        hsv_breakdown = {str(k): v for k, v in tally.hsv_votes.items()}
-        total = tally.total_weight
-        if total <= 0.0:
-            return TeamEvidence(
-                label_votes=label_breakdown,
-                hsv_votes=hsv_breakdown,
-                observation_count=tally.observations,
-            )
-        shares = {cls: tally.class_weight(cls) / total for cls in TeamClass}
-        goalkeeper_share = tally.goalkeeper_ratio
-        goalkeeper_evidence = goalkeeper_share >= self._tracked_share
+        team_total = tally.team_weight_total
+        opponent_share = tally.class_weight(TeamClass.OPPONENT) / team_total if team_total else 0.0
+        tracked_share = tally.class_weight(TeamClass.TRACKED) / team_total if team_total else 0.0
+        goalkeeper_evidence = tally.goalkeeper_ratio >= self._tracked_share
         team_class, confidence = self._pick_class(
-            shares, goalkeeper_evidence, goalkeeper_share, tally.tracked_promotion_blocked
+            opponent_share, tracked_share, goalkeeper_evidence, tally.tracked_promotion_blocked
         )
         return TeamEvidence(
             team_class=team_class,
             confidence=round(confidence, 4),
-            label_votes=label_breakdown,
-            hsv_votes=hsv_breakdown,
+            label_votes={str(k): v for k, v in tally.label_votes.items()},
+            hsv_votes={str(k): v for k, v in tally.hsv_votes.items()},
             goalkeeper_evidence=goalkeeper_evidence,
             observation_count=tally.observations,
-            tracked_share=shares[TeamClass.TRACKED],
+            tracked_share=tracked_share,
         )
 
     def _pick_class(
         self,
-        shares: dict[TeamClass, float],
+        opponent_share: float,
+        tracked_share: float,
         goalkeeper_evidence: bool,
-        goalkeeper_share: float,
         tracked_promotion_blocked: bool = False,
     ) -> tuple[TeamClass, float]:
-        """Resolve the class: opponent first, then our goalkeeper, then the tracked team.
+        """Resolve the class from team identity, with goalkeeper role as a separate signal.
 
-        A goalkeeper cap in the opponent color (opponent base plus goalkeeper panels) is the
-        opponent goalkeeper and stays ``OPPONENT``. Goalkeeper evidence next to tracked-team
-        evidence (tracked base plus goalkeeper panels) is our goalkeeper.
+        ``opponent_share`` and ``tracked_share`` are shares of the tracked/opponent votes only.
+
+        * Opponent share at or above the exclusion share is ``OPPONENT``, also for an opponent
+          goalkeeper (opponent label or base color plus goalkeeper panels).
+        * Tracked evidence is ``GOALKEEPER`` when goalkeeper evidence accompanies it (a
+          ``White Goalkeeper`` label or a tracked base with red panels), else ``TRACKED``.
+        * Goalkeeper evidence without tracked evidence (solid red cap, generic ``Goalkeeper``
+          label shared by both teams) stays ``UNKNOWN``; the evidence flag is still reported so
+          the actor matcher keeps the tracklet eligible for goalkeeper events.
 
         ``tracked_promotion_blocked`` keeps a tracklet the detector explicitly called
         ``opponent`` at ``UNKNOWN`` unless several HSV observations say tracked.
         """
-        if shares[TeamClass.OPPONENT] >= self._opponent_share:
-            return TeamClass.OPPONENT, shares[TeamClass.OPPONENT]
-        if goalkeeper_evidence:
-            return TeamClass.GOALKEEPER, max(goalkeeper_share, shares[TeamClass.GOALKEEPER])
-        if shares[TeamClass.TRACKED] >= self._tracked_share and not tracked_promotion_blocked:
-            return TeamClass.TRACKED, shares[TeamClass.TRACKED]
-        return TeamClass.UNKNOWN, max(shares.values())
+        if opponent_share >= self._opponent_share:
+            return TeamClass.OPPONENT, opponent_share
+        if tracked_share >= self._tracked_share and not tracked_promotion_blocked:
+            team_class = TeamClass.GOALKEEPER if goalkeeper_evidence else TeamClass.TRACKED
+            return team_class, tracked_share
+        return TeamClass.UNKNOWN, max(opponent_share, tracked_share)

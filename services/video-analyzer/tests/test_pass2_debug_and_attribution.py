@@ -21,6 +21,7 @@ from video_analyzer.pass2.failure_reasons import (
     REVIEW_OCR_CAP_COLOR_MISMATCH,
     Pass2FailureReason,
 )
+from video_analyzer.pipeline.orchestrator import VideoAnalysisOrchestrator
 from video_analyzer.schemas.draft import PipelineDiagnostics
 from video_analyzer.schemas.request import AnalyzeJobRequest
 
@@ -308,3 +309,101 @@ def test_clean_white_sheet_with_one_noisy_tile_still_auto_confirms(
 
     assert all(event.match_lineup_id is not None for event in draft.events)
     assert _attribution_warnings(draft) == []
+
+
+# ------------------------------------------- chosen highlight belongs to the displayed frame
+
+
+def _green_pixels(path: Path) -> int:
+    import cv2
+
+    image = cv2.imread(str(path))
+    blue, green, red = image[..., 0], image[..., 1], image[..., 2]
+    return int(((green > 180) & (red < 90) & (blue < 90)).sum())
+
+
+def _overlay_fixture(tmp_path: Path, sample_job_request: AnalyzeJobRequest):
+    from tests.support import make_candidate, make_context
+    from video_analyzer.media.ffmpeg_client import ExtractedFrame
+    from video_analyzer.pass2.actor_matcher import MatchedTracklet
+    from video_analyzer.pass2.tracker import TrackingResult, Tracklet, TrackletObservation
+    from video_analyzer.pipeline.orchestrator import _Pass2Context, _PreparedEvent
+    from video_analyzer.sport import build_analysis_context
+
+    context = make_context()
+    candidate = make_candidate(context, time_sec=20.0)
+    box = (100.0, 100.0, 200.0, 200.0)
+    # Frame 1 is nearest to the event; the chosen tracklet only has frames 0 and 3.
+    frames = [
+        ExtractedFrame(i, 19.5 + 0.5 * i, np.zeros((300, 400, 3), dtype=np.uint8)) for i in range(4)
+    ]
+    frames[1] = ExtractedFrame(1, 20.0, frames[1].image_bgr)
+    tracklet = Tracklet(
+        7,
+        [
+            TrackletObservation(0, 19.5, box, 0.9, "White team"),
+            TrackletObservation(3, 21.0, box, 0.9, "White team"),
+        ],
+    )
+    matched = MatchedTracklet(tracklet, 0.9, tracklet.observations[1])
+    prepared = _PreparedEvent(
+        event_index=1, candidate=candidate, has_spatial_hint=False, tracking=TrackingResult()
+    )
+    pass2_ctx = _Pass2Context(
+        video_path=tmp_path,
+        probe=None,  # type: ignore[arg-type]
+        request=sample_job_request,
+        analysis=build_analysis_context(sample_job_request.match_snapshot),
+        allowed_caps=[],
+        cap_color_hint=None,
+        cancel_event=None,
+        debug_dir=tmp_path / "overlay",
+    )
+    return prepared, frames, matched, pass2_ctx
+
+
+def test_overlay_omits_the_chosen_highlight_when_its_observation_is_on_another_frame(
+    sample_job_request: AnalyzeJobRequest, tmp_path: Path
+) -> None:
+    prepared, frames, matched, ctx = _overlay_fixture(tmp_path, sample_job_request)
+
+    # matched.nearest_observation sits on frame 3, but the displayed frame is frame 1.
+    VideoAnalysisOrchestrator._write_detection_overlay(prepared, frames, matched, ctx)
+
+    path = ctx.debug_dir / "event_001_all_detections.jpg"
+    assert path.is_file()
+    assert _green_pixels(path) == 0
+
+
+def test_overlay_draws_the_chosen_highlight_when_its_observation_is_on_the_displayed_frame(
+    sample_job_request: AnalyzeJobRequest, tmp_path: Path
+) -> None:
+    from video_analyzer.pass2.tracker import TrackletObservation
+
+    prepared, frames, matched, ctx = _overlay_fixture(tmp_path, sample_job_request)
+    matched.tracklet.observations.append(
+        TrackletObservation(1, 20.0, (100.0, 100.0, 200.0, 200.0), 0.9, "White team")
+    )
+
+    VideoAnalysisOrchestrator._write_detection_overlay(prepared, frames, matched, ctx)
+
+    assert _green_pixels(ctx.debug_dir / "event_001_all_detections.jpg") > 0
+
+
+def test_chosen_bbox_on_frame_picks_the_observation_of_the_requested_frame() -> None:
+    from video_analyzer.pass2.debug_artifacts import chosen_bbox_on_frame
+    from video_analyzer.pass2.tracker import Tracklet, TrackletObservation
+
+    first, second = (0.0, 0.0, 10.0, 10.0), (50.0, 50.0, 90.0, 90.0)
+    tracklet = Tracklet(
+        1,
+        [
+            TrackletObservation(0, 1.0, first, 0.9, "x"),
+            TrackletObservation(3, 2.0, second, 0.9, "x"),
+        ],
+    )
+
+    assert chosen_bbox_on_frame(tracklet, 0) == first
+    assert chosen_bbox_on_frame(tracklet, 3) == second
+    assert chosen_bbox_on_frame(tracklet, 1) is None
+    assert chosen_bbox_on_frame(None, 0) is None

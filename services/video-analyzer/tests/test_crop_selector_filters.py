@@ -8,8 +8,11 @@ import pytest
 from video_analyzer.media.ffmpeg_client import ExtractedFrame
 from video_analyzer.pass2.color_constants import ASPECT_RATIO_TOLERANCE
 from video_analyzer.pass2.crop_filters import (
+    REJECT_AMBIGUOUS,
     REJECT_ASPECT_OUTLIER,
     REJECT_COLOR_MISMATCH,
+    REJECT_FRAME_MISSING,
+    REJECT_MAX_CROPS,
     REJECT_OUTSIDE_NEAR_WINDOW,
     CropSelectionContext,
     aspect_ratio_outlier_frames,
@@ -310,3 +313,132 @@ def test_selection_without_context_keeps_legacy_behavior() -> None:
 
     assert selected is not None
     assert len(selected.crops) == 2
+
+
+# --------------------------------------- bi-colored goalkeeper crops accept the tracked base
+
+RED = (20, 20, 220)
+RED_PANEL_ZONE = (125, 56, 175, 62)  # small red panel at the top of the color zone
+
+
+def _goalkeeper_context(**overrides) -> CropSelectionContext:
+    values = {
+        "expected_color": "red",
+        "goalkeeper_color": "red",
+        "tracked_color": "white",
+        "opponent_color": "blue",
+    }
+    values.update(overrides)
+    return _context(**values)
+
+
+def _gk_frames(base_color, panel=True):
+    times = [EVENT_TIME, EVENT_TIME + 0.25]
+    zones = [(DEFAULT_ZONE, base_color)] + ([(RED_PANEL_ZONE, RED)] if panel else [])
+    return Tracklet(1, [_obs(i, t) for i, t in enumerate(times)]), [
+        _frame(i, t, zones) for i, t in enumerate(times)
+    ]
+
+
+def test_goalkeeper_event_keeps_white_base_bi_colored_goalkeeper_crops() -> None:
+    tracklet, frames = _gk_frames(WHITE)
+
+    selected, report = _select(tracklet, frames, _goalkeeper_context())
+
+    assert selected is not None
+    assert len(selected.crops) == 2
+    assert REJECT_COLOR_MISMATCH not in _reasons(report).values()
+
+
+def test_goalkeeper_event_rejects_blue_base_opponent_crops() -> None:
+    tracklet, frames = _gk_frames(BLUE)
+
+    selected, report = _select(tracklet, frames, _goalkeeper_context())
+
+    assert selected is None
+    assert set(_reasons(report).values()) == {REJECT_COLOR_MISMATCH}
+
+
+def test_goalkeeper_event_keeps_solid_red_goalkeeper_crops() -> None:
+    tracklet, frames = _gk_frames(RED, panel=False)
+
+    selected, _ = _select(tracklet, frames, _goalkeeper_context())
+
+    assert selected is not None
+    assert len(selected.crops) == 2
+
+
+def test_field_event_does_not_accept_a_goalkeeper_colored_head() -> None:
+    tracklet, frames = _gk_frames(RED, panel=False)
+    context = _goalkeeper_context(expected_color="white")
+
+    selected, report = _select(tracklet, frames, context)
+
+    assert selected is None
+    assert set(_reasons(report).values()) == {REJECT_COLOR_MISMATCH}
+
+
+def test_accepted_colors_include_the_tracked_base_only_for_goalkeeper_expectations() -> None:
+    assert _goalkeeper_context().accepted_canonical == {"red", "white"}
+    assert _goalkeeper_context(expected_color="white").accepted_canonical == {"white"}
+    assert _goalkeeper_context(tracked_color=None).accepted_canonical == {"red"}
+    assert _context().accepted_canonical == {"white"}
+
+
+# ----------------------------------------------- the observation report covers everything
+
+
+def test_observation_report_has_one_verdict_for_every_observation() -> None:
+    neighbor_box = (170.0, 50.0, 270.0, 170.0)
+    merged_box = (60.0, 50.0, 280.0, 170.0)
+    times = [17.0, 19.5, 19.75, 20.0, 20.25, 20.5, 20.75, 21.0]
+    boxes = {2: merged_box}
+    tracklet = Tracklet(1, [_obs(i, t, boxes.get(i, PLAYER_BOX)) for i, t in enumerate(times)])
+    neighbor = Tracklet(2, [_obs(4, times[4], neighbor_box)])
+    white = [(DEFAULT_ZONE, WHITE)]
+    frames_by_obs = {
+        0: white,
+        2: white,
+        3: [(DEFAULT_ZONE, BLUE)],
+        4: [(DEFAULT_ZONE, WHITE), (NEIGHBOR_ZONE, BLUE)],
+        5: white,
+        6: white,
+        7: white,
+    }
+    frames = [_frame(i, times[i], zones) for i, zones in frames_by_obs.items()]  # no frame 1
+
+    selected, report = _select(tracklet, frames, _context(other_tracklets=(neighbor,)), max_crops=2)
+
+    assert selected is not None
+    assert len(report) == len(times)
+    assert sorted(entry["frameIndex"] for entry in report) == list(range(len(times)))
+    by_frame = {entry["frameIndex"]: entry for entry in report}
+    assert by_frame[0]["reason"] == REJECT_OUTSIDE_NEAR_WINDOW
+    assert by_frame[1]["reason"] == REJECT_FRAME_MISSING
+    assert by_frame[2]["reason"] == REJECT_ASPECT_OUTLIER
+    assert by_frame[3]["reason"] == REJECT_COLOR_MISMATCH
+    assert by_frame[4]["reason"] == REJECT_AMBIGUOUS
+    statuses = [by_frame[i]["status"] for i in (5, 6, 7)]
+    assert sorted(statuses) == ["rejected", "selected", "selected"]
+    excluded = next(by_frame[i] for i in (5, 6, 7) if by_frame[i]["status"] == "rejected")
+    assert excluded["reason"] == REJECT_MAX_CROPS
+    assert {c.frame_index for c in selected.crops} == {
+        i for i in (5, 6, 7) if by_frame[i]["status"] == "selected"
+    }
+
+
+def test_report_entries_are_unique_per_observation_without_a_context() -> None:
+    times = [EVENT_TIME + 0.25 * i for i in range(4)]
+    tracklet = Tracklet(1, [_obs(i, t) for i, t in enumerate(times)])
+    frames = [_frame(i, t) for i, t in enumerate(times)]
+    report: list[dict] = []
+
+    selected = CropSelector(min_frame_gap=1).select_and_build_sheet(
+        tracklet, frames, max_crops=3, observation_report=report
+    )
+
+    assert selected is not None
+    assert len(report) == 4
+    assert [entry["status"] for entry in sorted(report, key=lambda e: e["frameIndex"])].count(
+        "selected"
+    ) == 3

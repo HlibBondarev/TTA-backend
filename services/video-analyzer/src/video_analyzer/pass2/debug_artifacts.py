@@ -17,7 +17,7 @@ import numpy as np
 from video_analyzer.media.ffmpeg_client import ExtractedFrame
 from video_analyzer.pass2.actor_matcher import ActorMatchResult
 from video_analyzer.pass2.cap_resolver import CapResolutionResult
-from video_analyzer.pass2.tracker import BBox, FrameDetection, TrackingResult
+from video_analyzer.pass2.tracker import BBox, FrameDetection, TrackingResult, Tracklet
 
 _COLOR_DETECTION = (0, 200, 255)
 _COLOR_TARGET = (255, 128, 0)
@@ -40,6 +40,18 @@ def detections_image_path(debug_dir: Path, event_idx: int) -> Path:
 def event_json_path(debug_dir: Path, event_idx: int) -> Path:
     """Return the path of the Pass 2 JSON breakdown for an event."""
     return debug_dir / f"event_{event_idx:03d}_pass2.json"
+
+
+def chosen_bbox_on_frame(tracklet: Tracklet | None, frame_index: int) -> BBox | None:
+    """Return the chosen tracklet's box on ``frame_index``, or ``None`` if it has none there.
+
+    The highlight must belong to the displayed frame: the observation nearest to the event in
+    time may sit on a different frame, and drawing its box would point at the wrong place.
+    """
+    if tracklet is None:
+        return None
+    obs = next((o for o in tracklet.observations if o.frame_index == frame_index), None)
+    return obs.bbox_xyxy if obs is not None else None
 
 
 def nearest_frame(frames: list[ExtractedFrame], event_time_sec: float) -> ExtractedFrame | None:

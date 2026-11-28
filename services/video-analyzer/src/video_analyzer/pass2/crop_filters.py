@@ -11,6 +11,7 @@ from video_analyzer.pass2.color_constants import (
     ASPECT_RATIO_TOLERANCE,
     MIN_OBSERVATIONS_FOR_ASPECT_FILTER,
     canonical_color,
+    colors_match,
 )
 from video_analyzer.pass2.team_classifier import dominant_head_color, observation_color_zone
 from video_analyzer.pass2.tracker import (
@@ -25,6 +26,9 @@ REJECT_ASPECT_OUTLIER = "ASPECT_RATIO_OUTLIER"
 REJECT_COLOR_MISMATCH = "HSV_COLOR_MISMATCH"
 REJECT_CROP_TOO_SMALL = "CROP_TOO_SMALL"
 REJECT_OUTSIDE_NEAR_WINDOW = "OUTSIDE_NEAR_EVENT_WINDOW"
+REJECT_FRAME_MISSING = "FRAME_MISSING"
+REJECT_AMBIGUOUS = "AMBIGUOUS_CROP_EXCLUDED"
+REJECT_MAX_CROPS = "EXCLUDED_BY_MAX_CROPS"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +40,9 @@ class CropSelectionContext:
         geometry: Sport head/cap zone geometry.
         expected_color: Cap color the actor is expected to wear (tracked or goalkeeper color).
         opponent_color: Opponent cap color used to flag contested neighbor head zones.
-        extra_colors: Further named colors (tracked, goalkeeper) included when sampling HSV.
+        tracked_color: Tracked team cap color. Also accepted when the expected color is the
+            goalkeeper color, because bi-colored goalkeeper caps show a team-color base.
+        goalkeeper_color: Sport goalkeeper cap color, if any.
         other_tracklets: All other tracklets of the window, for neighbor ambiguity checks.
     """
 
@@ -44,18 +50,37 @@ class CropSelectionContext:
     geometry: CapZoneGeometry = DEFAULT_CAP_ZONE_GEOMETRY
     expected_color: str | None = None
     opponent_color: str | None = None
-    extra_colors: tuple[str, ...] = ()
+    tracked_color: str | None = None
+    goalkeeper_color: str | None = None
     other_tracklets: tuple[Tracklet, ...] = ()
 
     def palette(self) -> list[str]:
         """Canonical, known colors sampled in a head zone (unknown names are skipped)."""
-        names = (self.expected_color, self.opponent_color, *self.extra_colors)
+        names = (
+            self.expected_color,
+            self.opponent_color,
+            self.tracked_color,
+            self.goalkeeper_color,
+        )
         canonical = (canonical_color(name) for name in names)
         return list(dict.fromkeys(name for name in canonical if name is not None))
 
     @property
     def expected_canonical(self) -> str | None:
         return canonical_color(self.expected_color)
+
+    @property
+    def accepted_canonical(self) -> frozenset[str]:
+        """Colors a crop of the expected actor may show without being a mismatch.
+
+        The expected color, plus the tracked team color when the expected color is the
+        goalkeeper cap color (bi-colored goalkeeper caps: team base with goalkeeper panels).
+        """
+        accepted = {self.expected_canonical}
+        if self.goalkeeper_color and colors_match(self.expected_color, self.goalkeeper_color):
+            accepted.add(canonical_color(self.tracked_color))
+        accepted.discard(None)
+        return frozenset(name for name in accepted if name is not None)
 
     @property
     def opponent_canonical(self) -> str | None:
@@ -95,7 +120,7 @@ def color_mismatch(
     if expected is None or not palette:
         return False
     observed = dominant_head_color(native_bgr, observation_color_zone(obs, ctx.geometry), palette)
-    return observed is not None and observed != expected
+    return observed is not None and observed not in ctx.accepted_canonical
 
 
 def neighbor_has_opponent_color(

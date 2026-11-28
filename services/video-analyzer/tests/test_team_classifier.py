@@ -103,11 +103,12 @@ def test_label_votes_below_opponent_share_are_not_excluded() -> None:
     assert evidence.team_class is TeamClass.TRACKED
 
 
-def test_goalkeeper_token_without_team_color_is_goalkeeper_with_evidence() -> None:
+def test_goalkeeper_token_without_team_color_is_unknown_with_goalkeeper_evidence() -> None:
     evidence = _classify(["Goalkeeper"] * 3)
 
-    assert evidence.team_class is TeamClass.GOALKEEPER
+    assert evidence.team_class is TeamClass.UNKNOWN
     assert evidence.goalkeeper_evidence is True
+    assert evidence.tracked_share == 0.0
 
 
 def test_team_colored_goalkeeper_label_is_our_goalkeeper_with_tracked_share() -> None:
@@ -154,15 +155,20 @@ def test_only_observations_near_event_time_vote() -> None:
 
 
 @pytest.mark.parametrize(
-    ("patch", "expected"),
-    [(WHITE, TeamClass.TRACKED), (BLUE, TeamClass.OPPONENT), (RED, TeamClass.GOALKEEPER)],
+    ("patch", "expected", "vote"),
+    [
+        (WHITE, TeamClass.TRACKED, "tracked"),
+        (BLUE, TeamClass.OPPONENT, "opponent"),
+        (RED, TeamClass.UNKNOWN, "goalkeeper"),
+    ],
 )
-def test_hsv_votes_classify_unlabeled_players_by_cap_color(patch, expected) -> None:
+def test_hsv_votes_classify_unlabeled_players_by_cap_color(patch, expected, vote) -> None:
     evidence = _classify(["Player"] * 3, colors=[patch] * 3)
 
     assert evidence.team_class is expected
     assert evidence.label_votes == {}
-    assert evidence.hsv_votes == {str(expected): 3}
+    assert evidence.hsv_votes == {vote: 3}
+    assert evidence.goalkeeper_evidence is (vote == "goalkeeper")
 
 
 def test_navy_cap_votes_for_blue_opponent() -> None:
@@ -396,10 +402,11 @@ def test_opponent_labeled_goalkeeper_stays_opponent() -> None:
     assert evidence.goalkeeper_evidence is True
 
 
-def test_solid_red_cap_remains_our_goalkeeper_candidate() -> None:
+def test_solid_red_cap_is_goalkeeper_evidence_but_not_a_team_identity() -> None:
     evidence = _classify_zone(["Player"] * 3, CRIMSON)
 
-    assert evidence.team_class is TeamClass.GOALKEEPER
+    assert evidence.team_class is TeamClass.UNKNOWN
+    assert evidence.goalkeeper_evidence is True
     assert evidence.hsv_votes == {"goalkeeper": 3}
 
 
@@ -489,3 +496,92 @@ def test_label_only_opponent_is_unaffected_by_the_guard() -> None:
     evidence = TeamClassifier().classify(_tracklet(["Blue team"]), EVENT_TIME, None, _spec())
 
     assert evidence.team_class is TeamClass.OPPONENT
+
+
+# ------------------------- goalkeeper role is separate from team identity (review finding)
+
+
+def test_opponent_label_with_red_cap_color_stays_opponent() -> None:
+    evidence = _classify_zone(["Blue team"] * 3, CRIMSON)
+
+    assert evidence.team_class is TeamClass.OPPONENT
+    assert evidence.goalkeeper_evidence is True
+    assert evidence.confidence == pytest.approx(1.0)
+
+
+def test_goalkeeper_votes_do_not_dilute_the_opponent_share() -> None:
+    evidence = _classify(["Blue team", "Goalkeeper", "Goalkeeper"])
+
+    assert evidence.team_class is TeamClass.OPPONENT
+    assert evidence.label_votes == {"opponent": 1, "goalkeeper": 2}
+
+
+def test_generic_goalkeeper_label_alone_is_unknown_with_evidence() -> None:
+    evidence = _classify(["Goalkeeper"] * 2)
+
+    assert evidence.team_class is TeamClass.UNKNOWN
+    assert evidence.goalkeeper_evidence is True
+
+
+def test_goalkeeper_label_with_tracked_cap_color_is_our_goalkeeper() -> None:
+    evidence = _classify_zone(["Goalkeeper"] * 3, DIM_WHITE_CAP)
+
+    assert evidence.team_class is TeamClass.GOALKEEPER
+    assert evidence.tracked_share == pytest.approx(1.0)
+
+
+def test_tracked_goalkeeper_respects_the_thin_hsv_guard() -> None:
+    evidence = _classify(["Blue Goalkeeper"], colors=[WHITE])
+
+    assert evidence.team_class is TeamClass.UNKNOWN
+    assert evidence.goalkeeper_evidence is True
+
+
+# ------------------------------------------------ bidirectional color alias label matching
+
+
+@pytest.mark.parametrize(
+    ("hint", "label"),
+    [
+        ("blue", "Navy team"),
+        ("navy", "Blue team"),
+        ("navy", "Navy team"),
+        ("dark blue", "Blue team"),
+        ("blue", "Dark Blue Goalkeeper"),
+        ("Blue", "navy-blue team"),
+    ],
+)
+def test_opponent_hint_matches_labels_through_aliases_in_both_directions(hint, label) -> None:
+    evidence = _classify([label] * 2, spec=_spec(opponent_color=hint))
+
+    assert evidence.team_class is TeamClass.OPPONENT
+
+
+def test_tracked_hint_aliases_apply_to_labels_too() -> None:
+    evidence = _classify(["Navy team"] * 2, spec=_spec(tracked_color="blue", opponent_color="red"))
+
+    assert evidence.team_class is TeamClass.TRACKED
+
+
+def test_labels_without_a_recognized_color_still_do_not_match() -> None:
+    evidence = _classify(["Referee", "Player", "Ball"], spec=_spec(opponent_color="navy"))
+
+    assert evidence.team_class is TeamClass.UNKNOWN
+    assert evidence.label_votes == {}
+
+
+def test_unknown_hint_colors_keep_the_plain_substring_match() -> None:
+    spec = _spec(tracked_color="teal", opponent_color="orange")
+
+    assert _classify(["Teal team"] * 2, spec=spec).team_class is TeamClass.TRACKED
+    assert _classify(["Orange team"] * 2, spec=spec).team_class is TeamClass.OPPONENT
+    assert _classify(["Green team"] * 2, spec=spec).team_class is TeamClass.UNKNOWN
+
+
+def test_colors_in_text_resolves_aliases_and_ignores_other_words() -> None:
+    from video_analyzer.pass2.color_constants import colors_in_text
+
+    assert colors_in_text("Navy team") == {"blue"}
+    assert colors_in_text("White Goalkeeper, red cap") == {"white", "red"}
+    assert colors_in_text("Referee") == frozenset()
+    assert colors_in_text(None) == frozenset()

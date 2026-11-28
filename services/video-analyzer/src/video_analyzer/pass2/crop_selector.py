@@ -19,9 +19,12 @@ from video_analyzer.pass2.color_constants import (
     NEAR_EVENT_WINDOW_SEC,
 )
 from video_analyzer.pass2.crop_filters import (
+    REJECT_AMBIGUOUS,
     REJECT_ASPECT_OUTLIER,
     REJECT_COLOR_MISMATCH,
     REJECT_CROP_TOO_SMALL,
+    REJECT_FRAME_MISSING,
+    REJECT_MAX_CROPS,
     REJECT_OUTSIDE_NEAR_WINDOW,
     CropSelectionContext,
     aspect_ratio_outlier_frames,
@@ -113,6 +116,7 @@ class CropSelector:
         event_time = selection_context.event_time_sec if selection_context else None
 
         selected = self._pick_diverse_top_k(pool, max_crops=max_crops, event_time_sec=event_time)
+        _report_unselected(report, candidates, pool, selected)
         _mark_selected(report, selected)
         sheet_bgr = self._build_contact_sheet(selected)
         ok, encoded = cv2.imencode(".jpg", sheet_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
@@ -136,6 +140,7 @@ class CropSelector:
     ) -> CropCandidate | None:
         """Cut and score one observation's crop, recording why it was rejected if it is."""
         if frame is None:
+            report.append(_verdict(obs, REJECT_FRAME_MISSING))
             return None
         if obs.frame_index in outliers:
             report.append(_verdict(obs, REJECT_ASPECT_OUTLIER))
@@ -340,6 +345,30 @@ def _report_entry(
 
 def _verdict(obs: TrackletObservation, reason: str) -> dict[str, object]:
     return _report_entry(obs.frame_index, obs.video_time_sec, _STATUS_REJECTED, reason=reason)
+
+
+def _report_unselected(
+    report: ObservationReport,
+    candidates: list[CropCandidate],
+    pool: list[CropCandidate],
+    selected: list[CropCandidate],
+) -> None:
+    """Give every remaining candidate a verdict so the report covers all observations.
+
+    Candidates outside the ranking pool were dropped as ambiguous (an unambiguous alternative
+    existed); pool members that were not picked were cut by ``max_crops``.
+    """
+    selected_frames = {c.frame_index for c in selected}
+    pool_frames = {c.frame_index for c in pool}
+    for candidate in candidates:
+        if candidate.frame_index in selected_frames:
+            continue
+        reason = REJECT_MAX_CROPS if candidate.frame_index in pool_frames else REJECT_AMBIGUOUS
+        report.append(
+            _report_entry(
+                candidate.frame_index, candidate.video_time_sec, _STATUS_REJECTED, reason=reason
+            )
+        )
 
 
 def _mark_selected(report: ObservationReport, selected: list[CropCandidate]) -> None:

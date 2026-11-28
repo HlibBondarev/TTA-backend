@@ -132,6 +132,22 @@ def canonical_color(value: str | None) -> str | None:
     return name if name in NAMED_COLOR_HSV_RANGES else None
 
 
+_COLOR_WORDS: dict[str, str] = {
+    **{name: name for name in NAMED_COLOR_HSV_RANGES},
+    **COLOR_ALIASES,
+}
+
+
+def colors_in_text(text: str | None) -> frozenset[str]:
+    """Return the canonical colors named anywhere in ``text``, resolving aliases.
+
+    ``"Navy team"`` and ``"Blue team"`` both yield ``{"blue"}``, so a detector label matches a
+    color hint whichever of the two spellings the hint uses.
+    """
+    lowered = normalize_color_name(text)
+    return frozenset(canonical for word, canonical in _COLOR_WORDS.items() if word in lowered)
+
+
 def colors_match(first: str | None, second: str | None) -> bool:
     """Return True when two color names denote the same color.
 
